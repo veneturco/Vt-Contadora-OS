@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() { return request.auth != null; }
+    function isSuperAdmin() { return isAuthenticated() && request.auth.token.role == 'admin'; }
+    function belongsToTenant(tenantId) {
+      return isAuthenticated() && (isSuperAdmin() || (request.auth.token.tenantIds != null && tenantId in request.auth.token.tenantIds));
+    }
+    function isValidRif(rif) { return rif.matches('^[JVEGP]-[0-9]{8}-[0-9]$'); }
+    function isTenantLicenseActive(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)).data.subscriptionStatus == 'ACTIVA';
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if belongsToTenant(tenantId);
+      allow create: if isSuperAdmin() && isValidRif(request.resource.data.rif);
+      allow update: if isSuperAdmin();
+      allow delete: if false;
+
+      match /invoices/{invoiceId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId)
+          && (isSuperAdmin() || isTenantLicenseActive(tenantId))
+          && request.resource.data.tenantId == tenantId
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.status in ['BORRADOR_IA', 'PENDIENTE_REVISION', 'APROBADA'];
+        allow update: if isSuperAdmin()
+          && (resource.data.status != 'APROBADA' || request.resource.data.keys().hasOnly(['linkedAdjustmentId', 'adjustmentType', 'status']));
+        allow delete: if false;
+      }
+
+      match /audit_logs/{logId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId)
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.sha256Hash is string;
+        allow update, delete: if false;
+      }
+
+      match /payroll/{payrollId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create, update: if isSuperAdmin();
+        allow delete: if false;
+      }
+
+      match /subscriptions/{paymentId} {
+        allow read: if belongsToTenant(tenantId);
+        allow create: if belongsToTenant(tenantId);
+        allow update: if isSuperAdmin();
+        allow delete: if false;
+      }
+    }
+
+    match /bcv_rates/{dateStr} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    match /telegram_links/{chatId} {
+      allow read, write: if false;
+    }
+  }
+}

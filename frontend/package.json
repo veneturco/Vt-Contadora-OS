@@ -1,0 +1,32 @@
+{
+  "name": "veneturco-fiscal-os-frontend",
+  "version": "3.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "firebase": "^11.0.2",
+    "lucide-react": "^0.460.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "@firebase/util@1.12.1": true,
+    "protobufjs@7.6.6": true
+  }
+}

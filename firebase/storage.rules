@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /tenants/{tenantId}/receipts/{yearMonth}/{fileName} {
+      allow read: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        (request.auth.token.tenantIds != null && tenantId in request.auth.token.tenantIds)
+      );
+      allow create: if request.auth != null
+        && (request.auth.token.role == 'admin' || tenantId in request.auth.token.tenantIds)
+        && request.resource.size < 12 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/pdf');
+      allow update, delete: if false;
+    }
+  }
+}
