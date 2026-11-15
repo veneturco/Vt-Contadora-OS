@@ -24,7 +24,9 @@ import {
   calculateLotttFullBreakdown,
   getSeniatSpeCalendarByRif,
   openPrintableRetentionVoucher,
-  openPrintablePaystub
+  openPrintablePaystub,
+  downloadPdfRetentionVoucher,
+  downloadPdfPaystub
 } from './utils/seniatEngine';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
@@ -383,6 +385,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState<string>('auditor@veneturco.com');
   const [loginPassword, setLoginPassword] = useState<string>('Seniat2026#');
   const [loginRole, setLoginRole] = useState<'admin' | 'client'>('admin');
+  const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'hyperframe-tactical'));
   const [activeTab, setActiveTab] = useState<'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('command');
@@ -528,6 +531,15 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    function handleBeforeInstallPrompt(e: Event) {
+      e.preventDefault();
+      setPwaInstallPrompt(e);
+    }
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
   useEffect(() => {
@@ -1387,6 +1399,20 @@ export default function App() {
             <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-white/10">Ctrl+K</kbd>
           </button>
 
+          {pwaInstallPrompt && (
+            <button
+              onClick={() => {
+                pwaInstallPrompt.prompt();
+                pwaInstallPrompt.userChoice.then(() => setPwaInstallPrompt(null));
+              }}
+              className="px-3 py-2 text-xs font-mono font-bold rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5 animate-pulse"
+              title="Instalar App en este Dispositivo (Android / iOS / PC)"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Instalar App</span>
+            </button>
+          )}
+
           <button onClick={handleExportSnapshot} className="ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5">
             <Download className="w-3.5 h-3.5" />
             Snapshot Drive
@@ -2206,23 +2232,32 @@ export default function App() {
                                 <Lock className="w-3 h-3" /> APROBADA
                               </span>
                               {inv.vatRetentionRate > 0 && (
-                                <button
-                                  onClick={() =>
-                                    openPrintableRetentionVoucher(
-                                      activeTenant.name,
-                                      activeTenant.rif,
-                                      inv,
-                                      buildVoucher14Digits(
-                                        inv.emissionDate.slice(0, 7).replace('-', '') || '202611',
-                                        Math.max(1, tenantInvoices.filter(i => i.vatRetentionRate > 0).findIndex(i => i.id === inv.id) + 1)
+                                <span className="inline-flex items-center gap-1">
+                                  <button
+                                    onClick={() =>
+                                      openPrintableRetentionVoucher(
+                                        activeTenant.name,
+                                        activeTenant.rif,
+                                        inv,
+                                        buildVoucher14Digits(
+                                          inv.emissionDate.slice(0, 7).replace('-', '') || '202611',
+                                          Math.max(1, tenantInvoices.filter(i => i.vatRetentionRate > 0).findIndex(i => i.id === inv.id) + 1)
+                                        )
                                       )
-                                    )
-                                  }
-                                  title="Imprimir Comprobante de Retención 14 Dígitos (Art. 18)"
-                                  className="px-2 py-0.5 rounded bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)] hover:bg-[var(--accent-secondary)]/30 text-[10px] inline-flex items-center gap-1"
-                                >
-                                  <Printer className="w-3 h-3" /> Comp. 14D
-                                </button>
+                                    }
+                                    title="Imprimir Comprobante de Retención 14 Dígitos (Art. 18)"
+                                    className="px-2 py-0.5 rounded bg-[var(--accent-secondary)]/20 text-[var(--accent-secondary)] hover:bg-[var(--accent-secondary)]/30 text-[10px] inline-flex items-center gap-1"
+                                  >
+                                    <Printer className="w-3 h-3" /> Imprimir
+                                  </button>
+                                  <button
+                                    onClick={() => downloadPdfRetentionVoucher(activeTenant.name, activeTenant.rif, inv)}
+                                    title="Descargar Comprobante PDF Vectorial con Código QR Oficial"
+                                    className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
+                                  >
+                                    <Download className="w-3 h-3" /> PDF QR
+                                  </button>
+                                </span>
                               )}
                               {inv.docType === '01' && (
                                 <button
@@ -2439,12 +2474,22 @@ export default function App() {
                           Bs. {b.prestacionesMonthlyProvision.toFixed(2)}
                         </td>
                         <td className="py-2.5 px-2 text-right">
-                          <button
-                            onClick={() => openPrintablePaystub(activeTenant.name, activeTenant.rif, emp)}
-                            className="px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 inline-flex items-center gap-1"
-                          >
-                            <Printer className="w-3 h-3" /> Recibo PDF
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => openPrintablePaystub(activeTenant.name, activeTenant.rif, emp)}
+                              title="Vista previa e impresión"
+                              className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-[10px] inline-flex items-center gap-1"
+                            >
+                              <Printer className="w-3 h-3" /> Imprimir
+                            </button>
+                            <button
+                              onClick={() => downloadPdfPaystub(activeTenant.name, activeTenant.rif, emp)}
+                              title="Descargar Recibo Oficial PDF con QR LOTTT"
+                              className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
+                            >
+                              <Download className="w-3 h-3" /> PDF QR
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

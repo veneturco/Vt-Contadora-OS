@@ -110,9 +110,15 @@ function createInMemoryFirestore() {
 
 let db;
 try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  const serviceAccountStr = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  if (serviceAccountStr) {
+    let serviceAccount;
+    try {
+      serviceAccount = JSON.parse(serviceAccountStr);
+    } catch {
+      serviceAccount = JSON.parse(Buffer.from(serviceAccountStr, 'base64').toString('utf8'));
+    }
     if (!admin.apps.length) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });

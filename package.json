@@ -21,6 +21,7 @@
     "firebase": "^11.0.2",
     "firebase-admin": "^13.0.1",
     "helmet": "^8.0.0",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.460.0",
     "node-cron": "^3.0.3",
     "react": "^19.0.0",
