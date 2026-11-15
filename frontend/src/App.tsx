@@ -423,7 +423,11 @@ export default function App() {
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'hyperframe-tactical'));
-  const [activeTab, setActiveTab] = useState<'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('command');
+  const [activeTab, setActiveTab] = useState<'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('simplified');
+  const [calcUsdInput, setCalcUsdInput] = useState<number>(150);
+  const [calcRetPercent, setCalcRetPercent] = useState<number>(75);
+  const [calcIgtfPercent, setCalcIgtfPercent] = useState<number>(0);
+  const [filterSemaforo, setFilterSemaforo] = useState<'ALL' | 'CONFORME' | 'ADVERTENCIA' | 'PENDIENTE'>('ALL');
   const [tenants, setTenants] = useState<Tenant[]>(() => safeGetStorage('vt_tenants_v31', INITIAL_TENANTS));
   const [selectedTenantId, setSelectedTenantId] = useState<string>(() => INITIAL_TENANTS[0].id);
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => safeGetStorage('vt_invoices_v31', INITIAL_INVOICES));
@@ -775,6 +779,42 @@ export default function App() {
     const netQuotaBs = Math.max(0, debitVatBs - creditVatBs);
     return { debitVatBs, creditVatBs, disqualifiedVatBs, netQuotaBs, igtfBs, withheldVatBs, contingencyCount };
   }, [tenantInvoices]);
+
+  const semaforoCounts = useMemo(() => {
+    let conforme = 0;
+    let advertencia = 0;
+    let pendiente = 0;
+    tenantInvoices.forEach(inv => {
+      if (inv.status === 'BORRADOR_IA') {
+        pendiente++;
+      } else if (!isVatDeductible(inv)) {
+        advertencia++;
+      } else {
+        conforme++;
+      }
+    });
+    return { conforme, advertencia, pendiente };
+  }, [tenantInvoices]);
+
+  const semaforoFilteredInvoices = useMemo(() => {
+    if (filterSemaforo === 'CONFORME') {
+      return tenantInvoices.filter(i => i.status === 'APROBADA' && isVatDeductible(i));
+    }
+    if (filterSemaforo === 'ADVERTENCIA') {
+      return tenantInvoices.filter(i => !isVatDeductible(i));
+    }
+    if (filterSemaforo === 'PENDIENTE') {
+      return tenantInvoices.filter(i => i.status === 'BORRADOR_IA');
+    }
+    return tenantInvoices;
+  }, [tenantInvoices, filterSemaforo]);
+
+  const calcTotalBs = calcUsdInput * bcvRate;
+  const calcBaseBs = calcTotalBs / 1.16;
+  const calcIvaBs = calcBaseBs * 0.16;
+  const calcRetBs = calcIvaBs * (calcRetPercent / 100);
+  const calcIgtfBs = calcTotalBs * (calcIgtfPercent / 100);
+  const calcNetoBs = (calcTotalBs - calcRetBs) + calcIgtfBs;
 
   function appendAuditLog(action: string, actorUid: string, targetId: string, details: string, encryptedPayload?: string) {
     setAuditLogs(prev => {
@@ -1609,6 +1649,7 @@ export default function App() {
       {/* Navigation Tabs */}
       <nav className="flex flex-wrap gap-2 mb-6">
         {[
+          { id: 'simplified', label: '⭐ Asistente del Contador', icon: CheckCircle2 },
           { id: 'command', label: '01. Centro de Mando', icon: Cpu },
           { id: 'ocr', label: '02. Escáner IA & Telegram', icon: Send },
           { id: 'books', label: '03. Libros SENIAT & TXT/XML', icon: FileText },
@@ -1636,6 +1677,464 @@ export default function App() {
           );
         })}
       </nav>
+
+      {/* =====================================================================
+          TAB 00: ASISTENTE DEL CONTADOR SIMPLIFICADO (SENIAT 2026)
+         ===================================================================== */}
+      {activeTab === 'simplified' && (
+        <div className="space-y-6">
+          {/* 1. Alerta Inteligente de Vencimiento de Quincena (Providencia SPE SENIAT) */}
+          <div className="p-4 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-lg bg-amber-500/20 text-amber-400 flex-shrink-0 mt-0.5">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    Calendario Oficial SENIAT · Sujetos Pasivos Especiales
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
+                    {speCalendar.statusLabel}
+                  </span>
+                </div>
+                <p className="text-sm text-[var(--foreground)] mt-1 font-medium">
+                  La empresa <strong className="text-white">{activeTenant.name}</strong> tiene RIF terminado en <strong className="text-amber-400 font-mono">"{speCalendar.terminalDigit}"</strong>.
+                  Su declaración quincenal de IVA vence el <strong className="text-white underline decoration-amber-400">{speCalendar.quincena1Deadline}</strong>.
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Próxima fecha límite 2ª Quincena: {speCalendar.quincena2Deadline} · IGTF Divisas: {speCalendar.igtfDeadline}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() =>
+                  handleDownloadFile(
+                    `RET_IVA_${activeTenant.rif}_202611.txt`,
+                    exportSeniatIvaTxt16(activeTenant.rif, '202611', tenantInvoices),
+                    'text/plain'
+                  )
+                }
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-1.5 transition"
+              >
+                <Download className="w-4 h-4" />
+                Descargar TXT SENIAT
+              </button>
+            </div>
+          </div>
+
+          {/* 2. Acciones Rápidas del Contador (Entregables en 1 Clic) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <button
+              onClick={() =>
+                handleDownloadFile(
+                  `RET_IVA_${activeTenant.rif}_202611.txt`,
+                  exportSeniatIvaTxt16(activeTenant.rif, '202611', tenantInvoices),
+                  'text/plain'
+                )
+              }
+              className="p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-emerald-500/50 hover:bg-emerald-500/5 transition text-left space-y-1.5 group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4" /> TXT IVA SENIAT
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">16 COLS</span>
+              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">Archivo oficial delimitado para subir al portal del SENIAT.</p>
+            </button>
+
+            <button
+              onClick={() =>
+                handleDownloadFile(
+                  `RET_ISLR_${activeTenant.rif}_202611.xml`,
+                  exportIslrXmlDecreto1808(activeTenant.rif, '202611', tenantInvoices),
+                  'application/xml'
+                )
+              }
+              className="p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-sky-500/50 hover:bg-sky-500/5 transition text-left space-y-1.5 group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4" /> XML ISLR Dec. 1808
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300">XML</span>
+              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">Relación estructurada de retenciones ISLR para enterar.</p>
+            </button>
+
+            <button
+              onClick={() => {
+                const targetInv = tenantInvoices.find(i => i.vatRetentionRate > 0) || tenantInvoices[0];
+                if (targetInv) {
+                  openPrintableRetentionVoucher(activeTenant.name, activeTenant.rif, targetInv, buildVoucher14Digits('202611', 1));
+                } else {
+                  alert('No hay facturas con retención registrada en este cliente.');
+                }
+              }}
+              className="p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-purple-500/50 hover:bg-purple-500/5 transition text-left space-y-1.5 group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5">
+                  <Printer className="w-4 h-4" /> Comprobante PDF
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300">14 DÍGITOS</span>
+              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">Comprobante oficial de retención listo para imprimir o enviar.</p>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('ocr')}
+              className="p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] hover:border-amber-500/50 hover:bg-amber-500/5 transition text-left space-y-1.5 group"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <Camera className="w-4 h-4" /> Cargar Facturas
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">FOTOS / PDF</span>
+              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">Lector automático por foto, QR fiscal o Telegram sin teclear.</p>
+            </button>
+          </div>
+
+          {/* 3. Balanza Resumen Fiscal Quincenal */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] uppercase">
+                <span>Ventas Facturadas</span>
+                <span className="text-emerald-400 font-bold">Débito Fiscal</span>
+              </div>
+              <div className="text-xl font-bold font-mono text-white">
+                Bs. {fiscalSummary.debitVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Ref: USD {(fiscalSummary.debitVatBs / bcvRate).toFixed(2)} @ Tasa BCV ({bcvRate} Bs.)
+              </div>
+            </div>
+
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] uppercase">
+                <span>Compras Deducibles</span>
+                <span className="text-sky-400 font-bold">Crédito Fiscal</span>
+              </div>
+              <div className="text-xl font-bold font-mono text-white">
+                Bs. {fiscalSummary.creditVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Ref: USD {(fiscalSummary.creditVatBs / bcvRate).toFixed(2)} deducible de IVA
+              </div>
+            </div>
+
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] uppercase">
+                <span>Retenciones IVA</span>
+                <span className="text-purple-400 font-bold">Enteradas</span>
+              </div>
+              <div className="text-xl font-bold font-mono text-white">
+                Bs. {fiscalSummary.withheldVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Soportadas por clientes especiales
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2">
+              <div className="flex items-center justify-between text-xs text-emerald-300 font-bold uppercase">
+                <span>Cuota a Pagar SENIAT</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">ESTIMADA</span>
+              </div>
+              <div className="text-xl font-extrabold font-mono text-emerald-400">
+                Bs. {fiscalSummary.netQuotaBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-emerald-200 font-mono">
+                {fiscalSummary.netQuotaBs > 0
+                  ? `Equivalente: USD ${(fiscalSummary.netQuotaBs / bcvRate).toFixed(2)} @ BCV`
+                  : 'Excedente de Crédito Fiscal a Favor'}
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Semáforo Fiscal de Cumplimiento SENIAT */}
+          <div className="ui-card p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  <span>🚦</span> Semáforo Fiscal SENIAT (Providencia SNAT/2026/00093)
+                </h3>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Diagnóstico visual inmediato de cada factura para evitar multas y reparos tributarios.
+                </p>
+              </div>
+
+              {/* Filtros del Semáforo */}
+              <div className="flex flex-wrap gap-1.5 text-xs font-mono">
+                <button
+                  onClick={() => setFilterSemaforo('ALL')}
+                  className={`px-3 py-1.5 rounded-lg border transition ${
+                    filterSemaforo === 'ALL'
+                      ? 'bg-white/10 font-bold border-white/30 text-white'
+                      : 'border-transparent text-[var(--muted-foreground)] hover:text-white'
+                  }`}
+                >
+                  Todas ({tenantInvoices.length})
+                </button>
+                <button
+                  onClick={() => setFilterSemaforo('CONFORME')}
+                  className={`px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                    filterSemaforo === 'CONFORME'
+                      ? 'bg-emerald-500/20 font-bold border-emerald-500/40 text-emerald-400'
+                      : 'border-transparent text-emerald-400/70 hover:text-emerald-400'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  Conformes ({semaforoCounts.conforme})
+                </button>
+                <button
+                  onClick={() => setFilterSemaforo('ADVERTENCIA')}
+                  className={`px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                    filterSemaforo === 'ADVERTENCIA'
+                      ? 'bg-amber-500/20 font-bold border-amber-500/40 text-amber-400'
+                      : 'border-transparent text-amber-400/70 hover:text-amber-400'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  Advertencias ({semaforoCounts.advertencia})
+                </button>
+                <button
+                  onClick={() => setFilterSemaforo('PENDIENTE')}
+                  className={`px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                    filterSemaforo === 'PENDIENTE'
+                      ? 'bg-rose-500/20 font-bold border-rose-500/40 text-rose-400'
+                      : 'border-transparent text-rose-400/70 hover:text-rose-400'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+                  Borradores ({semaforoCounts.pendiente})
+                </button>
+              </div>
+            </div>
+
+            {/* Listado con Semáforo Visual */}
+            <div className="space-y-3">
+              {semaforoFilteredInvoices.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[var(--muted-foreground)]">
+                  No hay facturas en esta categoría.
+                </div>
+              ) : (
+                semaforoFilteredInvoices.map(inv => {
+                  const isConforme = inv.status === 'APROBADA' && isVatDeductible(inv);
+                  const isAdvertencia = !isVatDeductible(inv);
+                  const isBorrador = inv.status === 'BORRADOR_IA';
+                  const totalBsVal = toVes(inv.totalOriginal, inv.currency, inv.bcvRateOnDate);
+
+                  return (
+                    <div
+                      key={inv.id}
+                      className={`p-4 rounded-xl border transition-all flex flex-wrap items-center justify-between gap-4 ${
+                        isConforme
+                          ? 'bg-emerald-950/15 border-emerald-500/30'
+                          : isAdvertencia
+                          ? 'bg-amber-950/20 border-amber-500/30'
+                          : 'bg-rose-950/20 border-rose-500/30'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3.5">
+                        <div className="mt-1">
+                          {isConforme && <span className="inline-block w-3.5 h-3.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />}
+                          {isAdvertencia && <span className="inline-block w-3.5 h-3.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50" />}
+                          {isBorrador && <span className="inline-block w-3.5 h-3.5 rounded-full bg-rose-400 shadow-sm shadow-rose-400/50 animate-pulse" />}
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-sm text-white">
+                              Factura #{inv.invoiceNumber}
+                            </span>
+                            <span className="text-xs text-[var(--muted-foreground)] font-mono">
+                              (Ctrl: {inv.controlNumber})
+                            </span>
+                            <span className="text-xs text-[var(--foreground)] font-medium">
+                              {inv.supplierName}
+                            </span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white">
+                              RIF: {inv.supplierRif}
+                            </span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-subtle)] text-[var(--muted-foreground)]">
+                              {inv.bookType}
+                            </span>
+                          </div>
+
+                          <div className="text-xs">
+                            {isConforme && (
+                              <span className="text-emerald-400 flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Conforme para Declaración SENIAT (Providencia 00093).
+                              </span>
+                            )}
+                            {isAdvertencia && (
+                              <span className="text-amber-300 flex items-center gap-1 font-medium">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Ticket de máquina fiscal sin RIF del comprador. Deducible como gasto ISLR pero NO genera crédito fiscal IVA.
+                              </span>
+                            )}
+                            {isBorrador && (
+                              <span className="text-rose-300 flex items-center gap-1 font-medium">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Factura en Borrador. Requiere aprobación del contador antes de incluirse en el TXT SENIAT.
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-[11px] font-mono text-[var(--muted-foreground)]">
+                            Fecha: {inv.emissionDate} · Moneda Original: {inv.currency} {inv.totalOriginal.toLocaleString('es-VE', { minimumFractionDigits: 2 })} @ BCV {inv.bcvRateOnDate} Bs.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 ml-auto">
+                        <div className="text-right font-mono">
+                          <div className="font-bold text-sm text-white">
+                            Bs. {totalBsVal.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[11px] text-[var(--muted-foreground)]">
+                            IVA: Bs. {toVes(inv.vatOriginal, inv.currency, inv.bcvRateOnDate).toFixed(2)}
+                            {inv.vatRetentionRate > 0 && ` (Ret. ${inv.vatRetentionRate}%)`}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {isBorrador && (
+                            <button
+                              onClick={() => handleApproveInvoice(inv.id)}
+                              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-1 transition"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Aprobar
+                            </button>
+                          )}
+                          {inv.vatRetentionRate > 0 && (
+                            <button
+                              onClick={() => openPrintableRetentionVoucher(activeTenant.name, activeTenant.rif, inv, buildVoucher14Digits('202611', 1))}
+                              className="px-2.5 py-1.5 text-xs font-mono rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-purple-400 text-purple-300 flex items-center gap-1 transition"
+                              title="Ver Comprobante de Retención de 14 Dígitos"
+                            >
+                              <Printer className="w-3 h-3" /> PDF
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setInspectedInvoice(inv)}
+                            className="p-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:text-white text-[var(--muted-foreground)] transition"
+                            title="Ver Detalle Forense"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 5. Calculadora Rápida Bimoneda de Factura ($ a Bs. BCV) */}
+          <div className="ui-card p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-subtle)]">
+              <div>
+                <h3 className="font-bold text-base flex items-center gap-2">
+                  <span>🧮</span> Calculadora Contable Bimoneda (USD ⇄ Bolívares BCV)
+                </h3>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Convierte cualquier importe en dólares a bolívares oficiales con desglose automático de IVA, IGTF y retención.
+                </p>
+              </div>
+              <span className="text-xs font-mono px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
+                Tasa Oficial BCV: Bs. {bcvRate.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] block mb-1.5 font-medium">Monto Total en Dólares ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={calcUsdInput}
+                  onChange={e => setCalcUsdInput(Number(e.target.value) || 0)}
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg px-3.5 py-2.5 text-base font-bold font-mono text-emerald-400 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] block mb-1.5 font-medium">Porcentaje de Retención IVA</label>
+                <select
+                  value={calcRetPercent}
+                  onChange={e => setCalcRetPercent(Number(e.target.value))}
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value={75}>75% (Contribuyente Especial Estándar)</option>
+                  <option value={100}>100% (Proveedor no formalizado / Sin RIF en factura)</option>
+                  <option value={0}>0% (Sin Retención)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] block mb-1.5 font-medium">¿Pago en Efectivo/Divisas? (IGTF 3%)</label>
+                <select
+                  value={calcIgtfPercent}
+                  onChange={e => setCalcIgtfPercent(Number(e.target.value))}
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value={0}>No (Transferencia en Bolívares - 0%)</option>
+                  <option value={3}>Sí (Pago en Dólares en Efectivo - Aplica 3% IGTF)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Resultado en Bolívares */}
+            <div className="p-4 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-xs">
+              <div className="space-y-1">
+                <span className="text-[var(--muted-foreground)] block">Base Imponible (Bs.):</span>
+                <span className="text-base font-bold text-white block">
+                  Bs. {calcBaseBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-[var(--muted-foreground)] block">
+                  USD {(calcBaseBs / bcvRate).toFixed(2)}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[var(--muted-foreground)] block">IVA 16% (Bs.):</span>
+                <span className="text-base font-bold text-sky-400 block">
+                  Bs. {calcIvaBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-[var(--muted-foreground)] block">
+                  USD {(calcIvaBs / bcvRate).toFixed(2)}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[var(--muted-foreground)] block">Retención IVA {calcRetPercent}%:</span>
+                <span className="text-base font-bold text-purple-400 block">
+                  Bs. {calcRetBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-[var(--muted-foreground)] block">
+                  Enterar al SENIAT
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-emerald-400 block font-bold">Neto a Transferir (Bs.):</span>
+                <span className="text-base font-extrabold text-emerald-400 block">
+                  Bs. {calcNetoBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {calcIgtfPercent > 0 && (
+                  <span className="text-[10px] text-amber-300 block">
+                    Incluye IGTF 3% (Bs. {calcIgtfBs.toFixed(2)})
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =====================================================================
           TAB 01: CENTRO DE MANDO (12-COL ASYMMETRIC BENTO GRID: 8 + 4)
