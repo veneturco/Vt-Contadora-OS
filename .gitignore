@@ -3,8 +3,6 @@ node_modules/
 */node_modules/
 
 # Salidas de compilación
-dist/
-frontend/dist/
 .vercel/
 
 # Variables de entorno y secretos criptográficos

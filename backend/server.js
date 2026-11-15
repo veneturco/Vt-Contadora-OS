@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -139,7 +141,10 @@ cron.schedule('5 0 * * *', async () => {
 }, { timezone: 'America/Caracas' });
 
 const app = express();
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
 app.use(express.json({ limit: '15mb' }));
 
@@ -406,6 +411,18 @@ app.post('/api/Voucher14', verifyFirebaseToken, (req, res, next) => {
     next(err);
   }
 });
+
+// Servir archivos estáticos del frontend de producción (React 19 + Vite)
+const distPath = path.resolve(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/webhooks')) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 // Manejo 404 para rutas API no definidas
 app.use('/api/*', (_req, res) => {
