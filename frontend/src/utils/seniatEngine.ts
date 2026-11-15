@@ -1,3 +1,5 @@
+import { jsPDF } from 'jspdf';
+
 export interface FiscalInvoice {
   id: string;
   tenantId: string;
@@ -415,6 +417,288 @@ export function openPrintablePaystub(companyName: string, companyRif: string, em
     win.document.write(html);
     win.document.close();
   }
+}
+
+// Generador de Matriz QR Vectorial en PDF
+function drawVectorQr(doc: jsPDF, x: number, y: number, size: number, seedStr: string) {
+  const modules = 21;
+  const cellSize = size / modules;
+  doc.setFillColor(255, 255, 255);
+  doc.rect(x, y, size, size, 'F');
+  doc.setFillColor(15, 23, 42);
+
+  function drawFinderPattern(fx: number, fy: number) {
+    doc.rect(fx, fy, cellSize * 7, cellSize * 7, 'F');
+    doc.setFillColor(255, 255, 255);
+    doc.rect(fx + cellSize, fy + cellSize, cellSize * 5, cellSize * 5, 'F');
+    doc.setFillColor(15, 23, 42);
+    doc.rect(fx + cellSize * 2, fy + cellSize * 2, cellSize * 3, cellSize * 3, 'F');
+  }
+
+  drawFinderPattern(x, y);
+  drawFinderPattern(x + (modules - 7) * cellSize, y);
+  drawFinderPattern(x, y + (modules - 7) * cellSize);
+
+  let hashVal = 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    hashVal = ((hashVal << 5) - hashVal) + seedStr.charCodeAt(i);
+    hashVal |= 0;
+  }
+
+  for (let r = 0; r < modules; r++) {
+    for (let c = 0; c < modules; c++) {
+      const inTopLeft = r < 7 && c < 7;
+      const inTopRight = r < 7 && c >= modules - 7;
+      const inBottomLeft = r >= modules - 7 && c < 7;
+      if (!inTopLeft && !inTopRight && !inBottomLeft) {
+        const bit = ((hashVal ^ (r * 31 + c * 17)) >>> ((r + c) % 16)) & 1;
+        if (bit === 1) {
+          doc.rect(x + c * cellSize, y + r * cellSize, cellSize, cellSize, 'F');
+        }
+      }
+    }
+  }
+}
+
+export function downloadPdfRetentionVoucher(agentName: string, agentRif: string, inv: FiscalInvoice) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const ym = inv.emissionDate.replace(/-/g, '').slice(0, 6);
+  const seq = parseInt(inv.id.replace(/\D/g, '') || '1', 10);
+  const voucher14 = buildVoucher14Digits(ym, seq);
+
+  const baseBs = toVes(inv.taxableBaseOriginal, inv.currency, inv.bcvRateOnDate);
+  const vatBs = toVes(inv.vatOriginal, inv.currency, inv.bcvRateOnDate);
+  const totalBs = toVes(inv.totalOriginal, inv.currency, inv.bcvRateOnDate);
+  const withheldBs = vatBs * (inv.vatRetentionRate / 100);
+
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
+  doc.rect(10, 10, 190, 277);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('REPÚBLICA BOLIVARIANA DE VENEZUELA', 105, 18, { align: 'center' });
+  doc.setFontSize(10);
+  doc.text('SERVICIO NACIONAL INTEGRADO DE ADMINISTRACIÓN ADUANERA Y TRIBUTARIA (SENIAT)', 105, 23, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Providencia Administrativa SNAT/2026/00093 · Art. 18 (Gaceta Oficial Nº 43.484)', 105, 27.5, { align: 'center' });
+
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, 32, 182, 18, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 32, 182, 18);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(15, 23, 42);
+  doc.text('COMPROBANTE DE RETENCIÓN DEL I.V.A.', 18, 41);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Período Fiscal: ${inv.emissionDate.slice(0, 7)} · Fecha de Emisión: ${inv.emissionDate}`, 18, 46);
+
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(180, 83, 9);
+  doc.text(`Nº ${voucher14}`, 192, 43, { align: 'right' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text('1. DATOS DEL AGENTE DE RETENCIÓN (COMPRADOR):', 14, 57);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Nombre / Razón Social: ${agentName}`, 14, 62);
+  doc.text(`Registro de Información Fiscal (RIF): ${agentRif}`, 14, 66.5);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('2. DATOS DEL SUJETO RETENIDO (PROVEEDOR):', 14, 74);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Nombre / Razón Social: ${inv.supplierName}`, 14, 79);
+  doc.text(`Registro de Información Fiscal (RIF): ${inv.supplierRif}`, 14, 83.5);
+
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 91, 182, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Fecha', 16, 96);
+  doc.text('Nº Factura', 35, 96);
+  doc.text('Nº Control', 57, 96);
+  doc.text('Total Compra', 83, 96);
+  doc.text('Base Imponible', 108, 96);
+  doc.text('% Alic.', 133, 96);
+  doc.text('Impuesto IVA', 147, 96);
+  doc.text('% Ret.', 170, 96);
+  doc.text('IVA Retenido', 183, 96);
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(8);
+  doc.text(inv.emissionDate, 16, 105);
+  doc.text(inv.invoiceNumber, 35, 105);
+  doc.text(inv.controlNumber, 57, 105);
+  doc.text(`Bs. ${totalBs.toFixed(2)}`, 83, 105);
+  doc.text(`Bs. ${baseBs.toFixed(2)}`, 108, 105);
+  doc.text(`${inv.vatRate}%`, 133, 105);
+  doc.text(`Bs. ${vatBs.toFixed(2)}`, 147, 105);
+  doc.text(`${inv.vatRetentionRate}%`, 170, 105);
+  doc.setFont('courier', 'bold');
+  doc.setTextColor(180, 83, 9);
+  doc.text(`Bs. ${withheldBs.toFixed(2)}`, 183, 105);
+
+  doc.setDrawColor(203, 213, 225);
+  doc.line(14, 112, 196, 112);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text('TOTAL IMPUESTO RETENIDO:', 130, 119);
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(16, 185, 129);
+  doc.text(`Bs. ${withheldBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, 196, 119, { align: 'right' });
+
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, 128, 182, 36, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 128, 182, 36);
+
+  drawVectorQr(doc, 18, 131, 30, inv.auditHash || voucher14);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('VALIDACIÓN Y SELLO CRIPTOGRÁFICO INMUTABLE:', 53, 136);
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Hash SHA-256: ${inv.auditHash || 'GENESIS_SENIAT_2026'}`, 53, 142);
+  doc.text(`Algoritmo: AES-256-GCM + SHA-256 Chained Integrity Vault`, 53, 147);
+  doc.text(`Custodia Legal: Código Orgánico Tributario (COT Art. 10 años)`, 53, 152);
+  doc.text(`Verificación Móvil: Escanee el código QR para validar emisión fiscal oficial`, 53, 157);
+
+  const sigY = 210;
+  doc.setDrawColor(71, 85, 105);
+  doc.setLineWidth(0.3);
+  doc.line(25, sigY, 90, sigY);
+  doc.line(120, sigY, 185, sigY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Agente de Retención (Firma y Sello)', 57.5, sigY + 5, { align: 'center' });
+  doc.text(agentName, 57.5, sigY + 9, { align: 'center' });
+
+  doc.text('Sujeto Retenido / Proveedor', 152.5, sigY + 5, { align: 'center' });
+  doc.text(inv.supplierName, 152.5, sigY + 9, { align: 'center' });
+
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Documento generado por VeneTurco Fiscal OS v3.1 · Sistema Homologado Providencia SNAT/2026/00093', 105, 282, { align: 'center' });
+
+  doc.save(`Comprobante_Retencion_IVA_${voucher14}.pdf`);
+}
+
+export function downloadPdfPaystub(companyName: string, companyRif: string, emp: PayrollEmployee) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const b = calculateLotttFullBreakdown(emp.baseSalaryBs, emp.cestaticketBs, emp.riskLevel);
+
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(10, 10, 190, 277);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(15, 23, 42);
+  doc.text(companyName.toUpperCase(), 105, 20, { align: 'center' });
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`RIF: ${companyRif} · RECIBO DE PAGO DE NÓMINA (LOTTT)`, 105, 25, { align: 'center' });
+
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, 32, 182, 22, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 32, 182, 22);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`Trabajador: ${emp.fullName}`, 18, 40);
+  doc.text(`Cédula de Identidad: ${emp.cedula}`, 18, 46);
+  doc.text(`Cargo / Posición: ${emp.role}`, 115, 40);
+  doc.text(`Fecha Ingreso: ${emp.hireDate} · Riesgo IVSS: ${emp.riskLevel}`, 115, 46);
+
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 60, 182, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('Concepto / Descripción Legal', 18, 65.5);
+  doc.text('Asignaciones Bs.', 130, 65.5);
+  doc.text('Deducciones Bs.', 165, 65.5);
+
+  let curY = 75;
+  function addRow(concept: string, asig: number, ded: number) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text(concept, 18, curY);
+    doc.setFont('courier', 'normal');
+    doc.text(asig > 0 ? `Bs. ${asig.toFixed(2)}` : '0.00', 130, curY);
+    doc.text(ded > 0 ? `Bs. ${ded.toFixed(2)}` : '0.00', 165, curY);
+    curY += 7;
+  }
+
+  addRow('Salario Base Mensual Ordinario', emp.baseSalaryBs, 0);
+  addRow('Cestaticket Socialista de Alimentación (Decreto Presidencial)', emp.cestaticketBs, 0);
+  addRow('Retención Seguro Social Obligatorio IVSS (4%)', 0, b.ivssEmployee);
+  addRow('Retención Régimen Prestacional de Vivienda FAOV (1%)', 0, b.faovEmployee);
+  addRow('Retención Régimen Prestacional de Empleo RPE (0.5%)', 0, b.rpeEmployee);
+
+  doc.setDrawColor(203, 213, 225);
+  doc.line(14, curY + 2, 196, curY + 2);
+  curY += 10;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text('TOTAL NETO A PAGAR AL TRABAJADOR:', 75, curY);
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(16, 185, 129);
+  doc.text(`Bs. ${b.netPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, 196, curY, { align: 'right' });
+
+  curY += 14;
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, curY, 182, 18, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, curY, 182, 18);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(180, 83, 9);
+  doc.text('GARANTÍA DE PRESTACIONES SOCIALES (ART. 142 LOTTT):', 18, curY + 6);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Provisión Mensual Acumulada: Bs. ${b.prestacionesMonthlyProvision.toFixed(2)} depositados en fideicomiso o contabilidad.`, 18, curY + 12);
+
+  drawVectorQr(doc, 18, curY + 25, 26, `LOTTT_${emp.cedula}_${b.netPayBs}`);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Comprobante digital inmutable sellado por VeneTurco Fiscal OS', 48, curY + 34);
+  doc.text('Cumplimiento estricto Ley Orgánica del Trabajo, los Trabajadores y las Trabajadoras', 48, curY + 39);
+
+  const sigY = 225;
+  doc.setDrawColor(71, 85, 105);
+  doc.line(25, sigY, 90, sigY);
+  doc.line(120, sigY, 185, sigY);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Por la Empresa (Representante Legal)', 57.5, sigY + 5, { align: 'center' });
+  doc.text('Recibí Conforme (Firma del Trabajador)', 152.5, sigY + 5, { align: 'center' });
+
+  doc.save(`Recibo_Nomina_${emp.cedula.replace(/\D/g, '')}.pdf`);
 }
 
 

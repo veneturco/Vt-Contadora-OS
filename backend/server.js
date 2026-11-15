@@ -1,12 +1,14 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { processTelegramReceiptUpdate } = require('./services/telegramBot');
+const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
 const { syncOfficialBcvRate } = require('./services/bcvSyncCron');
 const { SAAS_PLANS, generateTelegramLinkCode, registerSubscriptionPayment, suspendExpiredSubscriptions } = require('./services/saasBillingEngine');
 const {
@@ -108,9 +110,15 @@ function createInMemoryFirestore() {
 
 let db;
 try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  const serviceAccountStr = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+  if (serviceAccountStr) {
+    let serviceAccount;
+    try {
+      serviceAccount = JSON.parse(serviceAccountStr);
+    } catch {
+      serviceAccount = JSON.parse(Buffer.from(serviceAccountStr, 'base64').toString('utf8'));
+    }
     if (!admin.apps.length) {
-      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
@@ -139,7 +147,10 @@ cron.schedule('5 0 * * *', async () => {
 }, { timezone: 'America/Caracas' });
 
 const app = express();
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
 app.use(express.json({ limit: '15mb' }));
 
@@ -248,42 +259,18 @@ app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, async (_req, 
 });
 
 app.post('/api/ocr', verifyFirebaseToken, async (req, res, next) => {
-  const { base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg' } = req.body;
+  const { base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
   try {
-    if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'tu_clave_gemini_ai_studio' && base64Data) {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-      const prompt = `Extrae los datos fiscales venezolanos (SENIAT Providencia SNAT/2026/00093) de esta factura en JSON puro:
-      { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "igtfOriginal": 0, "confidence": 0.99 }`;
-      const aiResult = await model.generateContent([prompt, { inlineData: { data: base64Data, mimeType } }]);
-      const extracted = JSON.parse(aiResult.response.text().replace(/```json|```/g, '').trim());
-      const rifCheck = validateVenezuelanRIF(extracted.supplierRif);
-      return res.json({
-        mode: 'GEMINI_2_5_FLASH_LIVE',
-        extracted: { ...extracted, supplierRif: rifCheck.formatted, rifValid: rifCheck.valid }
-      });
-    }
-
-    // Deterministic SENIAT OCR extraction when running without external API key
-    const randomInvoice = `000${Math.floor(20000 + Math.random() * 79999)}`;
-    const randomControl = `00-00${Math.floor(100000 + Math.random() * 899999)}`;
-    const simulated = {
-      supplierRif: 'J-40192831-5',
-      supplierName: `Proveedor Fiscal (${fileName.slice(0, 18)}) C.A.`,
-      invoiceNumber: randomInvoice,
-      controlNumber: randomControl,
-      emissionDate: new Date().toISOString().slice(0, 10),
-      emissionTime: new Date().toTimeString().slice(0, 8),
-      channel: 'DIGITAL',
-      hasBuyerRifOnTicket: true,
-      currency: 'USD',
-      taxableBaseOriginal: 1450,
-      exemptOriginal: 120,
-      vatRate: 16,
-      igtfOriginal: 43.5,
-      confidence: 0.994
-    };
-    return res.json({ mode: 'SENIAT_OCR_ENGINE_READY', extracted: simulated });
+    const result = await processFiscalInvoiceVNDE({
+      base64Data,
+      mimeType,
+      fileName,
+      rawText,
+      qrPayload,
+      geminiApiKey: process.env.GEMINI_API_KEY,
+      db
+    });
+    return res.json(result);
   } catch (err) {
     next(err);
   }
@@ -406,6 +393,18 @@ app.post('/api/Voucher14', verifyFirebaseToken, (req, res, next) => {
     next(err);
   }
 });
+
+// Servir archivos estáticos del frontend de producción (React 19 + Vite)
+const distPath = path.resolve(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/webhooks')) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 // Manejo 404 para rutas API no definidas
 app.use('/api/*', (_req, res) => {
