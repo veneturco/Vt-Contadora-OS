@@ -298,6 +298,40 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
 
 const OCR_PRESETS = [
   {
+    label: 'VNDE 0 Tokens: Maxi Embutidos (Forma Libre)',
+    bookType: 'COMPRA' as const,
+    channel: 'DIGITAL' as const,
+    supplierRif: 'J-40549697-5',
+    supplierName: 'DISTRIBUIDORA MAXI EMBUTIDOS, C.A.',
+    hasBuyerRifOnTicket: true,
+    invoiceNumber: '00038205',
+    controlNumber: '00-041538',
+    currency: 'USD' as const,
+    taxableBaseOriginal: 0,
+    exemptOriginal: 488.68,
+    vatRate: 16,
+    igtfOriginal: 0,
+    vatRetentionRate: 0 as const,
+    islrRetentionRate: 0
+  },
+  {
+    label: 'VNDE 0 Tokens: Traki (Máquina Fiscal Z7C)',
+    bookType: 'COMPRA' as const,
+    channel: 'MAQUINA_FISCAL' as const,
+    supplierRif: 'J-09512460-6',
+    supplierName: 'TRAKI DISTRIBUIDORA, C.A.',
+    hasBuyerRifOnTicket: true,
+    invoiceNumber: '00020540',
+    controlNumber: 'Z7C7023363',
+    currency: 'VES' as const,
+    taxableBaseOriginal: 2663.93,
+    exemptOriginal: 3090.16,
+    vatRate: 16,
+    igtfOriginal: 0,
+    vatRetentionRate: 75 as const,
+    islrRetentionRate: 2
+  },
+  {
     label: 'Imprenta Digital (Con Retención IVA 75%)',
     bookType: 'COMPRA' as const,
     channel: 'DIGITAL' as const,
@@ -1297,7 +1331,7 @@ export default function App() {
           <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
           <div>
             <h1 className="ui-heading text-xl md:text-2xl font-extrabold tracking-tight flex flex-wrap items-center gap-2">
-              VENETURCO FISCAL OS <span className="text-xs font-mono px-2 py-0.5 border border-current rounded">v3.1 SENIAT 2026</span>
+              VENETURCO FISCAL OS <span className="text-xs font-mono px-2 py-0.5 border border-current rounded">v3.2 VNDE · SENIAT 2026</span>
               <span
                 className={`text-[10px] font-mono px-2 py-0.5 rounded ${
                   backendOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
@@ -1307,7 +1341,7 @@ export default function App() {
               </span>
             </h1>
             <p className="text-xs font-mono opacity-75">
-              SNAT/2026/00093 (G.O. 43.484) · SNAT/2026/00099 · Sesión: {currentUser.name}
+              SNAT/2026/00093 (G.O. 43.484) · SNAT/2026/00099 · Motor VNDE Cero Tokens · Sesión: {currentUser.name}
             </p>
           </div>
         </div>
