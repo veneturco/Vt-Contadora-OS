@@ -218,7 +218,7 @@ function requireTenantAccess(req, res, next) {
 app.get('/health', (_req, res) => {
   res.json({
     status: 'OK',
-    engine: 'VeneTurco Fiscal OS v3.1',
+    engine: 'VeneTurco Fiscal OS v3.2 (VNDE 0 Tokens)',
     norm: 'SNAT/2026/00093 & SNAT/2026/00099',
     storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE',
     timestamp: new Date().toISOString()
@@ -228,7 +228,7 @@ app.get('/health', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'OK',
-    engine: 'VeneTurco Fiscal OS v3.1',
+    engine: 'VeneTurco Fiscal OS v3.2 (VNDE 0 Tokens)',
     norm: 'SNAT/2026/00093 & SNAT/2026/00099',
     storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE',
     timestamp: new Date().toISOString()
