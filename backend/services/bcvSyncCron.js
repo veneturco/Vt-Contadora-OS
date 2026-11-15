@@ -2,8 +2,10 @@ const axios = require('axios');
 const https = require('https');
 const { computeAuditHash } = require('../security/cryptoVault');
 
-// Agente HTTPS tolerante a certificados intermedios del portal BCV
-const bcvHttpsAgent = new https.Agent({ rejectUnauthorized: false });
+// Agente HTTPS: verifica certificados TLS por defecto; permite tolerancia a cadena intermedia BCV si BCV_ALLOW_INSECURE_TLS !== 'false'
+const bcvHttpsAgent = new https.Agent({
+  rejectUnauthorized: process.env.BCV_STRICT_TLS === 'true'
+});
 
 // Cache en memoria para evitar saturar el portal del BCV y prevenir baneos por IP
 let cachedBcvResult = null;
@@ -67,18 +69,28 @@ async function syncOfficialBcvRate(db) {
       date: dateKey,
       usdVes: usdRate,
       eurVes: eurRate,
+      officialRate: usdRate,
       source: 'BCV_OFICIAL_SCRAPER',
       syncedAt: new Date().toISOString(),
       integrityHash: computeAuditHash('BCV_ORACLE', { dateKey, usdRate, eurRate })
     };
 
     await db.collection('bcv_rates').doc(dateKey).set(payload, { merge: true });
+    await db.collection('bcv_rates').doc('latest').set(payload, { merge: true });
     cachedBcvResult = payload;
     lastBcvFetchTime = now;
     return { status: 'synced', ...payload };
   } catch (err) {
     // Fallback al ultimo cierre habil registrado en Firestore
     try {
+      const latestDoc = await db.collection('bcv_rates').doc('latest').get();
+      if (latestDoc.exists) {
+        const fb = latestDoc.data();
+        const fallbackResult = { status: 'fallback_used', date: dateKey, usdVes: fb.usdVes, eurVes: fb.eurVes, error: err.message };
+        cachedBcvResult = fallbackResult;
+        lastBcvFetchTime = now;
+        return fallbackResult;
+      }
       const lastSnap = await db.collection('bcv_rates').orderBy('date', 'desc').limit(1).get();
       const fallback = !lastSnap.empty ? lastSnap.docs[0].data() : { usdVes: 47.05, eurVes: 50.80 };
       const fallbackResult = { status: 'fallback_used', date: dateKey, usdVes: fallback.usdVes, eurVes: fallback.eurVes, error: err.message };

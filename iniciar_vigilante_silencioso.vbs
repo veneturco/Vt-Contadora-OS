@@ -1,3 +1,8 @@
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run chr(34) & "auto_sync_vigilante.bat" & chr(34), 0
+Set fso = CreateObject("Scripting.FileSystemObject")
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+batPath = scriptDir & "\auto_sync_vigilante.bat"
+WshShell.CurrentDirectory = scriptDir
+WshShell.Run chr(34) & batPath & chr(34), 0, False
 Set WshShell = Nothing
+Set fso = Nothing

@@ -112,3 +112,83 @@ test('VNDE: Pipeline Maestro processFiscalInvoiceVNDE con 0 Tokens', async () =>
   assert.match(result.mode, /0 Tokens/);
   assert.equal(result.extracted.supplierRif, 'J-40549697-5');
 });
+
+test('VNDE Seguridad: No inyecta facturas falsas cuando el documento es ilegible y no hay API Key', async () => {
+  const result = await processFiscalInvoiceVNDE({
+    base64Data: 'AAECAwQF',
+    fileName: 'imagen_borrosa.jpg'
+  });
+
+  assert.ok(result);
+  assert.equal(result.extracted, null);
+  assert.match(result.mode, /VNDE_UNPARSEABLE_DOCUMENT/);
+});
+
+test('SaaS Billing & Seguridad: Códigos Telegram 12-hex, Conciliación de Pagos y Cuotas por Plan', async () => {
+  const {
+    generateTelegramLinkCode,
+    registerSubscriptionPayment,
+    approveSubscriptionPayment,
+    checkTenantPlanQuota
+  } = require('../services/saasBillingEngine');
+
+  const code = generateTelegramLinkCode('tenant_bodega_jh');
+  assert.match(code, /^VT-TENA-[0-9A-F]{12}$/);
+
+  // Mock de Firestore en memoria para probar flujo de pago pendiente -> aprobado y cuotas
+  const mem = new Map();
+  const mockDb = {
+    collection(col) {
+      return {
+        doc(id = 'doc_1') {
+          const path = `${col}/${id}`;
+          return {
+            id,
+            async get() {
+              const d = mem.get(path);
+              return { exists: d !== undefined, data: () => d };
+            },
+            async set(val, opts = {}) {
+              mem.set(path, opts.merge ? { ...(mem.get(path) || {}), ...val } : { ...val });
+            },
+            async update(val) {
+              mem.set(path, { ...(mem.get(path) || {}), ...val });
+            }
+          };
+        },
+        async add(val) {
+          mem.set(`${col}/log_1`, val);
+        }
+      };
+    }
+  };
+
+  // 1. Cliente reporta pago -> queda PENDIENTE_VERIFICACION con el monto oficial del catálogo ($29.99)
+  const pendingRes = await registerSubscriptionPayment(mockDb, {
+    tenantId: 'tenant_test',
+    planId: 'COMERCIO_PRO',
+    paymentMethod: 'PAGO_MOVIL',
+    referenceNumber: '0134-99887766',
+    bcvRate: 50,
+    actorUid: 'user_cliente',
+    actorRole: 'client'
+  });
+  assert.equal(pendingRes.paymentStatus, 'PENDIENTE_VERIFICACION');
+  assert.equal(pendingRes.amountUsd, 29.99);
+
+  // 2. Super-Admin aprueba el pago -> activa el tenant y marca VERIFICADO
+  const approvedRes = await approveSubscriptionPayment(mockDb, {
+    tenantId: 'tenant_test',
+    paymentId: 'doc_1',
+    actorUid: 'admin_principal'
+  });
+  assert.equal(approvedRes.status, 'ACTIVA');
+  assert.equal(approvedRes.paymentStatus, 'VERIFICADO');
+
+  // 3. Plan COMERCIO_PRO no incluye nómina -> bloquea cálculo de nómina con HTTP 403
+  const payrollCheck = await checkTenantPlanQuota(mockDb, 'tenant_test', { requirePayroll: true });
+  assert.equal(payrollCheck.allowed, false);
+  assert.equal(payrollCheck.status, 403);
+});
+
+

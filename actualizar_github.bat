@@ -1,28 +1,21 @@
 @echo off
-chcp 65001 > nul
+cd /d "%~dp0"
 echo ===================================================
-echo   VeneTurco Fiscal OS v3.2 - Actualizador a GitHub
+echo   Actualizando GitHub y Render a v3.2...
 echo ===================================================
 echo.
-
-echo 1. Comprobando estado de Git...
-git status
+echo 1. Agregando archivos...
+git add -A
 echo.
-
-echo 2. Agregando archivos modificados del motor VNDE v3.2...
-git add .
+echo 2. Guardando version v3.2...
+git commit -m "feat: release v3.2 VNDE engine with 0 token processing"
 echo.
-
-echo 3. Creando commit de actualizacion...
-git commit -m "feat: release v3.2 VNDE engine with 0 token processing and SENIAT 2026 presets"
+echo 3. Enviando a GitHub (Render se actualizara solo)...
+git push --force-with-lease origin main
+git push --force-with-lease origin master
 echo.
-
-echo 4. Enviando cambios a GitHub (main y master)...
-git push origin main
-git push origin master
-echo.
-
 echo ===================================================
-echo  ¡Listo! Render y Vercel se actualizaran en breve.
+echo   LISTO! Version 3.2 enviada a GitHub con exito.
+echo   Render iniciara el despliegue en 1 minuto.
 echo ===================================================
 pause

@@ -448,32 +448,11 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
   }
 
   return {
-    mode: 'VNDE_TIER_1_LOCAL_FALLBACK (0 Tokens)',
+    mode: 'VNDE_UNPARSEABLE_DOCUMENT (0 Tokens)',
     tokensUsed: 0,
-    extracted: {
-      supplierRif: 'J-40549697-5',
-      supplierName: 'DISTRIBUIDORA MAXI EMBUTIDOS, C.A.',
-      invoiceNumber: '00038205',
-      controlNumber: '00-041538',
-      emissionDate: new Date().toISOString().slice(0, 10),
-      emissionTime: '16:50:00',
-      channel: 'FORMA_LIBRE',
-      hasBuyerRifOnTicket: true,
-      currency: 'USD',
-      taxableBase: 0,
-      taxableBaseOriginal: 0,
-      exemptAmount: 488.68,
-      exemptOriginal: 488.68,
-      vatRate: 16,
-      vatAmount: 0,
-      vatOriginal: 0,
-      igtfAmount: 0,
-      igtfOriginal: 0,
-      totalAmount: 488.68,
-      totalOriginal: 488.68,
-      mathValid: true,
-      status: 'APROBADA'
-    }
+    confidence: 0,
+    extracted: null,
+    error: 'No se pudo extraer información fiscal verificable del documento. Asegúrese de enviar una imagen nítida, QR visible o texto fiscal legible.'
   };
 }
 
