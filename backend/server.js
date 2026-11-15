@@ -49,6 +49,10 @@ function createInMemoryFirestore() {
         const existing = store.get(path) || {};
         store.set(path, { ...existing, ...payload });
         return true;
+      },
+      async delete() {
+        store.delete(path);
+        return true;
       }
     };
   }
@@ -148,11 +152,33 @@ cron.schedule('5 0 * * *', async () => {
 
 const app = express();
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+      "img-src": ["'self'", "data:", "blob:", "https:"],
+      "connect-src": ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com"]
+    }
+  },
   crossOriginEmbedderPolicy: false
 }));
-app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
-app.use(express.json({ limit: '15mb' }));
+
+const allowedOrigins = process.env.ALLOWED_ORIGIN
+  ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim())
+  : null;
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || !allowedOrigins) return callback(null, true);
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origen no autorizado por política CORS de VeneTurco Fiscal OS'));
+  }
+}));
+app.use(express.json({ limit: '10mb' }));
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -179,6 +205,15 @@ const bcvSyncLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Límite de sincronización BCV excedido. Por favor espera unos minutos antes de reintentar.' }
+});
+
+// Rate limiter específico para escaneo OCR (protege cuota de IA y CPU)
+const ocrLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 45,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Límite de escaneos OCR alcanzado temporalmente. Espera unos minutos.' }
 });
 
 async function verifyFirebaseToken(req, res, next) {
@@ -237,6 +272,10 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/webhooks/telegram', webhookLimiter, async (req, res) => {
   const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && !process.env.TELEGRAM_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Webhook Telegram deshabilitado: falta configurar TELEGRAM_WEBHOOK_SECRET en producción.' });
+  }
   if (process.env.TELEGRAM_WEBHOOK_SECRET && secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
     return res.status(401).json({ error: 'Secret Token invalido' });
   }
@@ -258,18 +297,35 @@ app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, async (_req, 
   }
 });
 
-app.post('/api/ocr', verifyFirebaseToken, async (req, res, next) => {
+const ALLOWED_OCR_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+
+app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
   const { base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
   try {
+    if (!base64Data && !rawText && !qrPayload) {
+      return res.status(400).json({ error: 'Se requiere imagen/PDF (base64Data), texto fiscal (rawText) o código QR (qrPayload).' });
+    }
+    if (mimeType && !ALLOWED_OCR_MIMES.includes(mimeType)) {
+      return res.status(415).json({ error: `Formato de archivo no permitido (${mimeType}). Solo se admiten JPEG, PNG, WEBP o PDF.` });
+    }
+    if (base64Data && String(base64Data).length > 11 * 1024 * 1024) {
+      return res.status(413).json({ error: 'El archivo excede el tamaño máximo permitido (8 MB).' });
+    }
     const result = await processFiscalInvoiceVNDE({
       base64Data,
       mimeType,
-      fileName,
-      rawText,
-      qrPayload,
+      fileName: String(fileName || 'factura.jpg').slice(0, 120),
+      rawText: rawText ? String(rawText).slice(0, 15000) : undefined,
+      qrPayload: qrPayload ? String(qrPayload).slice(0, 1024) : undefined,
       geminiApiKey: process.env.GEMINI_API_KEY,
       db
     });
+    if (!result || !result.extracted) {
+      return res.status(422).json({
+        error: result?.error || 'No se pudieron extraer datos fiscales legibles del comprobante.',
+        mode: result?.mode || 'VNDE_UNPARSEABLE_DOCUMENT'
+      });
+    }
     return res.json(result);
   } catch (err) {
     next(err);
@@ -286,14 +342,21 @@ app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantA
     if (!tenantId || !rif) {
       return res.status(400).json({ error: 'tenantId y rif son requeridos' });
     }
+    const rifCheck = validateVenezuelanRIF(rif);
+    if (!rifCheck.valid) {
+      return res.status(400).json({ error: 'El RIF proporcionado no supera la validación Módulo 11 del SENIAT' });
+    }
     const code = generateTelegramLinkCode(tenantId);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
     await db.collection('telegram_links').doc(code).set({
       tenantId,
-      companyName: companyName || 'Empresa Vinculada',
-      rif,
+      companyName: String(companyName || 'Empresa Vinculada').slice(0, 120),
+      rif: rifCheck.formatted,
+      used: false,
+      expiresAt,
       createdAt: new Date().toISOString()
     });
-    res.json({ code });
+    res.json({ code, expiresAt });
   } catch (err) {
     next(err);
   }
@@ -301,7 +364,7 @@ app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantA
 
 app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
   try {
-    const { tenantId, planId, paymentMethod, referenceNumber, amountUsd, bcvRate } = req.body;
+    const { tenantId, planId, paymentMethod, referenceNumber, bcvRate } = req.body;
     if (!tenantId || !planId || !referenceNumber) {
       return res.status(400).json({ error: 'tenantId, planId y referenceNumber son obligatorios' });
     }
@@ -310,9 +373,9 @@ app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess,
       planId,
       paymentMethod: paymentMethod || 'TRANSFERENCIA_VES',
       referenceNumber,
-      amountUsd: Number(amountUsd || 49),
       bcvRate: Number(bcvRate || 47.05),
-      actorUid: req.user.uid
+      actorUid: req.user.uid,
+      actorRole: req.user.role
     });
     res.json(result);
   } catch (err) {
@@ -325,7 +388,7 @@ app.get('/api/validate-rif/:rif', verifyFirebaseToken, (req, res) => {
   res.json(result);
 });
 
-app.post('/api/export/seniat-iva-txt', verifyFirebaseToken, (req, res, next) => {
+app.post('/api/export/seniat-iva-txt', verifyFirebaseToken, requireTenantAccess, (req, res, next) => {
   try {
     const { agentRif, periodYYYYMM, rows } = req.body;
     if (!agentRif || !periodYYYYMM) {
@@ -339,7 +402,7 @@ app.post('/api/export/seniat-iva-txt', verifyFirebaseToken, (req, res, next) => 
   }
 });
 
-app.post('/api/export/seniat-islr-xml', verifyFirebaseToken, (req, res, next) => {
+app.post('/api/export/seniat-islr-xml', verifyFirebaseToken, requireTenantAccess, (req, res, next) => {
   try {
     const { agentRif, periodYYYYMM, retentions } = req.body;
     if (!agentRif || !periodYYYYMM) {
@@ -353,11 +416,11 @@ app.post('/api/export/seniat-islr-xml', verifyFirebaseToken, (req, res, next) =>
   }
 });
 
-app.post('/api/payroll/calculate', verifyFirebaseToken, (req, res, next) => {
+app.post('/api/payroll/calculate', verifyFirebaseToken, requireTenantAccess, (req, res, next) => {
   try {
     const { baseSalaryBs, cestaticketBs = 0, riskLevel = 'MINIMO' } = req.body;
-    if (baseSalaryBs === undefined || isNaN(Number(baseSalaryBs))) {
-      return res.status(400).json({ error: 'baseSalaryBs numérico es requerido' });
+    if (baseSalaryBs === undefined || isNaN(Number(baseSalaryBs)) || Number(baseSalaryBs) < 0) {
+      return res.status(400).json({ error: 'baseSalaryBs numérico positivo es requerido' });
     }
     const result = calculateLotttPayroll({
       baseSalaryBs: Number(baseSalaryBs),
@@ -370,7 +433,11 @@ app.post('/api/payroll/calculate', verifyFirebaseToken, (req, res, next) => {
   }
 });
 
+// Endpoint de diagnóstico criptográfico restringido exclusivamente a entorno local de desarrollo (deshabilitado en producción)
 app.post('/api/crypto/vault-test', verifyFirebaseToken, (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Diagnóstico de bóveda deshabilitado en producción por seguridad.' });
+  }
   try {
     const { plainText, previousHash = 'GENESIS_SENIAT_2026' } = req.body;
     const encrypted = encryptSensitiveField(plainText || 'SENIAT_2026');
@@ -382,7 +449,7 @@ app.post('/api/crypto/vault-test', verifyFirebaseToken, (req, res, next) => {
   }
 });
 
-app.post('/api/Voucher14', verifyFirebaseToken, (req, res, next) => {
+app.post('/api/Voucher14', verifyFirebaseToken, requireTenantAccess, (req, res, next) => {
   try {
     const { yearMonth, seq } = req.body;
     if (!yearMonth || seq === undefined) {
@@ -422,7 +489,7 @@ app.use((err, _req, res, _next) => {
 
 const PORT = process.env.PORT || 8080;
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`VeneTurco Fiscal OS v3.1 Backend activo en puerto ${PORT}`));
+  app.listen(PORT, () => console.log(`VeneTurco Fiscal OS v3.2 (VNDE) Backend activo en puerto ${PORT}`));
 }
 
 module.exports = app;

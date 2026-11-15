@@ -939,7 +939,12 @@ export default function App() {
           };
         }>('/api/ocr', {
           method: 'POST',
-          body: JSON.stringify({ base64Data, mimeType: file.type || 'image/jpeg', fileName: file.name }),
+          body: JSON.stringify({
+            tenantId: activeTenant.id,
+            base64Data,
+            mimeType: file.type || 'image/jpeg',
+            fileName: file.name
+          }),
           timeoutMs: 15000
         });
 

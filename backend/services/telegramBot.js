@@ -38,14 +38,18 @@ async function processTelegramReceiptUpdate(update, db) {
 
   if (text === '/tasa') {
     try {
-      const bcvSnap = await db.collection('bcv_oracle').doc('latest').get();
-      const bcvData = bcvSnap.exists ? bcvSnap.data() : { officialRate: 47.05, currency: 'USD', scrapedAt: new Date().toISOString() };
+      const bcvSnap = await db.collection('bcv_rates').doc('latest').get();
+      const bcvData = bcvSnap.exists ? bcvSnap.data() : { usdVes: 47.05, eurVes: 50.80, syncedAt: new Date().toISOString() };
+      const usdVal = Number(bcvData.usdVes ?? bcvData.officialRate ?? 47.05).toFixed(4);
+      const eurVal = Number(bcvData.eurVes ?? (Number(usdVal) * 1.08)).toFixed(4);
+      const syncDate = (bcvData.syncedAt || bcvData.scrapedAt || new Date().toISOString()).slice(0, 19).replace('T', ' ');
       await sendTelegramMessage(
         chatId,
         `🏛 *TASA OFICIAL BANCO CENTRAL DE VENEZUELA (BCV)*\n\n` +
-        `• 1 USD = *Bs. ${Number(bcvData.officialRate).toFixed(4)}*\n` +
+        `• 1 USD = *Bs. ${usdVal}*\n` +
+        `• 1 EUR = *Bs. ${eurVal}*\n` +
         `• Fuente: Banco Central de Venezuela (bcv.org.ve)\n` +
-        `• Última Sincronización: ${bcvData.scrapedAt.slice(0, 19).replace('T', ' ')}`
+        `• Última Sincronización: ${syncDate}`
       );
       return { status: 'rate_displayed' };
     } catch {
@@ -85,10 +89,15 @@ async function processTelegramReceiptUpdate(update, db) {
     const linkCode = text.replace('/vincular ', '').trim().toUpperCase();
     const linkSnap = await db.collection('telegram_links').doc(linkCode).get();
     if (!linkSnap.exists) {
-      await sendTelegramMessage(chatId, 'Código de vinculación inválido o expirado. Solicita un nuevo código a tu contador.');
+      await sendTelegramMessage(chatId, 'Código de vinculación inválido o ya utilizado. Solicita un nuevo código a tu contador.');
       return { status: 'invalid_code' };
     }
-    const { tenantId, companyName, rif } = linkSnap.data();
+    const linkData = linkSnap.data();
+    if (linkData.used || (linkData.expiresAt && new Date(linkData.expiresAt) < new Date())) {
+      await sendTelegramMessage(chatId, 'Este código de vinculación ha expirado o ya fue consumido. Genera uno nuevo desde la plataforma.');
+      return { status: 'expired_code' };
+    }
+    const { tenantId, companyName, rif } = linkData;
     await db.collection('telegram_links').doc(`chat_${chatId}`).set({
       chatId,
       tenantId,
@@ -96,7 +105,14 @@ async function processTelegramReceiptUpdate(update, db) {
       rif,
       linkedAt: new Date().toISOString()
     });
-    await sendTelegramMessage(chatId, `Vinculación exitosa con *${companyName}* (${rif}).\nEnvia una foto o PDF de cualquier factura y la procesaré automáticamente para el SENIAT.`);
+    // Consumir el código de un solo uso para impedir reutilización por terceros
+    await db.collection('telegram_links').doc(linkCode).set({
+      ...linkData,
+      used: true,
+      usedByChatId: chatId,
+      usedAt: new Date().toISOString()
+    });
+    await sendTelegramMessage(chatId, `Vinculación exitosa con *${companyName}* (${rif}).\nEnvía una foto o PDF de cualquier factura y la procesaré automáticamente para el SENIAT.`);
     return { status: 'linked', tenantId };
   }
 
