@@ -118,7 +118,7 @@ const INITIAL_INVOICES: FiscalInvoice[] = [
     emissionDate: '2026-11-12',
     emissionTime: '10:24:18',
     currency: 'USD',
-    bcvRateOnDate: 46.85,
+    bcvRateOnDate: 911.62,
     taxableBaseOriginal: 1200,
     exemptOriginal: 150,
     vatRate: 16,
@@ -145,7 +145,7 @@ const INITIAL_INVOICES: FiscalInvoice[] = [
     emissionDate: '2026-11-13',
     emissionTime: '15:42:05',
     currency: 'VES',
-    bcvRateOnDate: 46.92,
+    bcvRateOnDate: 914.02,
     taxableBaseOriginal: 8500,
     exemptOriginal: 0,
     vatRate: 16,
@@ -172,7 +172,7 @@ const INITIAL_INVOICES: FiscalInvoice[] = [
     emissionDate: '2026-11-14',
     emissionTime: '07:45:12',
     currency: 'USD',
-    bcvRateOnDate: 47.05,
+    bcvRateOnDate: 914.02,
     taxableBaseOriginal: 3400,
     exemptOriginal: 420,
     vatRate: 16,
@@ -199,7 +199,7 @@ const INITIAL_INVOICES: FiscalInvoice[] = [
     emissionDate: '2026-11-13',
     emissionTime: '11:10:00',
     currency: 'USD',
-    bcvRateOnDate: 46.92,
+    bcvRateOnDate: 914.02,
     taxableBaseOriginal: 950,
     exemptOriginal: 1200,
     vatRate: 16,
@@ -223,8 +223,8 @@ const INITIAL_PAYMENTS: SaasPaymentRecord[] = [
     paymentMethod: 'PAGO_MOVIL',
     referenceNumber: '0134-99281742',
     amountUsd: 79.99,
-    bcvRate: 46.85,
-    amountBs: 3747.53,
+    bcvRate: 914.02,
+    amountBs: 73112.46,
     status: 'VERIFICADO',
     auditHash: '7a88b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8',
     createdAt: '2026-11-14 08:15:22'
@@ -237,8 +237,8 @@ const INITIAL_PAYMENTS: SaasPaymentRecord[] = [
     paymentMethod: 'BINANCE_PAY',
     referenceNumber: 'BN-88291044912',
     amountUsd: 139.99,
-    bcvRate: 46.85,
-    amountBs: 6558.53,
+    bcvRate: 914.02,
+    amountBs: 127953.66,
     status: 'VERIFICADO',
     auditHash: '1f2e3d4c5b6a79801f2e3d4c5b6a79801f2e3d4c5b6a79801f2e3d4c5b6a7980',
     createdAt: '2026-11-01 09:30:00'
@@ -253,9 +253,9 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     action: 'BCV_ORACLE_SYNC',
     actorUid: 'system:cron_caracas',
     targetId: 'bcv_2026-11-12',
-    details: 'Sincronización automática Tasa Oficial BCV USD: Bs. 46.85',
+    details: 'Sincronización automática Tasa Oficial BCV USD: Bs. 914.02',
     previousHash: 'GENESIS_SENIAT_2026',
-    sha256Hash: computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 46.85 }),
+    sha256Hash: computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
     timestamp: '2026-11-12 09:05:01'
   },
   {
@@ -266,9 +266,9 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     actorUid: 'telegram:59182041',
     targetId: 'inv_001',
     details: 'Factura #00045812 (Distribuidora Alimentos Oriente C.A.) extraída con Gemini 2.5 Flash (Confianza 99.1%)',
-    previousHash: computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 46.85 }),
+    previousHash: computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
     sha256Hash: computeDeterministicHash(
-      computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 46.85 }),
+      computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
       { seq: 2, action: 'INGESTA_TELEGRAM_OCR', invoiceNumber: '00045812' }
     ),
     encryptedPayload: simulateAes256GcmEncrypt('RIF:J-30123456-1|CTRL:00-00192834|USD:1578.00'),
@@ -283,12 +283,12 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     targetId: 'inv_001',
     details: 'Aprobación fiscal y bloqueo de borrado por 10 años (Art. 18 SNAT/2026/00093)',
     previousHash: computeDeterministicHash(
-      computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 46.85 }),
+      computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
       { seq: 2, action: 'INGESTA_TELEGRAM_OCR', invoiceNumber: '00045812' }
     ),
     sha256Hash: computeDeterministicHash(
       computeDeterministicHash(
-        computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 46.85 }),
+        computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
         { seq: 2, action: 'INGESTA_TELEGRAM_OCR', invoiceNumber: '00045812' }
       ),
       { seq: 3, action: 'SELLO_INMUTABLE_COT', targetId: 'inv_001' }
@@ -444,7 +444,7 @@ export default function App() {
   const [newEmpRole, setNewEmpRole] = useState<string>('Asistente Administrativo');
   const [newEmpSalary, setNewEmpSalary] = useState<number>(14500);
 
-  const [bcvRate, setBcvRate] = useState<number>(47.05);
+  const [bcvRate, setBcvRate] = useState<number>(914.02);
   const [bcvSyncFlash, setBcvSyncFlash] = useState<string | null>(null);
   const [rifTestInput, setRifTestInput] = useState<string>('J-40918273-8');
 
@@ -501,7 +501,7 @@ export default function App() {
     {
       id: 'm4',
       sender: 'bot',
-      text: 'Factura registrada #00045812 | Control: 00-00192834 | Total: USD 1,578.00 (@ BCV 46.85) -> Bandeja del Contador.',
+      text: 'Factura registrada #00045812 | Control: 00-00192834 | Total: USD 1,578.00 (@ BCV 914.02) -> Bandeja del Contador.',
       time: '10:24'
     }
   ]);
@@ -579,6 +579,7 @@ export default function App() {
 
   useEffect(() => {
     let isMounted = true;
+    handleSyncBcvOracle();
     safeApiRequest<{ status: string }>('/api/health', { timeoutMs: 6000 }).then(res => {
       if (isMounted && res.ok && res.data?.status === 'OK') {
         setBackendOnline(true);
@@ -801,14 +802,37 @@ export default function App() {
   }
 
   async function handleSyncBcvOracle() {
+    let newRate: number | null = null;
+    let source = 'BCV';
+
+    // 1. Intentar backend del sistema (/api/bcv/sync-now o /api/bcv/latest)
     const res = await safeApiRequest<{ usdVes: number; status: string; source: string }>('/api/bcv/sync-now', {
       method: 'POST',
-      timeoutMs: 12000
+      timeoutMs: 8000
     });
-    if (res.ok && res.data?.usdVes) {
-      const newRate = Number(res.data.usdVes.toFixed(2));
+
+    if (res.ok && res.data?.usdVes && res.data.usdVes > 100) {
+      newRate = Number(res.data.usdVes.toFixed(2));
+      source = res.data.source || 'BCV';
+    } else {
+      // 2. Fallback resiliente directo desde el navegador (en caso de cold-start de Render)
+      try {
+        const mirrorRes = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
+        if (mirrorRes.ok) {
+          const mirrorData = await mirrorRes.json();
+          if (mirrorData && typeof mirrorData.promedio === 'number' && mirrorData.promedio > 100) {
+            newRate = Number(mirrorData.promedio.toFixed(2));
+            source = 'BCV (Oficial)';
+          }
+        }
+      } catch (_clientErr) {
+        // Fallback al valor actual
+      }
+    }
+
+    if (newRate) {
       setBcvRate(newRate);
-      setBcvSyncFlash(`Tasa Oficial BCV sincronizada (${res.data.source || 'BCV'}): Bs. ${newRate.toFixed(2)} / USD`);
+      setBcvSyncFlash(`Tasa Oficial BCV sincronizada (${source}): Bs. ${newRate.toFixed(2)} / USD`);
       appendAuditLog(
         'BCV_ORACLE_SYNC',
         'backend:bcvSyncCron',
@@ -816,7 +840,7 @@ export default function App() {
         `Sincronización oficial portal BCV: USD = Bs. ${newRate.toFixed(2)}`
       );
     } else {
-      setBcvSyncFlash(`Aviso: ${res.error || 'No se pudo contactar al oráculo BCV'}. Se mantiene la tasa oficial actual: Bs. ${bcvRate.toFixed(2)} / USD`);
+      setBcvSyncFlash(`Aviso: Se mantiene la tasa oficial actual: Bs. ${bcvRate.toFixed(2)} / USD`);
     }
     setTimeout(() => setBcvSyncFlash(null), 5000);
   }
@@ -1480,7 +1504,7 @@ export default function App() {
               type="number"
               step="0.01"
               value={bcvRate}
-              onChange={e => setBcvRate(Number(e.target.value) || 47.05)}
+              onChange={e => setBcvRate(Number(e.target.value) || 914.02)}
               className="w-20 bg-transparent text-xs font-mono font-bold tabular-nums text-[var(--accent-primary)] focus:outline-none"
             />
             <span className="text-xs font-mono">Bs.</span>

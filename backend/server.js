@@ -9,7 +9,7 @@ const cron = require('node-cron');
 const admin = require('firebase-admin');
 const { processTelegramReceiptUpdate } = require('./services/telegramBot');
 const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
-const { syncOfficialBcvRate } = require('./services/bcvSyncCron');
+const { syncOfficialBcvRate, DEFAULT_CURRENT_BCV_USD } = require('./services/bcvSyncCron');
 const {
   SAAS_PLANS,
   generateTelegramLinkCode,
@@ -296,7 +296,18 @@ app.post('/webhooks/telegram', webhookLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, async (_req, res, next) => {
+// Consulta pública de la Tasa Oficial BCV vigente
+app.get('/api/bcv/latest', bcvSyncLimiter, async (_req, res, next) => {
+  try {
+    const result = await syncOfficialBcvRate(db);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sincronización explícita del oráculo BCV
+app.post('/api/bcv/sync-now', bcvSyncLimiter, async (_req, res, next) => {
   try {
     const result = await syncOfficialBcvRate(db);
     res.json(result);
@@ -392,7 +403,7 @@ app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess,
       planId,
       paymentMethod: paymentMethod || 'TRANSFERENCIA_VES',
       referenceNumber,
-      bcvRate: Number(bcvRate || 47.05),
+      bcvRate: Number(bcvRate || DEFAULT_CURRENT_BCV_USD || 914.02),
       actorUid: req.user.uid,
       actorRole: req.user.role
     });
@@ -512,7 +523,7 @@ const possibleDistPaths = [
   path.resolve(__dirname, '../frontend/dist')
 ];
 const distPath = possibleDistPaths.find(p => fs.existsSync(p));
-if (fs.existsSync(distPath)) {
+if (distPath) {
   app.use(express.static(distPath));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/webhooks')) {
