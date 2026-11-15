@@ -10,7 +10,15 @@ const admin = require('firebase-admin');
 const { processTelegramReceiptUpdate } = require('./services/telegramBot');
 const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
 const { syncOfficialBcvRate } = require('./services/bcvSyncCron');
-const { SAAS_PLANS, generateTelegramLinkCode, registerSubscriptionPayment, suspendExpiredSubscriptions } = require('./services/saasBillingEngine');
+const {
+  SAAS_PLANS,
+  generateTelegramLinkCode,
+  registerSubscriptionPayment,
+  approveSubscriptionPayment,
+  checkTenantPlanQuota,
+  incrementTenantInvoiceUsage,
+  suspendExpiredSubscriptions
+} = require('./services/saasBillingEngine');
 const {
   validateVenezuelanRIF,
   buildRetentionVoucherNumber,
@@ -300,7 +308,7 @@ app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, async (_req, 
 const ALLOWED_OCR_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
 app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
-  const { base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
+  const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
   try {
     if (!base64Data && !rawText && !qrPayload) {
       return res.status(400).json({ error: 'Se requiere imagen/PDF (base64Data), texto fiscal (rawText) o código QR (qrPayload).' });
@@ -310,6 +318,10 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
     }
     if (base64Data && String(base64Data).length > 11 * 1024 * 1024) {
       return res.status(413).json({ error: 'El archivo excede el tamaño máximo permitido (8 MB).' });
+    }
+    const quotaCheck = await checkTenantPlanQuota(db, tenantId);
+    if (!quotaCheck.allowed) {
+      return res.status(quotaCheck.status || 429).json({ error: quotaCheck.error });
     }
     const result = await processFiscalInvoiceVNDE({
       base64Data,
@@ -326,7 +338,14 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
         mode: result?.mode || 'VNDE_UNPARSEABLE_DOCUMENT'
       });
     }
-    return res.json(result);
+    await incrementTenantInvoiceUsage(db, tenantId);
+    return res.json({
+      ...result,
+      quota: {
+        usedInvoices: (quotaCheck.usedInvoices || 0) + 1,
+        maxInvoicesMonthly: quotaCheck.maxInvoicesMonthly || 3000
+      }
+    });
   } catch (err) {
     next(err);
   }
@@ -383,6 +402,26 @@ app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess,
   }
 });
 
+app.post('/api/saas/approve-payment', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el Super-Administrador puede conciliar y aprobar pagos SaaS.' });
+    }
+    const { tenantId, paymentId } = req.body;
+    if (!tenantId || !paymentId) {
+      return res.status(400).json({ error: 'tenantId y paymentId son obligatorios para conciliar el pago.' });
+    }
+    const result = await approveSubscriptionPayment(db, {
+      tenantId,
+      paymentId,
+      actorUid: req.user.uid
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/validate-rif/:rif', verifyFirebaseToken, (req, res) => {
   const result = validateVenezuelanRIF(req.params.rif);
   res.json(result);
@@ -416,11 +455,17 @@ app.post('/api/export/seniat-islr-xml', verifyFirebaseToken, requireTenantAccess
   }
 });
 
-app.post('/api/payroll/calculate', verifyFirebaseToken, requireTenantAccess, (req, res, next) => {
+app.post('/api/payroll/calculate', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
   try {
-    const { baseSalaryBs, cestaticketBs = 0, riskLevel = 'MINIMO' } = req.body;
+    const { tenantId, baseSalaryBs, cestaticketBs = 0, riskLevel = 'MINIMO' } = req.body;
     if (baseSalaryBs === undefined || isNaN(Number(baseSalaryBs)) || Number(baseSalaryBs) < 0) {
       return res.status(400).json({ error: 'baseSalaryBs numérico positivo es requerido' });
+    }
+    if (tenantId) {
+      const quotaCheck = await checkTenantPlanQuota(db, tenantId, { requirePayroll: true });
+      if (!quotaCheck.allowed) {
+        return res.status(quotaCheck.status || 403).json({ error: quotaCheck.error });
+      }
     }
     const result = calculateLotttPayroll({
       baseSalaryBs: Number(baseSalaryBs),

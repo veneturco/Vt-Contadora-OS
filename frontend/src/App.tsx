@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import jsQR from 'jsqr';
 import {
   ShieldCheck, FileText, Cpu, Send, Users, CreditCard, Smartphone,
   Lock, Download, CheckCircle2, AlertTriangle, RefreshCw, Plus,
@@ -908,6 +909,35 @@ export default function App() {
     }, 450);
   }
 
+  function decodeQrFromDataUrl(dataUrl: string): Promise<string | undefined> {
+    return new Promise(resolve => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            const maxDim = 1200;
+            const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+            canvas.width = Math.max(1, Math.floor(img.width * scale));
+            canvas.height = Math.max(1, Math.floor(img.height * scale));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(undefined);
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+            resolve(code?.data || undefined);
+          } catch {
+            resolve(undefined);
+          }
+        };
+        img.onerror = () => resolve(undefined);
+        img.src = dataUrl;
+      } catch {
+        resolve(undefined);
+      }
+    });
+  }
+
   function handleFileUploadSimulation(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -920,10 +950,14 @@ export default function App() {
       setOcrAlertMessage(`Error al leer el archivo "${file.name}".`);
     };
     reader.onload = async () => {
-      const base64Data = String(reader.result || '').split(',')[1] || '';
+      const dataUrl = String(reader.result || '');
+      const base64Data = dataUrl.split(',')[1] || '';
+      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(dataUrl) : undefined;
       try {
         const res = await safeApiRequest<{
           mode: string;
+          tokensUsed?: number;
+          quota?: { usedInvoices: number; maxInvoicesMonthly: number };
           extracted: {
             supplierRif?: string;
             supplierName?: string;
@@ -942,6 +976,7 @@ export default function App() {
           body: JSON.stringify({
             tenantId: activeTenant.id,
             base64Data,
+            qrPayload: detectedQr,
             mimeType: file.type || 'image/jpeg',
             fileName: file.name
           }),
@@ -965,12 +1000,15 @@ export default function App() {
             igtfOriginal: Number(ext.igtfOriginal ?? prev.igtfOriginal),
             sourceChannel: 'WEB_OCR'
           }));
-          setOcrAlertMessage(`Imagen "${file.name}" procesada vía Backend (${res.data.mode}).`);
+          const quotaText = res.data.quota
+            ? ` · Cuota mes: ${res.data.quota.usedInvoices}/${res.data.quota.maxInvoicesMonthly}`
+            : '';
+          setOcrAlertMessage(`Imagen "${file.name}" procesada vía Backend (${res.data.mode})${quotaText}.`);
         } else {
-          setOcrAlertMessage(`Aviso OCR: ${res.error || 'Procesamiento asistido'}. Operando con motor local.`);
+          setOcrAlertMessage(`Aviso OCR: ${res.error || 'El documento requiere mayor nitidez'}. Verifique los campos en el formulario.`);
         }
       } catch {
-        setOcrAlertMessage(`Imagen "${file.name}" procesada con motor local Gemini 2.5 Flash.`);
+        setOcrAlertMessage(`Error de red al procesar "${file.name}". Complete o verifique los campos manualmente.`);
       } finally {
         setOcrScanning(false);
       }
@@ -982,6 +1020,16 @@ export default function App() {
     const rifValidation = validateVenezuelanRIF(ocrDraft.supplierRif);
     if (!rifValidation.valid) {
       setOcrAlertMessage(`ERROR MÓDULO 11: El RIF ${ocrDraft.supplierRif} tiene dígito verificador inválido.`);
+      return;
+    }
+
+    const activePlan = SAAS_PLANS_CATALOG.find(p => p.id === activeTenant.planId) || SAAS_PLANS_CATALOG[1];
+    if (activeTenant.subscriptionStatus === 'SUSPENDIDA') {
+      setOcrAlertMessage(`LICENCIA SUSPENDIDA: La empresa ${activeTenant.name} presenta mora. Renueve la licencia SaaS.`);
+      return;
+    }
+    if (tenantInvoices.length >= activePlan.maxInvoicesMonthly) {
+      setOcrAlertMessage(`CUOTA EXCEDIDA: Se alcanzó el tope de ${activePlan.maxInvoicesMonthly} facturas/mes del plan ${activePlan.name}.`);
       return;
     }
 
@@ -1074,21 +1122,36 @@ export default function App() {
     }));
   }
 
-  function handleRegisterSaasPayment() {
+  async function handleRegisterSaasPayment() {
     const plan = SAAS_PLANS_CATALOG.find(p => p.id === selectedPlanForPayment) || SAAS_PLANS_CATALOG[1];
     const amountBs = Number((plan.priceUsdMonthly * bcvRate).toFixed(2));
     const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
     const paymentId = `pay_${Date.now()}`;
+    const isAdminUser = currentUser?.role !== 'client';
+    const initialStatus: 'VERIFICADO' | 'PENDIENTE' = isAdminUser ? 'VERIFICADO' : 'PENDIENTE';
     const auditHash = computeDeterministicHash(lastHash, {
       paymentId,
       tenantId: activeTenant.id,
       planId: plan.id,
-      ref: paymentRefInput
+      ref: paymentRefInput,
+      status: initialStatus
     });
 
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + 30);
     const nextBillingStr = nextDate.toISOString().slice(0, 10);
+
+    // Sincronizar con el Backend SaaS Billing Engine
+    await safeApiRequest('/api/saas/register-payment', {
+      method: 'POST',
+      body: JSON.stringify({
+        tenantId: activeTenant.id,
+        planId: plan.id,
+        paymentMethod,
+        referenceNumber: paymentRefInput,
+        bcvRate
+      })
+    });
 
     const newRecord: SaasPaymentRecord = {
       id: paymentId,
@@ -1100,26 +1163,59 @@ export default function App() {
       amountUsd: plan.priceUsdMonthly,
       bcvRate,
       amountBs,
-      status: 'VERIFICADO',
+      status: initialStatus,
       auditHash,
       createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19)
     };
 
     setPayments(prev => [newRecord, ...prev]);
+    if (isAdminUser) {
+      setTenants(prev =>
+        prev.map(t =>
+          t.id === activeTenant.id
+            ? { ...t, planId: plan.id, subscriptionStatus: 'ACTIVA', nextBillingDate: nextBillingStr }
+            : t
+        )
+      );
+    }
+    appendAuditLog(
+      isAdminUser ? 'RENOVACION_LICENCIA_SAAS' : 'REPORTE_PAGO_PENDIENTE_SAAS',
+      isAdminUser ? 'admin:saas_billing' : `cliente:${activeTenant.rif}`,
+      paymentId,
+      isAdminUser
+        ? `Suscripción ${plan.name} renovada vía ${paymentMethod} (Ref: ${paymentRefInput}) por USD ${plan.priceUsdMonthly} (Bs. ${amountBs.toFixed(2)})`
+        : `Pago reportado en espera de conciliación bancaria (${paymentMethod} Ref: ${paymentRefInput}) por USD ${plan.priceUsdMonthly}`
+    );
+    setPaymentRefInput(`0134-${Math.floor(10000000 + Math.random() * 89999999)}`);
+  }
+
+  async function handleApproveSaasPayment(payment: SaasPaymentRecord) {
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+    const nextBillingStr = nextDate.toISOString().slice(0, 10);
+
+    await safeApiRequest('/api/saas/approve-payment', {
+      method: 'POST',
+      body: JSON.stringify({
+        tenantId: payment.tenantId,
+        paymentId: payment.id
+      })
+    });
+
+    setPayments(prev => prev.map(p => (p.id === payment.id ? { ...p, status: 'VERIFICADO' } : p)));
     setTenants(prev =>
       prev.map(t =>
-        t.id === activeTenant.id
-          ? { ...t, planId: plan.id, subscriptionStatus: 'ACTIVA', nextBillingDate: nextBillingStr }
+        t.id === payment.tenantId
+          ? { ...t, planId: payment.planId, subscriptionStatus: 'ACTIVA', nextBillingDate: nextBillingStr }
           : t
       )
     );
     appendAuditLog(
-      'RENOVACION_LICENCIA_SAAS',
-      'admin:saas_billing',
-      paymentId,
-      `Suscripción ${plan.name} renovada vía ${paymentMethod} (Ref: ${paymentRefInput}) por USD ${plan.priceUsdMonthly} (Bs. ${amountBs.toFixed(2)})`
+      'CONCILIACION_APROBADA_SAAS',
+      'admin:super_auditor',
+      payment.id,
+      `Pago Ref #${payment.referenceNumber} conciliado y verificado. Licencia ${payment.planName} activada hasta ${nextBillingStr}`
     );
-    setPaymentRefInput(`0134-${Math.floor(10000000 + Math.random() * 89999999)}`);
   }
 
   function handleRegenerateTelegramCode() {
@@ -2682,7 +2778,12 @@ export default function App() {
 
             {/* Payment Ledger Table */}
             <div className="ui-card p-5 space-y-3">
-              <h3 className="ui-heading text-base font-bold">Historial Inmutable de Pagos SaaS</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="ui-heading text-base font-bold">Historial Inmutable de Pagos SaaS y Conciliación Bancaria</h3>
+                <span className="text-[11px] font-mono opacity-75">
+                  Cuota Mes: <strong>{tenantInvoices.length}</strong> docs
+                </span>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs font-mono">
                   <thead>
@@ -2692,6 +2793,7 @@ export default function App() {
                       <th className="py-2 px-2">Método / Ref</th>
                       <th className="py-2 px-2 text-right">Monto USD</th>
                       <th className="py-2 px-2 text-right">Equivalente Bs.</th>
+                      <th className="py-2 px-2">Estatus</th>
                       <th className="py-2 px-2">Hash SHA-256</th>
                     </tr>
                   </thead>
@@ -2705,6 +2807,27 @@ export default function App() {
                         </td>
                         <td className="py-2 px-2 text-right tabular-nums">${p.amountUsd.toFixed(2)}</td>
                         <td className="py-2 px-2 text-right tabular-nums">Bs. {p.amountBs.toFixed(2)}</td>
+                        <td className="py-2 px-2">
+                          {p.status === 'VERIFICADO' ? (
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                              VERIFICADO
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                                PENDIENTE
+                              </span>
+                              {currentUser?.role !== 'client' && (
+                                <button
+                                  onClick={() => handleApproveSaasPayment(p)}
+                                  className="px-2 py-0.5 rounded bg-[var(--accent-primary)] text-black text-[10px] font-bold hover:opacity-90"
+                                >
+                                  Aprobar
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td className="py-2 px-2 text-emerald-400">{p.auditHash.slice(0, 14)}...</td>
                       </tr>
                     ))}
