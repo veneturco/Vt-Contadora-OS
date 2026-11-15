@@ -12,7 +12,7 @@ git commit -m "feat: release v3.2 VNDE engine with 0 token processing"
 echo.
 echo 3. Enviando a GitHub (Render se actualizara solo)...
 git push --force-with-lease origin main
-git push --force-with-lease origin master
+git push --force-with-lease https://github.com/veneturco/Vt-Contadora-OS.git main
 echo.
 echo ===================================================
 echo   LISTO! Version 3.2 enviada a GitHub con exito.
