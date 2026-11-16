@@ -745,18 +745,39 @@ export default function App() {
       hash: 'a38f71b9c20188de47f9b001a1c3df8992019481bc201481729381cba90123ef'
     }
   ]);
-
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'apple-craft-pro'));
+
+  // Candado de Seguridad RBAC y Enrutamiento Protegido por Rol
+  const ROLE_ALLOWED_TABS: Record<'superadmin' | 'admin' | 'client', ActiveTabId[]> = {
+    superadmin: ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'],
+    admin: ['clients', 'operations', 'payroll', 'ocr', 'books', 'reconciliation', 'mobile', 'saas', 'simplified', 'command'],
+    client: ['mobile', 'saas', 'operations']
+  };
+
+  const resolveGuardedTab = (tab: ActiveTabId, role: 'superadmin' | 'admin' | 'client'): ActiveTabId => {
+    const allowed = ROLE_ALLOWED_TABS[role] || ROLE_ALLOWED_TABS.client;
+    if (allowed.includes(tab)) return tab;
+    if (role === 'client') return 'mobile';
+    if (role === 'admin') return 'clients';
+    return 'accountants';
+  };
+
   const [activeTab, setActiveTab] = useState<ActiveTabId>(() => {
-    if (typeof window === 'undefined') return 'clients';
+    const initialRole = currentUser?.role || 'admin';
+    if (typeof window === 'undefined') return initialRole === 'client' ? 'mobile' : 'clients';
     const raw = window.location.hash.replace(/^#\/?/, '').split('/')[0] as ActiveTabId;
     const valid: ActiveTabId[] = ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'];
-    return valid.includes(raw) ? raw : 'clients';
+    const chosen = valid.includes(raw) ? raw : (initialRole === 'client' ? 'mobile' : 'clients');
+    return resolveGuardedTab(chosen, initialRole);
   });
+
   const [operationStep, setOperationStep] = useState<OperationStepId>(() => {
     if (typeof window === 'undefined') return 'scanner';
     const parts = window.location.hash.replace(/^#\/?/, '').split('/');
     if (parts[0] === 'operations' && (parts[1] === 'scanner' || parts[1] === 'books' || parts[1] === 'reconciliation')) {
+      if (currentUser?.role === 'client' && parts[1] !== 'scanner') {
+        return 'scanner';
+      }
       return parts[1];
     }
     return 'scanner';
@@ -770,22 +791,46 @@ export default function App() {
     }
   }, [activeTab, operationStep]);
 
+  // Candado Reactivo: Redirección automática si el rol cambia o si se intenta vulnerar la URL
+  useEffect(() => {
+    const role = currentUser?.role || 'admin';
+    const safeTab = resolveGuardedTab(activeTab, role);
+    if (safeTab !== activeTab) {
+      setActiveTab(safeTab);
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', safeTab === 'operations' ? `#/operations/${operationStep}` : `#/${safeTab}`);
+      }
+    }
+    if (role === 'client' && operationStep !== 'scanner') {
+      setOperationStep('scanner');
+    }
+  }, [currentUser?.role]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
+      const role = currentUser?.role || 'admin';
       const parts = window.location.hash.replace(/^#\/?/, '').split('/');
       const rawTab = parts[0] as ActiveTabId;
       const valid: ActiveTabId[] = ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'];
       if (valid.includes(rawTab)) {
-        setActiveTab(rawTab);
-        if (rawTab === 'operations' && (parts[1] === 'scanner' || parts[1] === 'books' || parts[1] === 'reconciliation')) {
-          setOperationStep(parts[1]);
+        const safeTab = resolveGuardedTab(rawTab, role);
+        if (safeTab !== rawTab) {
+          window.history.replaceState(null, '', safeTab === 'operations' ? `#/operations/${operationStep}` : `#/${safeTab}`);
+        }
+        setActiveTab(safeTab);
+        if (safeTab === 'operations' && (parts[1] === 'scanner' || parts[1] === 'books' || parts[1] === 'reconciliation')) {
+          if (role === 'client' && parts[1] !== 'scanner') {
+            setOperationStep('scanner');
+          } else {
+            setOperationStep(parts[1]);
+          }
         }
       }
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [currentUser?.role, operationStep]);
 
   // Navegación Dinámica Adaptativa por Rol (Apple Minimalist UX Cleaner 2026)
   const navTabs = useMemo(() => {
@@ -2819,202 +2864,247 @@ export default function App() {
 
   return (
     <div className="min-h-screen p-4 md:p-6">
-      {/* Top Command Bar */}
-      <header className="ui-card p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-          <div>
-            <h1 className="ui-heading text-xl md:text-2xl font-extrabold tracking-tight flex flex-wrap items-center gap-2">
-              VENETURCO FISCAL OS <span className="text-xs font-mono px-2 py-0.5 border border-current rounded">v3.2 VNDE · SENIAT 2026</span>
-              <span
-                className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-                  backendOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
-                }`}
-              >
-                {backendOnline ? 'API BACKEND: ONLINE (:8080)' : 'MODO AUTÓNOMO'}
+      {/* Top Command Bar · Apple Minimalist Glass Header 2026 */}
+      <header className="mb-5 p-3.5 rounded-2xl backdrop-blur-2xl bg-[var(--bg-surface)]/90 border border-white/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12),0_12px_32px_-8px_rgba(0,0,0,0.55)] transition-all">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          
+          {/* SECTOR 1 (IZQUIERDA): Identidad & Ancla de Empresa Activa */}
+          <div className="flex items-center gap-3">
+            {/* Logo Minimalista */}
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
-            </h1>
-            <p className="text-xs font-mono opacity-75">
-              SNAT/2026/00093 (G.O. 43.484) · SNAT/2026/00099 · Motor VNDE Cero Tokens · Sesión: {currentUser.name}
-            </p>
-          </div>
-        </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-extrabold text-sm md:text-base text-white tracking-tight">VENETURCO</span>
+                  <span className="text-xs font-mono font-medium text-emerald-400">Fiscal OS</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-white/70">v3.2</span>
+                </div>
+              </div>
+            </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Tenant Selector + New Tenant Button */}
-          <div className="flex items-center gap-2 px-3 py-1.5 border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)]">
-            <Building2 className="w-4 h-4 text-[var(--accent-secondary)]" />
-            <select
-              id="tenant-selector"
-              value={selectedTenantId}
-              onChange={e => setSelectedTenantId(e.target.value)}
-              className="bg-transparent text-xs font-mono font-semibold focus:outline-none"
-            >
-              {tenants.map(t => (
-                <option key={t.id} value={t.id} className="bg-slate-900 text-white">
-                  {t.name} ({t.rif}) [{t.subscriptionStatus}]
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => setNewTenantModalOpen(true)}
-              title="Registrar Nueva Empresa (RIF)"
-              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-mono text-[var(--accent-primary)] flex items-center gap-1"
-            >
-              <Plus className="w-3 h-3" /> RIF
-            </button>
+            <div className="hidden md:block h-6 w-[1px] bg-white/10" />
+
+            {/* Cápsula de Empresa Activa (Tenant Anchor - Seguridad Mental) */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-white/20 transition-all shadow-inner">
+              <Building2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <div className="flex items-center gap-2">
+                {currentUser?.role === 'client' ? (
+                  <span className="text-xs font-bold text-white font-mono">
+                    {activeTenant.name} ({activeTenant.rif})
+                  </span>
+                ) : (
+                  <select
+                    id="tenant-selector"
+                    value={selectedTenantId}
+                    onChange={e => setSelectedTenantId(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    title="Cambiar Empresa / Cliente Activo"
+                  >
+                    {tenants.map(t => (
+                      <option key={t.id} value={t.id} className="bg-slate-900 text-white">
+                        {t.name} ({t.rif})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                  activeTenant.regime === 'SPE'
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                }`}>
+                  {activeTenant.regime}
+                </span>
+              </div>
+              {currentUser?.role !== 'client' && (
+                <button
+                  onClick={() => setNewTenantModalOpen(true)}
+                  title="Registrar Nueva Empresa (RIF)"
+                  className="ml-1 p-1 rounded-lg bg-white/10 hover:bg-emerald-500/20 hover:text-emerald-300 text-white/70 text-[10px] font-mono flex items-center transition"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* BCV Oracle */}
-          <div className="flex items-center gap-2 px-3 py-1.5 border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)]">
-            <span className="text-xs font-mono opacity-75">BCV USD:</span>
+          {/* SECTOR 2 (CENTRO): Termómetro Macroeconómico BCV en Vivo */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono shadow-inner">
+            <span className="text-white/60 font-semibold flex items-center gap-1.5">
+              <span>💵</span>
+              <span className="hidden sm:inline">BCV:</span>
+            </span>
             <input
               id="bcv-rate-input"
               type="number"
               step="0.01"
               value={bcvRate}
               onChange={e => setBcvRate(Number(e.target.value) || 914.02)}
-              className="w-20 bg-transparent text-xs font-mono font-bold tabular-nums text-[var(--accent-primary)] focus:outline-none"
+              className="w-20 bg-transparent text-xs font-mono font-bold tabular-nums text-emerald-400 focus:outline-none"
+              title="Tasa Oficial BCV editable"
             />
-            <span className="text-xs font-mono">Bs.</span>
+            <span className="text-white/60">Bs./USD</span>
             <button
               onClick={handleSyncBcvOracle}
-              title="Sincronizar Tasa Oficial BCV"
-              className="p-1 rounded hover:bg-white/10 text-[var(--accent-secondary)]"
+              title="Sincronizar Tasa Oficial BCV con el Oráculo"
+              className="p-1 rounded hover:bg-white/10 text-cyan-400 transition"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3 h-3" />
             </button>
           </div>
 
-          {/* Network Resilience Status */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[11px] font-mono">
-            {isOnline ? (
-              <>
-                <Wifi className="w-3 h-3 text-emerald-400" />
-                <span className="text-emerald-400 text-[10px] font-bold hidden sm:inline">ONLINE</span>
-              </>
+          {/* SECTOR 3 (DERECHA): Búsqueda Universal + Rol + Utilidades */}
+          <div className="flex flex-wrap items-center gap-2">
+            
+            {/* Buscador Universal Ctrl+K (Estilo Linear) */}
+            <button
+              id="cmd-palette-trigger"
+              onClick={() => setCommandPaletteOpen(true)}
+              className="px-3 py-1.5 text-xs font-mono rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-cyan-400/40 text-white/70 hover:text-white flex items-center gap-2 transition"
+              title="Abrir Búsqueda Universal (Ctrl+K)"
+            >
+              <Search className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden md:inline">Buscar...</span>
+              <kbd className="px-1.5 py-0.5 text-[9px] rounded bg-white/10 text-slate-300 font-mono">⌘K</kbd>
+            </button>
+
+            {/* Selector de Espacio de Trabajo por Rol / Candado RBAC */}
+            {currentUser?.role === 'client' ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold shadow-inner" title="Espacio Protegido: Portal Comercio (Aislamiento Total Anti-IDOR)">
+                <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Portal Comercio</span>
+                <span className="text-[10px] font-mono opacity-75">PROTEGIDO</span>
+              </div>
+            ) : currentUser?.role === 'admin' ? (
+              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
+                <button
+                  onClick={() => setActiveTab('clients')}
+                  className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30 shadow-sm flex items-center gap-1"
+                  title="Espacio de Trabajo: Contador Aliado (CPC)"
+                >
+                  <span>💼</span>
+                  <span className="hidden lg:inline">Contador</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const updated = { ...currentUser, role: 'client' as const, name: `Comercio (${activeTenant.name})` };
+                    setCurrentUser(updated);
+                    localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                    setActiveTab('mobile');
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  title="Previsualizar cómo ve el portal tu cliente comercio"
+                >
+                  <span>📱</span>
+                  <span className="hidden lg:inline">Ver como Cliente</span>
+                </button>
+              </div>
             ) : (
-              <>
-                <WifiOff className="w-3 h-3 text-amber-400 animate-pulse" />
-                <span className="text-amber-400 text-[10px] font-bold hidden sm:inline">OFFLINE</span>
-              </>
+              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
+                <button
+                  onClick={() => {
+                    const updated = { ...currentUser, role: 'admin' as const, name: 'Lic. Auditor Principal (Firma)' };
+                    setCurrentUser(updated);
+                    localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                    setActiveTab('clients');
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  title="Espacio de Trabajo: Contador Aliado (CPC)"
+                >
+                  <span>💼</span>
+                  <span className="hidden lg:inline">Contador</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('accountants');
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shadow-sm flex items-center gap-1"
+                  title="Espacio de Trabajo: Super-Admin (Torre de Control)"
+                >
+                  <span>👑</span>
+                  <span className="hidden lg:inline">Super-Admin</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const updated = { ...currentUser, role: 'client' as const, name: `Comercio (${activeTenant.name})` };
+                    setCurrentUser(updated);
+                    localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                    setActiveTab('mobile');
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  title="Espacio de Trabajo: Comercio (Portal Móvil)"
+                >
+                  <span>📱</span>
+                  <span className="hidden lg:inline">Cliente</span>
+                </button>
+              </div>
             )}
+
+            {/* Utilidades Secundarias Compactas */}
+            <div className="flex items-center gap-1 pl-1">
+              {pwaInstallPrompt && (
+                <button
+                  onClick={() => {
+                    pwaInstallPrompt.prompt();
+                    pwaInstallPrompt.userChoice.then(() => setPwaInstallPrompt(null));
+                  }}
+                  className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 animate-pulse transition"
+                  title="Instalar App en este Dispositivo"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {/* Selector de Piel Visual Compacto */}
+              <select
+                id="skin-selector"
+                value={skin}
+                onChange={e => setSkin(e.target.value as SkinId)}
+                className="px-2 py-1.5 text-xs font-mono rounded-lg bg-white/[0.04] border border-white/10 text-white/70 hover:text-white focus:outline-none"
+                aria-label="Selector de piel visual"
+                title="Tema Visual"
+              >
+                {SKINS.map(s => (
+                  <option key={s.id} value={s.id} className="bg-slate-900 text-white">
+                    {s.label.split(' ')[0]} {s.id}
+                  </option>
+                ))}
+              </select>
+
+              {/* Estado de Red */}
+              <div
+                className="p-1.5 rounded-lg bg-white/[0.04] border border-white/10"
+                title={isOnline ? 'Conexión a Internet Estable' : 'Modo Bóveda Offline'}
+              >
+                {isOnline ? (
+                  <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                )}
+              </div>
+
+              {/* Botón Snapshot Drive */}
+              <button
+                onClick={handleExportSnapshot}
+                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-white/70 hover:text-white transition"
+                title="Descargar Snapshot Criptográfico Drive"
+              >
+                <Download className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Botón Cerrar Sesión */}
+              <button
+                onClick={handleLogout}
+                title="Cerrar Sesión"
+                className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-400 hover:text-rose-300 transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
           </div>
-
-          {/* Skin Switcher */}
-          <select
-            id="skin-selector"
-            value={skin}
-            onChange={e => setSkin(e.target.value as SkinId)}
-            className="px-3 py-1.5 text-xs font-mono border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)]"
-            aria-label="Selector de piel visual"
-          >
-            {SKINS.map(s => (
-              <option key={s.id} value={s.id} className="bg-slate-900 text-white">
-                SKIN: {s.label}
-              </option>
-            ))}
-          </select>
-
-          <button
-            id="cmd-palette-trigger"
-            onClick={() => setCommandPaletteOpen(true)}
-            className="px-3 py-1.5 text-xs font-mono border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)] hover:border-[var(--accent-primary)] flex items-center gap-1.5"
-            title="Abrir Command Palette Universal (Ctrl+K)"
-          >
-            <Terminal className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-            <span>Comandos</span>
-            <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-white/10">Ctrl+K</kbd>
-          </button>
-
-          {pwaInstallPrompt && (
-            <button
-              onClick={() => {
-                pwaInstallPrompt.prompt();
-                pwaInstallPrompt.userChoice.then(() => setPwaInstallPrompt(null));
-              }}
-              className="px-3 py-2 text-xs font-mono font-bold rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5 animate-pulse"
-              title="Instalar App en este Dispositivo (Android / iOS / PC)"
-            >
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>Instalar App</span>
-            </button>
-          )}
-
-          <button onClick={handleExportSnapshot} className="ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" />
-            Snapshot Drive
-          </button>
-
-          {/* Selector Rápido de Espacio de Trabajo por Rol (Apple Minimalist UX) */}
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] font-medium">
-            <button
-              onClick={() => {
-                if (currentUser) {
-                  const updated = { ...currentUser, role: 'admin' as const, name: 'Lic. Auditor Principal (Firma)' };
-                  setCurrentUser(updated);
-                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
-                  setActiveTab('clients');
-                }
-              }}
-              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
-                currentUser?.role === 'admin'
-                  ? 'bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30'
-                  : 'text-[#9898A0] hover:text-white'
-              }`}
-              title="Espacio de Trabajo: Contador Aliado (3 Módulos Limpios)"
-            >
-              <span>💼</span>
-              <span className="hidden md:inline">Contador</span>
-            </button>
-            <button
-              onClick={() => {
-                if (currentUser) {
-                  const updated = { ...currentUser, role: 'superadmin' as const, name: 'Director General / Super-Admin SaaS' };
-                  setCurrentUser(updated);
-                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
-                  setActiveTab('accountants');
-                }
-              }}
-              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
-                currentUser?.role === 'superadmin'
-                  ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30'
-                  : 'text-[#9898A0] hover:text-white'
-              }`}
-              title="Espacio de Trabajo: Super-Admin (Torre de Control)"
-            >
-              <span>👑</span>
-              <span className="hidden md:inline">Super-Admin</span>
-            </button>
-            <button
-              onClick={() => {
-                if (currentUser) {
-                  const updated = { ...currentUser, role: 'client' as const, name: `Comercio (${activeTenant.name})` };
-                  setCurrentUser(updated);
-                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
-                  setActiveTab('mobile');
-                }
-              }}
-              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
-                currentUser?.role === 'client'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30'
-                  : 'text-[#9898A0] hover:text-white'
-              }`}
-              title="Espacio de Trabajo: Comercio (Portal Móvil)"
-            >
-              <span>📱</span>
-              <span className="hidden md:inline">Cliente</span>
-            </button>
-          </div>
-
-          <button
-            onClick={handleLogout}
-            title="Cerrar Sesión"
-            className="px-2.5 py-2 text-xs font-mono border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)] hover:border-rose-400 text-rose-400 flex items-center gap-1"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Salir
-          </button>
         </div>
       </header>
 
@@ -7725,15 +7815,17 @@ export default function App() {
 
             <div className="max-h-80 overflow-y-auto space-y-1">
               {[
-                ...tenants.map(t => ({
-                  label: `🏢 Cambiar a ${t.name} (${t.rif})`,
-                  category: 'CLIENTE',
-                  action: () => {
-                    setSelectedTenantId(t.id);
-                    setActiveTab('clients');
-                    setCommandPaletteOpen(false);
-                  }
-                })),
+                ...(currentUser?.role !== 'client'
+                  ? tenants.map(t => ({
+                      label: `🏢 Cambiar a ${t.name} (${t.rif})`,
+                      category: 'CLIENTE',
+                      action: () => {
+                        setSelectedTenantId(t.id);
+                        setActiveTab('clients');
+                        setCommandPaletteOpen(false);
+                      }
+                    }))
+                  : []),
                 ...tenantInvoices.slice(0, 15).map(inv => ({
                   label: `🧾 Inspeccionar Factura #${inv.invoiceNumber} · ${inv.supplierName} (${inv.currency} ${inv.totalOriginal.toFixed(2)})`,
                   category: 'FACTURA',
@@ -7742,22 +7834,26 @@ export default function App() {
                     setCommandPaletteOpen(false);
                   }
                 })),
-                {
-                  label: '👑 Ir a Torre de Control Super-Admin (Red de Contadores)',
-                  category: 'SUPER-ADMIN',
-                  action: () => {
-                    setActiveTab('accountants');
-                    setCommandPaletteOpen(false);
-                  }
-                },
-                {
-                  label: '👑 Registrar Nuevo Contador Partner (CPC)',
-                  category: 'SUPER-ADMIN',
-                  action: () => {
-                    handleOpenAccountantModal();
-                    setCommandPaletteOpen(false);
-                  }
-                },
+                ...(currentUser?.role === 'superadmin'
+                  ? [
+                      {
+                        label: '👑 Ir a Torre de Control Super-Admin (Red de Contadores)',
+                        category: 'SUPER-ADMIN',
+                        action: () => {
+                          setActiveTab('accountants');
+                          setCommandPaletteOpen(false);
+                        }
+                      },
+                      {
+                        label: '👑 Registrar Nuevo Contador Partner (CPC)',
+                        category: 'SUPER-ADMIN',
+                        action: () => {
+                          handleOpenAccountantModal();
+                          setCommandPaletteOpen(false);
+                        }
+                      }
+                    ]
+                  : []),
                 {
                   label: 'Sincronizar Tasa Oficial BCV Ahora',
                   category: 'ORÁCULO',
