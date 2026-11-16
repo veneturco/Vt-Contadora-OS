@@ -28,6 +28,7 @@ import {
   openPrintableRetentionVoucher,
   openPrintablePaystub,
   downloadPdfRetentionVoucher,
+  downloadPdfIslrRetentionVoucher,
   downloadPdfPaystub,
   BankMovement,
   parseBankStatementCsv,
@@ -4729,12 +4730,21 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => downloadPdfRetentionVoucher(activeTenant.name, activeTenant.rif, inv)}
-                                    title="Descargar Comprobante PDF Vectorial con Código QR Oficial"
+                                    title="Descargar Comprobante PDF Vectorial con Código QR Oficial (IVA)"
                                     className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
                                   >
-                                    <Download className="w-3 h-3" /> PDF QR
+                                    <Download className="w-3 h-3" /> Ret. IVA
                                   </button>
                                 </span>
+                              )}
+                              {inv.islrRetentionRate > 0 && (
+                                <button
+                                  onClick={() => downloadPdfIslrRetentionVoucher(activeTenant.name, activeTenant.rif, inv)}
+                                  title="Descargar Comprobante Oficial de Retención ISLR (Decreto 1808) en PDF"
+                                  className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
+                                >
+                                  <FileText className="w-3 h-3 text-purple-400" /> Ret. ISLR
+                                </button>
                               )}
                               {inv.docType === '01' && (
                                 <button
@@ -6194,6 +6204,22 @@ export default function App() {
                   Imprimir Comprobante Retención IVA (14 Dígitos)
                 </button>
               )}
+              {inspectedInvoice.islrRetentionRate > 0 && (
+                <button
+                  onClick={() =>
+                    downloadPdfIslrRetentionVoucher(
+                      activeTenant.name,
+                      activeTenant.rif,
+                      inspectedInvoice,
+                      Math.max(1, tenantInvoices.filter(i => i.islrRetentionRate > 0).findIndex(i => i.id === inspectedInvoice.id) + 1)
+                    )
+                  }
+                  className="w-full py-2.5 text-xs font-mono rounded border border-purple-500 text-purple-300 hover:bg-purple-500/10 flex items-center justify-center gap-2 font-bold"
+                >
+                  <FileText className="w-4 h-4 text-purple-400" />
+                  Descargar Comprobante Retención ISLR (Decreto 1808 PDF)
+                </button>
+              )}
               {inspectedInvoice.status !== 'APROBADA' ? (
                 <button
                   onClick={() => {
@@ -7023,6 +7049,17 @@ export default function App() {
                       exportIslrXmlDecreto1808(activeTenant.rif, '202611', tenantInvoices),
                       'application/xml'
                     );
+                    setCommandPaletteOpen(false);
+                  }
+                },
+                {
+                  label: 'Descargar Comprobante Retención ISLR Decreto 1808 (PDF)',
+                  category: 'COMPROBANTE',
+                  action: () => {
+                    const islrInv = tenantInvoices.find(i => i.islrRetentionRate > 0) || tenantInvoices[0];
+                    if (islrInv) {
+                      downloadPdfIslrRetentionVoucher(activeTenant.name, activeTenant.rif, islrInv);
+                    }
                     setCommandPaletteOpen(false);
                   }
                 },

@@ -692,6 +692,199 @@ export function downloadPdfRetentionVoucher(agentName: string, agentRif: string,
   doc.save(`Comprobante_Retencion_IVA_${voucher14}.pdf`);
 }
 
+export function buildIslrVoucherNumber(periodYYYYMM: string, seq: number = 1): string {
+  const ym = periodYYYYMM.replace(/[^0-9]/g, '').slice(0, 6) || '202611';
+  return `ARC-${ym}-${String(seq).padStart(6, '0')}`;
+}
+
+export function downloadPdfIslrRetentionVoucher(
+  agentName: string,
+  agentRif: string,
+  inv: FiscalInvoice,
+  seq: number = 1
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const period = inv.emissionDate.replace(/-/g, '').slice(0, 6) || '202611';
+  const voucherNum = buildIslrVoucherNumber(period, seq);
+
+  const totalBs = toVes(inv.totalOriginal, inv.currency, inv.bcvRateOnDate);
+  const baseBs = toVes(inv.taxableBaseOriginal, inv.currency, inv.bcvRateOnDate);
+  const islrRate = inv.islrRetentionRate || 2;
+  const conceptCode = resolveIslrConceptCode(inv);
+  const conceptDescription =
+    conceptCode === '055'
+      ? '055 - Honorarios Profesionales a Personas Jurídicas / Comisiones Mercantiles (5%)'
+      : conceptCode === '004'
+        ? '004 - Honorarios Profesionales PN / Fletes y Transportes PJ (3%)'
+        : conceptCode === '054'
+          ? '054 - Ejecución de Obras y Prestación de Servicios por Personas Naturales (1%)'
+          : '053 - Servicios Generales Prestados por Personas Jurídicas (2% Decreto 1808 Art. 9 Num. 11)';
+
+  const islrWithheldBs = Number((baseBs * (islrRate / 100)).toFixed(2));
+  const rateBcv = inv.bcvRateOnDate || 914.02;
+  const islrWithheldUsd = Number((islrWithheldBs / rateBcv).toFixed(2));
+
+  // Marco exterior
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
+  doc.rect(10, 10, 190, 277);
+
+  // Encabezado Nacional Oficial
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text('REPÚBLICA BOLIVARIANA DE VENEZUELA', 105, 18, { align: 'center' });
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text('MINISTERIO DEL PODER POPULAR DE ECONOMÍA, FINANZAS Y COMERCIO EXTERIOR', 105, 22.5, { align: 'center' });
+  doc.text('SERVICIO NACIONAL INTEGRADO DE ADMINISTRACIÓN ADUANERA Y TRIBUTARIA (SENIAT)', 105, 26.5, { align: 'center' });
+
+  // Banner Comprobante ISLR
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 30, 182, 18, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 30, 182, 18);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('COMPROBANTE DE RETENCIÓN DEL IMPUESTO SOBRE LA RENTA (ISLR)', 18, 38);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Decreto N° 1.808 (Reglamento Parcial en Materia de Retenciones ISLR · G.O. N° 36.203)', 18, 43.5);
+
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(147, 51, 234); // Púrpura distintivo ISLR
+  doc.text(`Nº ${voucherNum}`, 192, 38, { align: 'right' });
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Período Fiscal: ${inv.emissionDate.slice(0, 7)} · Emisión: ${inv.emissionDate}`, 192, 43.5, { align: 'right' });
+
+  // 1. Agente de Retención
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('1. DATOS DEL AGENTE DE RETENCIÓN (COMPRADOR / PAGADOR):', 14, 55);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Nombre / Razón Social: ${agentName}`, 14, 60);
+  doc.text(`Registro de Información Fiscal (RIF): ${agentRif}`, 14, 64.5);
+  doc.text(`Domicilio Fiscal: República Bolivariana de Venezuela (Sujeto Pasivo Especial / Ordinario)`, 14, 69);
+
+  // 2. Sujeto Retenido
+  doc.setFont('helvetica', 'bold');
+  doc.text('2. DATOS DEL SUJETO RETENIDO (PROVEEDOR / BENEFICIARIO DEL PAGO):', 14, 76);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Nombre / Razón Social: ${inv.supplierName}`, 14, 81);
+  doc.text(`Registro de Información Fiscal (RIF): ${inv.supplierRif}`, 14, 85.5);
+  doc.text(`Tipo de Sujeto: ${inv.supplierRif.startsWith('V') || inv.supplierRif.startsWith('E') ? 'Persona Natural Residente' : 'Persona Jurídica Domiciliada'}`, 14, 90);
+
+  // 3. Tabla Detalle de la Operación
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 96, 182, 8, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Fecha Factura', 16, 101);
+  doc.text('Nº Factura', 42, 101);
+  doc.text('Nº Control', 68, 101);
+  doc.text('Total Factura', 95, 101);
+  doc.text('Base Imponible', 123, 101);
+  doc.text('Alícuota %', 151, 101);
+  doc.text('ISLR Retenido', 172, 101);
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(15, 23, 42);
+  doc.text(inv.emissionDate, 16, 110);
+  doc.text(inv.invoiceNumber, 42, 110);
+  doc.text(inv.controlNumber, 68, 110);
+  doc.text(`Bs. ${totalBs.toFixed(2)}`, 95, 110);
+  doc.text(`Bs. ${baseBs.toFixed(2)}`, 123, 110);
+  doc.text(`${islrRate.toFixed(2)}%`, 151, 110);
+  doc.setFont('courier', 'bold');
+  doc.setTextColor(147, 51, 234);
+  doc.text(`Bs. ${islrWithheldBs.toFixed(2)}`, 172, 110);
+
+  // Concepto de Retención según Decreto 1808
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, 116, 182, 14, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 116, 182, 14);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text('CONCEPTO DE RETENCIÓN SEGÚN DECRETO 1808 (TABLA OFICIAL SENIAT):', 18, 121);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(conceptDescription, 18, 126);
+
+  // Totales Box
+  doc.setDrawColor(203, 213, 225);
+  doc.line(14, 134, 196, 134);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text('TOTAL IMPUESTO RETENIDO (ISLR):', 110, 142);
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(147, 51, 234);
+  doc.text(`Bs. ${islrWithheldBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`, 196, 142, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Contravalor Referencial (@ BCV ${rateBcv} Bs/USD): $${islrWithheldUsd.toFixed(2)} USD`, 196, 147, { align: 'right' });
+
+  // QR & Cripto Sello
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, 154, 182, 34, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, 154, 182, 34);
+
+  drawVectorQr(doc, 18, 157, 28, `ISLR_${voucherNum}_${inv.auditHash || inv.invoiceNumber}`);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(15, 23, 42);
+  doc.text('VALIDACIÓN CRIPTOGRÁFICA Y CONSTANCIA FISCAL:', 52, 162);
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Hash SHA-256: ${inv.auditHash || 'GENESIS_SENIAT_ISLR_2026'}`, 52, 167);
+  doc.text('Base Legal: Art. 24 Decreto N° 1.808 (Reglamento de Retenciones ISLR)', 52, 172);
+  doc.text('Declaración: Enterado mensualmente al SENIAT en archivo XML según Decreto 1808', 52, 177);
+  doc.text('Custodia: 10 años conforme al Art. 177 del Código Orgánico Tributario (COT)', 52, 182);
+
+  // Firmas
+  const sigY = 225;
+  doc.setDrawColor(71, 85, 105);
+  doc.setLineWidth(0.3);
+  doc.line(25, sigY, 90, sigY);
+  doc.line(120, sigY, 185, sigY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Agente de Retención (Firma y Sello)', 57.5, sigY + 5, { align: 'center' });
+  doc.text(agentName, 57.5, sigY + 9, { align: 'center' });
+
+  doc.text('Sujeto Retenido / Proveedor (Recibí Conforme)', 152.5, sigY + 5, { align: 'center' });
+  doc.text(inv.supplierName, 152.5, sigY + 9, { align: 'center' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('C.I. / RIF: ___________________ Fecha: ___/___/2026', 152.5, sigY + 14, { align: 'center' });
+
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Documento oficial generado por VeneTurco Fiscal OS v3.2 · Homologado Decreto 1.808 / SENIAT', 105, 282, { align: 'center' });
+
+  doc.save(`Comprobante_Retencion_ISLR_${voucherNum}.pdf`);
+}
+
 export function downloadPdfPaystub(companyName: string, companyRif: string, emp: PayrollEmployee) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const b = calculateLotttFullBreakdown(emp.baseSalaryBs, emp.cestaticketBs, emp.riskLevel);
