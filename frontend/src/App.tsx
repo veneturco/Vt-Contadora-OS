@@ -28,7 +28,14 @@ import {
   openPrintableRetentionVoucher,
   openPrintablePaystub,
   downloadPdfRetentionVoucher,
-  downloadPdfPaystub
+  downloadPdfPaystub,
+  BankMovement,
+  parseBankStatementCsv,
+  calculateExchangeDifferenceNic21,
+  breakdownPosSettlementBatch,
+  runDeterministicBankReconciliation,
+  exportBankReconciliationCsv,
+  downloadPdfBankReconciliationAudit
 } from './utils/seniatEngine';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
@@ -442,6 +449,93 @@ const INITIAL_EMPLOYEES: PayrollEmployee[] = [
   }
 ];
 
+const INITIAL_BANK_MOVEMENTS: BankMovement[] = [
+  {
+    id: 'mov_banesco_01',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'BANESCO',
+    date: '2026-11-15',
+    referenceNumber: '0098412',
+    description: 'PAGO MOVIL C2P REF 0098412 CIUDADANO COMPRADOR',
+    amountBs: 91402.00,
+    movementType: 'PAGO_MOVIL',
+    reconciliationStatus: 'DIFERENCIAL_CAMBIARIO',
+    matchedInvoiceId: 'inv_001',
+    matchedInvoiceNumber: '00491',
+    exchangeDiffBs: 3402.00,
+    auditHash: 'sha256_mov_banesco_98412'
+  },
+  {
+    id: 'mov_banesco_02',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'BANESCO',
+    date: '2026-11-15',
+    referenceNumber: '482910',
+    description: 'ABONO LIQUIDACION LOTE POS TERMINAL #4829',
+    amountBs: 96700.00,
+    movementType: 'CIERRE_LOTE_POS',
+    reconciliationStatus: 'CONCILIADO',
+    posBreakdown: {
+      grossSalesBs: 100000.00,
+      bankFeeBs: 1800.00,
+      seniatRetBs: 1500.00,
+      netDepositBs: 96700.00
+    },
+    auditHash: 'sha256_mov_banesco_pos_4829'
+  },
+  {
+    id: 'mov_bdv_01',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'BDV',
+    date: '2026-11-14',
+    referenceNumber: '884712',
+    description: 'TRANSF. INTERBANCARIA BNC REF: 884712',
+    amountBs: 342150.00,
+    movementType: 'TRANSFERENCIA',
+    reconciliationStatus: 'CONCILIADO',
+    matchedInvoiceId: 'inv_002',
+    matchedInvoiceNumber: '00488',
+    exchangeDiffBs: 0,
+    auditHash: 'sha256_mov_bdv_884712'
+  },
+  {
+    id: 'mov_bdv_02',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'BDV',
+    date: '2026-11-14',
+    referenceNumber: '001842',
+    description: 'COMISION MANTENIMIENTO MENSUAL CUENTA CORRIENTE',
+    amountBs: -450.00,
+    movementType: 'COMISION_BANCARIA',
+    reconciliationStatus: 'CONCILIADO',
+    auditHash: 'sha256_mov_bdv_fee_1842'
+  },
+  {
+    id: 'mov_mercantil_01',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'MERCANTIL',
+    date: '2026-11-13',
+    referenceNumber: '110482',
+    description: 'PAGO MOVIL INTERBANCARIO REF: 110482',
+    amountBs: 145000.00,
+    movementType: 'PAGO_MOVIL',
+    reconciliationStatus: 'PENDIENTE',
+    auditHash: 'sha256_mov_mercantil_110482'
+  },
+  {
+    id: 'mov_bancamiga_01',
+    tenantId: 'tenant_bodega_jh',
+    bankName: 'BANCAMIGA',
+    date: '2026-11-12',
+    referenceNumber: '771294',
+    description: 'DEBITO IGTF 3% OPERACION DIVISAS CASH CONVENIO 20',
+    amountBs: -2742.00,
+    movementType: 'DEBITO_IGTF',
+    reconciliationStatus: 'CONCILIADO',
+    auditHash: 'sha256_mov_bancamiga_igtf_771'
+  }
+];
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<{ email: string; role: 'admin' | 'client'; name: string } | null>(() =>
     safeGetStorage('vt_auth_user', null)
@@ -455,7 +549,7 @@ export default function App() {
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'hyperframe-tactical'));
-  const [activeTab, setActiveTab] = useState<'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('clients');
+  const [activeTab, setActiveTab] = useState<'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'reconciliation' | 'mobile' | 'security'>('clients');
   const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
   const [clientSearchQuery, setClientSearchQuery] = useState<string>('');
   const [copiedTelegramTenantId, setCopiedTelegramTenantId] = useState<string | null>(null);
@@ -469,6 +563,13 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
+
+  // Bank Reconciliation States (VEN-NIF NIC 21 & Art. 177 COT)
+  const [bankMovements, setBankMovements] = useState<BankMovement[]>(() => safeGetStorage('vt_bank_moves_v32', INITIAL_BANK_MOVEMENTS));
+  const [selectedBankFilter, setSelectedBankFilter] = useState<'TODOS' | 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA'>('TODOS');
+  const [reconcileSearchQuery, setReconcileSearchQuery] = useState<string>('');
+  const [inspectedBankMove, setInspectedBankMove] = useState<BankMovement | null>(() => INITIAL_BANK_MOVEMENTS[0]);
+  const [reconcileManualInvId, setReconcileManualInvId] = useState<string>('');
 
   // New Tenant Modal State
   const [newTenantModalOpen, setNewTenantModalOpen] = useState<boolean>(false);
@@ -817,6 +918,147 @@ export default function App() {
     setSubPaymentModalTenant(null);
     setTimeout(() => setSubPayToast(null), 6000);
   }
+
+  // =========================================================================
+  // BANK RECONCILIATION HANDLERS (VEN-NIF NIC 21 & ART. 177 COT)
+  // =========================================================================
+  function handleRunAutoReconcile() {
+    const res = runDeterministicBankReconciliation(bankMovements, tenantInvoices, bcvRate);
+    setBankMovements(res.reconciledMoves);
+    appendAuditLog(
+      'CONCILIACION_BANCARIA_EJECUTADA',
+      currentUser?.email || 'admin:contador',
+      activeTenant.id,
+      `Conciliación bancaria ejecutada: ${res.matchedCount} partidas cruzadas, Ganancia Cambiaria: +Bs. ${res.totalGainCambiariaBs}, Pérdida Cambiaria: -Bs. ${res.totalLossCambiariaBs}`
+    );
+    setSubPayToast(`¡Conciliación 1-Clic ejecutada! ${res.matchedCount} movimientos cruzados automáticamente con éxito.`);
+    setTimeout(() => setSubPayToast(null), 5000);
+  }
+
+  function handleFileUploadBankCsv(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      const text = evt.target?.result as string;
+      if (!text) return;
+      const parsed = parseBankStatementCsv(
+        text,
+        selectedBankFilter === 'TODOS' ? 'BANESCO' : selectedBankFilter,
+        activeTenant.id
+      );
+      if (parsed.length > 0) {
+        setBankMovements(prev => [...parsed, ...prev]);
+        appendAuditLog(
+          'EXTRACTO_BANCARIO_IMPORTADO',
+          currentUser?.email || 'admin:contador',
+          activeTenant.id,
+          `${parsed.length} movimientos importados del archivo ${file.name}`
+        );
+        setSubPayToast(`¡${parsed.length} movimientos importados con éxito! Haz clic en "Ejecutar Conciliación" para cruzarlos.`);
+        setTimeout(() => setSubPayToast(null), 5000);
+      } else {
+        alert('No se detectaron movimientos válidos en el archivo. Verifique el formato CSV/Excel.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
+  function handleManualLinkMoveToInvoice(moveId: string, invoiceId: string) {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv) return;
+
+    setBankMovements(prev =>
+      prev.map(m => {
+        if (m.id !== moveId) return m;
+        let diffBs = 0;
+        if (inv.currency === 'USD') {
+          const diffInfo = calculateExchangeDifferenceNic21({
+            invoiceTotalOriginal: inv.totalOriginal,
+            invoiceCurrency: 'USD',
+            invoiceBcvRate: inv.bcvRateOnDate || bcvRate,
+            paymentBcvRate: bcvRate,
+            paidAmountBs: m.amountBs
+          });
+          diffBs = diffInfo.diffBs;
+        }
+        const updated = {
+          ...m,
+          reconciliationStatus: (diffBs !== 0 ? 'DIFERENCIAL_CAMBIARIO' : 'CONCILIADO') as BankMovement['reconciliationStatus'],
+          matchedInvoiceId: inv.id,
+          matchedInvoiceNumber: inv.invoiceNumber,
+          exchangeDiffBs: diffBs
+        };
+        if (inspectedBankMove?.id === moveId) {
+          setInspectedBankMove(updated);
+        }
+        return updated;
+      })
+    );
+
+    appendAuditLog(
+      'CONCILIACION_MANUAL_VINCULADA',
+      currentUser?.email || 'admin:contador',
+      activeTenant.id,
+      `Movimiento ${moveId} vinculado manualmente a Factura #${inv.invoiceNumber}`
+    );
+    setSubPayToast(`Movimiento vinculado con Factura #${inv.invoiceNumber}.`);
+    setTimeout(() => setSubPayToast(null), 4000);
+  }
+
+  function handleDownloadReconcilePdf() {
+    downloadPdfBankReconciliationAudit(activeTenant.name, activeTenant.rif, '202611', bankMovements);
+    appendAuditLog(
+      'CERTIFICADO_CONCILIACION_PDF_DESCARGADO',
+      currentUser?.email || 'admin:contador',
+      activeTenant.id,
+      `Certificado Oficial de Conciliación Bancaria Art. 177 COT descargado en PDF`
+    );
+  }
+
+  function handleDownloadReconcileCsv() {
+    const csv = exportBankReconciliationCsv(bankMovements, activeTenant.rif, '202611');
+    handleDownloadFile(`CONCILIACION_BANCARIA_${activeTenant.rif}_202611.csv`, csv, 'text/csv');
+  }
+
+  const reconciliationStats = useMemo(() => {
+    const tenantMoves = bankMovements.filter(m => m.tenantId === activeTenant.id || m.tenantId.includes('bodega'));
+    const totalMoves = tenantMoves.length;
+    const reconciledMoves = tenantMoves.filter(m => m.reconciliationStatus === 'CONCILIADO' || m.reconciliationStatus === 'DIFERENCIAL_CAMBIARIO');
+    const matchedCount = reconciledMoves.length;
+    const matchPercent = totalMoves > 0 ? Math.round((matchedCount / totalMoves) * 100) : 0;
+
+    let totalBankBalanceBs = 0;
+    let totalGainDiffBs = 0;
+    let totalLossDiffBs = 0;
+    let totalPosGrossBs = 0;
+    let totalPosFeeBs = 0;
+    let totalPosRetBs = 0;
+
+    tenantMoves.forEach(m => {
+      totalBankBalanceBs += m.amountBs;
+      if (m.exchangeDiffBs && m.exchangeDiffBs > 0) totalGainDiffBs += m.exchangeDiffBs;
+      if (m.exchangeDiffBs && m.exchangeDiffBs < 0) totalLossDiffBs += Math.abs(m.exchangeDiffBs);
+      if (m.posBreakdown) {
+        totalPosGrossBs += m.posBreakdown.grossSalesBs;
+        totalPosFeeBs += m.posBreakdown.bankFeeBs;
+        totalPosRetBs += m.posBreakdown.seniatRetBs;
+      }
+    });
+
+    return {
+      totalMoves,
+      matchedCount,
+      matchPercent,
+      totalBankBalanceBs,
+      totalGainDiffBs,
+      totalLossDiffBs,
+      totalPosGrossBs,
+      totalPosFeeBs,
+      totalPosRetBs
+    };
+  }, [bankMovements, activeTenant.id]);
 
   const portfolioStats = useMemo(() => {
     let totalPendingDrafts = 0;
@@ -1920,8 +2162,9 @@ export default function App() {
           { id: 'books', label: '03. Libros SENIAT & TXT/XML', icon: FileText },
           { id: 'payroll', label: '04. Nómina LOTTT', icon: Users },
           { id: 'saas', label: '05. Licencias SaaS', icon: CreditCard },
-          { id: 'mobile', label: '06. Portal Cliente 9:16', icon: Smartphone },
-          { id: 'security', label: '07. Blindaje SHA-256', icon: ShieldCheck }
+          { id: 'reconciliation', label: '06. Conciliación Bancaria', icon: Scale },
+          { id: 'mobile', label: '07. Portal Cliente 9:16', icon: Smartphone },
+          { id: 'security', label: '08. Blindaje SHA-256', icon: ShieldCheck }
         ].map(tab => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -4458,6 +4701,379 @@ export default function App() {
       )}
 
       {/* =====================================================================
+          TAB 06: CONCILIACIÓN BANCARIA MULTI-BANCO & DIFERENCIAL CAMBIARIO (NIC 21)
+         ===================================================================== */}
+      {activeTab === 'reconciliation' && (
+        <div className="space-y-6">
+          {/* Header & KPI Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="ui-card p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono opacity-75 uppercase">
+                <span>Saldo en Bancos (Extractos)</span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-white/10">MULTI-BANCO</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-white tabular-nums">
+                Bs. {reconciliationStats.totalBankBalanceBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] opacity-75 font-mono">
+                {reconciliationStats.totalMoves} movimientos registrados en el período
+              </div>
+            </div>
+
+            <div className="ui-card p-4 border-emerald-500/40 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono text-emerald-400 font-bold uppercase">
+                <span>Partidas Conciliadas</span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                  {reconciliationStats.matchPercent}% COINCIDENCIA
+                </span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-emerald-400 tabular-nums">
+                {reconciliationStats.matchedCount} / {reconciliationStats.totalMoves}
+              </div>
+              <div className="text-[11px] opacity-75 font-mono text-emerald-300">
+                Respaldo probatorio fehaciente (Art. 177 COT)
+              </div>
+            </div>
+
+            <div className="ui-card p-4 border-purple-500/40 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono text-purple-300 font-bold uppercase">
+                <span>Diferencial Cambiario (NIC 21)</span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-300">
+                  {reconciliationStats.totalGainDiffBs >= reconciliationStats.totalLossDiffBs ? 'GANANCIA' : 'PÉRDIDA'}
+                </span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-purple-400 tabular-nums">
+                +Bs. {(reconciliationStats.totalGainDiffBs - reconciliationStats.totalLossDiffBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] opacity-75 font-mono text-purple-200">
+                Ganancia financiera sujeta a ISLR calculada @ BCV
+              </div>
+            </div>
+
+            <div className="ui-card p-4 border-amber-500/40 space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono text-amber-300 font-bold uppercase">
+                <span>Retenciones & Comisiones POS</span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">LOTES</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-amber-400 tabular-nums">
+                Bs. {reconciliationStats.totalPosRetBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] opacity-75 font-mono text-amber-200">
+                Crédito fiscal 1.5% retenido por bancos en puntos de venta
+              </div>
+            </div>
+          </div>
+
+          {/* Action Toolbar */}
+          <div className="ui-card p-4 flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="opacity-75 font-bold">Filtrar Banco:</span>
+              {(['TODOS', 'BANESCO', 'BDV', 'MERCANTIL', 'BANCAMIGA'] as const).map(b => (
+                <button
+                  key={b}
+                  onClick={() => setSelectedBankFilter(b)}
+                  className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
+                    selectedBankFilter === b
+                      ? 'bg-[var(--accent-primary)] text-black'
+                      : 'bg-[var(--bg-elevated)] border border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  {b === 'TODOS' ? 'Todos los Bancos' : b}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="px-3.5 py-2 rounded bg-[var(--bg-elevated)] hover:bg-white/10 border border-[var(--border-subtle)] font-bold cursor-pointer flex items-center gap-1.5 transition">
+                <Upload className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>Importar Extracto (CSV/Excel)</span>
+                <input
+                  type="file"
+                  accept=".csv,.txt,.xlsx"
+                  onChange={handleFileUploadBankCsv}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                onClick={handleRunAutoReconcile}
+                className="ui-btn-primary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 shadow"
+              >
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Ejecutar Conciliación 1-Clic</span>
+              </button>
+
+              <button
+                onClick={handleDownloadReconcilePdf}
+                className="px-3.5 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 transition shadow"
+                title="Generar Certificado Oficial SENIAT Art. 177 COT"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Certificado Art. 177 (PDF)</span>
+              </button>
+
+              <button
+                onClick={handleDownloadReconcileCsv}
+                className="px-3.5 py-2 rounded bg-[var(--bg-elevated)] hover:bg-white/10 border border-[var(--border-subtle)] font-bold flex items-center gap-1 transition"
+                title="Exportar archivo CSV para Excel"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>CSV</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Split-Screen Forensic Grid (7 Cols Bank Movements + 5 Cols Forensic Inspector) */}
+          <div className="grid grid-cols-12 gap-5">
+            {/* 7-Cols: Tabular List of Bank Movements */}
+            <div className="col-span-12 lg:col-span-7 space-y-3">
+              <div className="ui-card p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-[var(--accent-primary)]" />
+                    <h3 className="ui-heading text-sm font-bold">
+                      Movimientos del Extracto Bancario ({activeTenant.name})
+                    </h3>
+                  </div>
+                  <div className="w-full sm:w-64">
+                    <input
+                      type="text"
+                      placeholder="Buscar por ref, concepto, monto..."
+                      value={reconcileSearchQuery}
+                      onChange={e => setReconcileSearchQuery(e.target.value)}
+                      className="w-full p-1.5 text-xs rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs font-mono">
+                    <thead>
+                      <tr className="border-b border-[var(--border-subtle)] opacity-75">
+                        <th className="py-2 px-2">Banco</th>
+                        <th className="py-2 px-2">Fecha</th>
+                        <th className="py-2 px-2">Referencia / Concepto</th>
+                        <th className="py-2 px-2 text-right">Monto Bs.</th>
+                        <th className="py-2 px-2 text-center">Estado</th>
+                        <th className="py-2 px-2 text-right">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bankMovements
+                        .filter(m => selectedBankFilter === 'TODOS' || m.bankName === selectedBankFilter)
+                        .filter(m => {
+                          if (!reconcileSearchQuery.trim()) return true;
+                          const q = reconcileSearchQuery.toLowerCase();
+                          return (
+                            m.referenceNumber.toLowerCase().includes(q) ||
+                            m.description.toLowerCase().includes(q) ||
+                            m.bankName.toLowerCase().includes(q) ||
+                            String(m.amountBs).includes(q)
+                          );
+                        })
+                        .map(m => {
+                          const isSelected = inspectedBankMove?.id === m.id;
+                          return (
+                            <tr
+                              key={m.id}
+                              onClick={() => setInspectedBankMove(m)}
+                              className={`border-b border-[var(--border-subtle)]/50 cursor-pointer transition-colors ${
+                                isSelected ? 'bg-white/[0.06] border-l-2 border-l-[var(--accent-primary)]' : 'hover:bg-white/[0.02]'
+                              }`}
+                            >
+                              <td className="py-2 px-2 font-bold text-[10px]">
+                                <span className="px-1.5 py-0.5 rounded bg-white/10">{m.bankName}</span>
+                              </td>
+                              <td className="py-2 px-2 text-[11px] opacity-75">{m.date}</td>
+                              <td className="py-2 px-2">
+                                <div className="font-bold text-white text-[11px]">
+                                  {m.referenceNumber ? `Ref: ${m.referenceNumber}` : 'Sin Ref'}
+                                </div>
+                                <div className="text-[10px] opacity-65 truncate max-w-[200px]" title={m.description}>
+                                  {m.description}
+                                </div>
+                              </td>
+                              <td className={`py-2 px-2 text-right tabular-nums font-bold ${m.amountBs > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {m.amountBs > 0 ? '+' : ''}Bs. {Math.abs(m.amountBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2 px-2 text-center">
+                                {m.reconciliationStatus === 'CONCILIADO' ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                    CONCILIADO
+                                  </span>
+                                ) : m.reconciliationStatus === 'DIFERENCIAL_CAMBIARIO' ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    DIF. CAMBIARIO
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    PENDIENTE
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-2 text-right">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setInspectedBankMove(m);
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold"
+                                >
+                                  Ver
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* 5-Cols: Forensic Inspector Drawer */}
+            <div className="col-span-12 lg:col-span-5 space-y-4">
+              {inspectedBankMove ? (
+                <div className="ui-card p-5 space-y-4 text-xs font-mono">
+                  <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
+                    <div className="flex items-center gap-2">
+                      <Eye className="w-4 h-4 text-[var(--accent-primary)]" />
+                      <h4 className="ui-heading text-sm font-bold">Inspector Forense de Partida</h4>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 font-bold">
+                      {inspectedBankMove.bankName}
+                    </span>
+                  </div>
+
+                  {/* Summary Box */}
+                  <div className="p-3.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-2">
+                    <div className="text-[10px] uppercase opacity-75">Concepto Bancario:</div>
+                    <div className="font-bold text-white text-xs">{inspectedBankMove.description}</div>
+                    <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[var(--border-subtle)] text-[11px]">
+                      <div>
+                        <span className="opacity-60 block">Referencia:</span>
+                        <strong className="text-white">{inspectedBankMove.referenceNumber || 'N/A'}</strong>
+                      </div>
+                      <div>
+                        <span className="opacity-60 block">Fecha Registro:</span>
+                        <strong className="text-white">{inspectedBankMove.date}</strong>
+                      </div>
+                      <div>
+                        <span className="opacity-60 block">Monto en Banco:</span>
+                        <strong className={inspectedBankMove.amountBs > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                          Bs. {Math.abs(inspectedBankMove.amountBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="opacity-60 block">Tipo Detectado:</span>
+                        <strong className="text-[var(--accent-primary)]">{inspectedBankMove.movementType}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Diferencial Cambiario Breakdown (NIC 21) */}
+                  {inspectedBankMove.reconciliationStatus === 'DIFERENCIAL_CAMBIARIO' && (
+                    <div className="p-3.5 rounded bg-purple-950/30 border border-purple-500/40 space-y-2 text-[11px]">
+                      <div className="flex items-center justify-between text-purple-300 font-bold">
+                        <span>Ajuste por Diferencial Cambiario (VEN-NIF NIC 21)</span>
+                        <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-[9px]">SENIAT OK</span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between">
+                          <span className="opacity-75">Factura Vinculada:</span>
+                          <strong className="text-white">#{inspectedBankMove.matchedInvoiceNumber}</strong>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="opacity-75">Ganancia Cambiaria Neta:</span>
+                          <strong className="text-emerald-400 font-bold">
+                            +Bs. {(inspectedBankMove.exchangeDiffBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                          </strong>
+                        </div>
+                      </div>
+                      <div className="p-2 rounded bg-black/40 border border-purple-500/20 text-[10px] text-purple-200">
+                        <strong>Asiento Contable Sugerido:</strong><br />
+                        · D: Banco {inspectedBankMove.bankName} Bs. {Math.abs(inspectedBankMove.amountBs).toLocaleString('es-VE', { minimumFractionDigits: 2 })}<br />
+                        · H: Cuentas por Cobrar Clientes Bs. {(Math.abs(inspectedBankMove.amountBs) - (inspectedBankMove.exchangeDiffBs || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}<br />
+                        · H: Ganancia por Diferencial Cambiario Bs. {(inspectedBankMove.exchangeDiffBs || 0).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* POS Settlement Batch Breakdown */}
+                  {inspectedBankMove.posBreakdown && (
+                    <div className="p-3.5 rounded bg-amber-950/30 border border-amber-500/40 space-y-2 text-[11px]">
+                      <div className="flex items-center justify-between text-amber-300 font-bold">
+                        <span>Desglose Cierre de Lote Punto de Venta (POS)</span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-[9px]">TARJETAS</span>
+                      </div>
+                      <div className="space-y-1 text-[11px]">
+                        <div className="flex justify-between">
+                          <span className="opacity-75">Venta Bruta en Terminal:</span>
+                          <strong className="text-white">
+                            Bs. {inspectedBankMove.posBreakdown.grossSalesBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between text-rose-300">
+                          <span>- Comisión Bancaria Terminal (1.8%):</span>
+                          <strong>-Bs. {inspectedBankMove.posBreakdown.bankFeeBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</strong>
+                        </div>
+                        <div className="flex justify-between text-sky-300">
+                          <span>- Retención SENIAT Tarjeta (1.5%):</span>
+                          <strong>-Bs. {inspectedBankMove.posBreakdown.seniatRetBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</strong>
+                        </div>
+                        <div className="pt-1 border-t border-amber-500/30 flex justify-between text-emerald-400 font-bold">
+                          <span>= Depósito Neto Acreditado en Cuenta:</span>
+                          <strong>Bs. {inspectedBankMove.posBreakdown.netDepositBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual Invoice Linking Selector (If Pending) */}
+                  {inspectedBankMove.reconciliationStatus === 'PENDIENTE' && (
+                    <div className="p-3 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-2">
+                      <label className="block text-[11px] font-bold text-amber-300">
+                        Vincular Manualmente con Factura del Sistema:
+                      </label>
+                      <select
+                        value={reconcileManualInvId}
+                        onChange={e => setReconcileManualInvId(e.target.value)}
+                        className="w-full p-2 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs"
+                      >
+                        <option value="">Seleccione una factura pendiente...</option>
+                        {tenantInvoices.map(inv => (
+                          <option key={inv.id} value={inv.id}>
+                            #{inv.invoiceNumber} · {inv.supplierName} (${inv.totalOriginal} {inv.currency})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleManualLinkMoveToInvoice(inspectedBankMove.id, reconcileManualInvId)}
+                        disabled={!reconcileManualInvId}
+                        className="ui-btn-primary w-full py-2 text-xs font-bold disabled:opacity-40"
+                      >
+                        Vincular Factura a Movimiento
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Audit Hash Footer */}
+                  <div className="pt-2 border-t border-[var(--border-subtle)] flex items-center justify-between text-[10px] opacity-75">
+                    <span>Sello Criptográfico Inmutable:</span>
+                    <span className="font-mono text-emerald-400">{inspectedBankMove.auditHash.slice(0, 16)}...</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="ui-card p-8 text-center text-xs font-mono opacity-65">
+                  Selecciona una partida del extracto bancario para inspeccionar su trazabilidad, cálculo de diferencial cambiario y comprobante fehaciente.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
           TAB 07: BLINDAJE CRIPTOGRÁFICO SHA-256 & BÓVEDA AES-256-GCM (8 + 4)
          ===================================================================== */}
       {activeTab === 'security' && (
@@ -5197,6 +5813,30 @@ export default function App() {
                   category: 'MÓDULO',
                   action: () => {
                     setActiveTab('books');
+                    setCommandPaletteOpen(false);
+                  }
+                },
+                {
+                  label: 'Ir a 06. Conciliación Bancaria & Diferencial Cambiario',
+                  category: 'MÓDULO',
+                  action: () => {
+                    setActiveTab('reconciliation');
+                    setCommandPaletteOpen(false);
+                  }
+                },
+                {
+                  label: 'Ejecutar Conciliación Bancaria 1-Clic',
+                  category: 'CONCILIACIÓN',
+                  action: () => {
+                    handleRunAutoReconcile();
+                    setCommandPaletteOpen(false);
+                  }
+                },
+                {
+                  label: 'Descargar Certificado Conciliación SENIAT Art. 177 (PDF)',
+                  category: 'AUDITORÍA',
+                  action: () => {
+                    handleDownloadReconcilePdf();
                     setCommandPaletteOpen(false);
                   }
                 },

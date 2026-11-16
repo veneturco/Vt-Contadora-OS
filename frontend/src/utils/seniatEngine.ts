@@ -794,5 +794,382 @@ export function downloadPdfPaystub(companyName: string, companyRif: string, emp:
   doc.save(`Recibo_Nomina_${emp.cedula.replace(/\D/g, '')}.pdf`);
 }
 
+// ============================================================================
+// CONCILIACIÓN BANCARIA MULTI-BANCO VENEZUELA (VEN-NIF NIC 21 & ART. 177 COT)
+// ============================================================================
+
+export interface BankMovement {
+  id: string;
+  tenantId: string;
+  bankName: 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA' | 'BNC' | 'PROVINCIAL';
+  date: string; // YYYY-MM-DD
+  referenceNumber: string;
+  description: string;
+  amountBs: number; // Positivo = Abono/Ingreso, Negativo = Cargo/Débito
+  amountUsd?: number;
+  movementType: 'PAGO_MOVIL' | 'TRANSFERENCIA' | 'CIERRE_LOTE_POS' | 'COMISION_BANCARIA' | 'DEBITO_IGTF' | 'DEPOSITO';
+  reconciliationStatus: 'CONCILIADO' | 'PENDIENTE' | 'DIFERENCIAL_CAMBIARIO' | 'EN_TRANSITO';
+  matchedInvoiceId?: string;
+  matchedInvoiceNumber?: string;
+  exchangeDiffBs?: number; // >0 Ganancia, <0 Pérdida
+  posBreakdown?: {
+    grossSalesBs: number;
+    bankFeeBs: number;
+    seniatRetBs: number;
+    netDepositBs: number;
+  };
+  auditHash: string;
+}
+
+export function parseVenezuelanAmount(val: unknown): number {
+  if (typeof val === 'number') return val;
+  const clean = String(val || '').trim().replace(/\s/g, '');
+  if (!clean) return 0;
+  if (clean.includes(',') && clean.includes('.')) {
+    return parseFloat(clean.replace(/\./g, '').replace(',', '.'));
+  }
+  if (clean.includes(',')) {
+    return parseFloat(clean.replace(',', '.'));
+  }
+  return parseFloat(clean) || 0;
+}
+
+export function parseBankStatementCsv(
+  csvText: string,
+  defaultBank: 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA' | 'BNC' | 'PROVINCIAL' = 'BANESCO',
+  tenantId: string = 'tenant_default'
+): BankMovement[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const headerLine = lines[0];
+  let delim = ',';
+  if (headerLine.includes('\t')) delim = '\t';
+  else if (headerLine.includes(';')) delim = ';';
+
+  const headers = headerLine.split(delim).map(h => h.trim().toUpperCase().replace(/["']/g, ''));
+
+  let bank = defaultBank;
+  const fullText = csvText.toUpperCase();
+  if (fullText.includes('BANCO DE VENEZUELA') || fullText.includes('BDV')) bank = 'BDV';
+  else if (fullText.includes('MERCANTIL')) bank = 'MERCANTIL';
+  else if (fullText.includes('BANCAMIGA')) bank = 'BANCAMIGA';
+  else if (fullText.includes('BANESCO')) bank = 'BANESCO';
+
+  let dateIdx = headers.findIndex(h => h.includes('FECHA') || h.includes('DATE'));
+  let refIdx = headers.findIndex(h => h.includes('REF') || h.includes('DOCUMENTO') || h.includes('TRANSAC'));
+  let descIdx = headers.findIndex(h => h.includes('CONCEPTO') || h.includes('DESCRIP') || h.includes('DETALLE'));
+  let amountIdx = headers.findIndex(h => h.includes('MONTO') || h.includes('IMPORTE') || h.includes('VALOR'));
+  let debitIdx = headers.findIndex(h => h.includes('DEBITO') || h.includes('CARGO') || h.includes('EGRESO'));
+  let creditIdx = headers.findIndex(h => h.includes('CREDITO') || h.includes('ABONO') || h.includes('INGRESO'));
+
+  if (dateIdx === -1) dateIdx = 0;
+  if (refIdx === -1) refIdx = 1;
+  if (descIdx === -1) descIdx = 2;
+
+  const results: BankMovement[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(delim).map(c => c.trim().replace(/^["']|["']$/g, ''));
+    if (cols.length <= Math.max(dateIdx, descIdx)) continue;
+
+    const rawDate = cols[dateIdx] || new Date().toISOString().slice(0, 10);
+    const rawRef = cols[refIdx] || `REF${Date.now()}_${i}`;
+    const rawDesc = cols[descIdx] || 'MOVIMIENTO BANCARIO';
+
+    let amount = 0;
+    if (amountIdx !== -1 && cols[amountIdx]) {
+      amount = parseVenezuelanAmount(cols[amountIdx]);
+    } else if (creditIdx !== -1 && debitIdx !== -1) {
+      const cr = parseVenezuelanAmount(cols[creditIdx]);
+      const db = parseVenezuelanAmount(cols[debitIdx]);
+      amount = cr > 0 ? cr : -Math.abs(db);
+    } else if (cols[3]) {
+      amount = parseVenezuelanAmount(cols[3]);
+    }
+
+    if (isNaN(amount) || amount === 0) continue;
+
+    const descUpper = rawDesc.toUpperCase();
+    let moveType: BankMovement['movementType'] = 'TRANSFERENCIA';
+    if (descUpper.includes('PAGO MOVIL') || descUpper.includes('PAGOMOVIL') || descUpper.includes('C2P') || descUpper.includes('P2P') || descUpper.includes('P2C')) {
+      moveType = 'PAGO_MOVIL';
+    } else if (descUpper.includes('LOTE') || descUpper.includes('POS') || descUpper.includes('PUNTO DE VENTA') || descUpper.includes('TARJ')) {
+      moveType = 'CIERRE_LOTE_POS';
+    } else if (descUpper.includes('COMISION') || descUpper.includes('MANTENIMIENTO') || descUpper.includes('TARIFA')) {
+      moveType = 'COMISION_BANCARIA';
+    } else if (descUpper.includes('IGTF') || descUpper.includes('TRANSACCIONES FINANCIERAS')) {
+      moveType = 'DEBITO_IGTF';
+    } else if (amount > 0) {
+      moveType = 'DEPOSITO';
+    }
+
+    const cleanRef = rawRef.replace(/[^0-9A-Z]/gi, '');
+    const auditHash = computeDeterministicHash('BANK_MOVE', { bank, rawDate, cleanRef, amount });
+
+    results.push({
+      id: `mov_${bank.toLowerCase()}_${Date.now()}_${i}`,
+      tenantId,
+      bankName: bank,
+      date: rawDate,
+      referenceNumber: cleanRef,
+      description: rawDesc,
+      amountBs: amount,
+      movementType: moveType,
+      reconciliationStatus: 'PENDIENTE',
+      auditHash
+    });
+  }
+
+  return results;
+}
+
+export function calculateExchangeDifferenceNic21({
+  invoiceTotalOriginal,
+  invoiceCurrency,
+  invoiceBcvRate,
+  paymentBcvRate,
+  paidAmountBs
+}: {
+  invoiceTotalOriginal: number;
+  invoiceCurrency: 'VES' | 'USD';
+  invoiceBcvRate: number;
+  paymentBcvRate: number;
+  paidAmountBs?: number;
+}): {
+  gainOrLoss: 'GANANCIA' | 'PERDIDA' | 'EXACTO';
+  diffBs: number;
+  diffPercent: number;
+  historicalBs: number;
+  paidBs: number;
+  usdValue: number;
+} {
+  if (invoiceCurrency !== 'USD' && (!invoiceBcvRate || invoiceBcvRate === paymentBcvRate)) {
+    return { gainOrLoss: 'EXACTO', diffBs: 0, diffPercent: 0, historicalBs: invoiceTotalOriginal, paidBs: paidAmountBs ?? invoiceTotalOriginal, usdValue: 0 };
+  }
+
+  const usdValue = invoiceCurrency === 'USD' ? invoiceTotalOriginal : (invoiceTotalOriginal / invoiceBcvRate);
+  const historicalBs = Number((usdValue * invoiceBcvRate).toFixed(2));
+  const expectedPaymentBs = Number((usdValue * paymentBcvRate).toFixed(2));
+  const actualPaidBs = paidAmountBs !== undefined ? paidAmountBs : expectedPaymentBs;
+
+  const diffBs = Number((actualPaidBs - historicalBs).toFixed(2));
+  const diffPercent = historicalBs > 0 ? Number(((diffBs / historicalBs) * 100).toFixed(2)) : 0;
+
+  let gainOrLoss: 'GANANCIA' | 'PERDIDA' | 'EXACTO' = 'EXACTO';
+  if (diffBs > 0.05) gainOrLoss = 'GANANCIA';
+  else if (diffBs < -0.05) gainOrLoss = 'PERDIDA';
+
+  return {
+    gainOrLoss,
+    diffBs,
+    diffPercent,
+    historicalBs,
+    paidBs: actualPaidBs,
+    usdValue
+  };
+}
+
+export function breakdownPosSettlementBatch(
+  netDepositBs: number,
+  feePercent: number = 1.8,
+  retPercent: number = 1.5
+): {
+  grossSalesBs: number;
+  bankFeeBs: number;
+  seniatRetBs: number;
+  netDepositBs: number;
+} {
+  const net = Number(netDepositBs);
+  const totalDeductionRatio = (feePercent + retPercent) / 100;
+  const grossSalesBs = Number((net / (1 - totalDeductionRatio)).toFixed(2));
+  const bankFeeBs = Number((grossSalesBs * (feePercent / 100)).toFixed(2));
+  const seniatRetBs = Number((grossSalesBs * (retPercent / 100)).toFixed(2));
+
+  return {
+    grossSalesBs,
+    bankFeeBs,
+    seniatRetBs,
+    netDepositBs: net
+  };
+}
+
+export function runDeterministicBankReconciliation(
+  bankMovements: BankMovement[],
+  invoices: FiscalInvoice[],
+  currentBcvRate: number = 914.02
+): {
+  reconciledMoves: BankMovement[];
+  matchedCount: number;
+  pendingCount: number;
+  totalGainCambiariaBs: number;
+  totalLossCambiariaBs: number;
+} {
+  let matchedCount = 0;
+  let totalGainCambiariaBs = 0;
+  let totalLossCambiariaBs = 0;
+
+  const reconciledMoves = bankMovements.map(m => {
+    if (m.movementType === 'COMISION_BANCARIA' || m.movementType === 'DEBITO_IGTF') {
+      return { ...m, reconciliationStatus: 'CONCILIADO' as const };
+    }
+
+    if (m.movementType === 'CIERRE_LOTE_POS') {
+      const breakdown = breakdownPosSettlementBatch(Math.abs(m.amountBs));
+      matchedCount++;
+      return {
+        ...m,
+        reconciliationStatus: 'CONCILIADO' as const,
+        posBreakdown: breakdown
+      };
+    }
+
+    const cleanRef = String(m.referenceNumber || '').replace(/[^0-9]/g, '');
+    let matchedInvoice = invoices.find(inv => {
+      const cleanInvNum = String(inv.invoiceNumber || '').replace(/[^0-9]/g, '');
+      const cleanCtrl = String(inv.controlNumber || '').replace(/[^0-9]/g, '');
+      if (cleanRef.length >= 4 && (cleanInvNum.endsWith(cleanRef) || cleanRef.endsWith(cleanInvNum))) return true;
+      if (cleanRef.length >= 4 && (cleanCtrl.endsWith(cleanRef) || cleanRef.endsWith(cleanCtrl))) return true;
+      return false;
+    });
+
+    if (!matchedInvoice && m.amountBs > 0) {
+      matchedInvoice = invoices.find(inv => {
+        const invTotalBs = inv.currency === 'USD' ? (inv.totalOriginal * currentBcvRate) : inv.totalOriginal;
+        const diff = Math.abs(invTotalBs - m.amountBs);
+        return diff < 5 || (diff / invTotalBs) < 0.005;
+      });
+    }
+
+    if (matchedInvoice) {
+      matchedCount++;
+      let diffInfo = null;
+      if (matchedInvoice.currency === 'USD') {
+        diffInfo = calculateExchangeDifferenceNic21({
+          invoiceTotalOriginal: matchedInvoice.totalOriginal,
+          invoiceCurrency: 'USD',
+          invoiceBcvRate: matchedInvoice.bcvRateOnDate || currentBcvRate,
+          paymentBcvRate: currentBcvRate,
+          paidAmountBs: m.amountBs
+        });
+
+        if (diffInfo.gainOrLoss === 'GANANCIA') totalGainCambiariaBs += diffInfo.diffBs;
+        if (diffInfo.gainOrLoss === 'PERDIDA') totalLossCambiariaBs += Math.abs(diffInfo.diffBs);
+      }
+
+      return {
+        ...m,
+        reconciliationStatus: (diffInfo && diffInfo.diffBs !== 0 ? 'DIFERENCIAL_CAMBIARIO' : 'CONCILIADO') as BankMovement['reconciliationStatus'],
+        matchedInvoiceId: matchedInvoice.id,
+        matchedInvoiceNumber: matchedInvoice.invoiceNumber,
+        exchangeDiffBs: diffInfo ? diffInfo.diffBs : 0
+      };
+    }
+
+    return m;
+  });
+
+  return {
+    reconciledMoves,
+    matchedCount,
+    pendingCount: reconciledMoves.filter(m => m.reconciliationStatus === 'PENDIENTE').length,
+    totalGainCambiariaBs: Number(totalGainCambiariaBs.toFixed(2)),
+    totalLossCambiariaBs: Number(totalLossCambiariaBs.toFixed(2))
+  };
+}
+
+export function exportBankReconciliationCsv(
+  reconciledMoves: BankMovement[],
+  tenantRif: string,
+  period: string
+): string {
+  const headers = ['TENANT_RIF', 'PERIODO', 'BANCO', 'FECHA', 'REFERENCIA', 'CONCEPTO', 'MONTO_BS', 'TIPO', 'ESTADO', 'FACTURA_VINCULADA', 'DIF_CAMBIARIO_BS', 'VENTA_BRUTA_POS', 'COMISION_POS', 'RETENCION_POS', 'HASH_AUDITORIA'];
+  const rows = reconciledMoves.map(m => [
+    tenantRif,
+    period,
+    m.bankName,
+    m.date,
+    m.referenceNumber,
+    `"${m.description.replace(/"/g, '""')}"`,
+    m.amountBs.toFixed(2),
+    m.movementType,
+    m.reconciliationStatus,
+    m.matchedInvoiceNumber || '',
+    m.exchangeDiffBs ? m.exchangeDiffBs.toFixed(2) : '0.00',
+    m.posBreakdown ? m.posBreakdown.grossSalesBs.toFixed(2) : '0.00',
+    m.posBreakdown ? m.posBreakdown.bankFeeBs.toFixed(2) : '0.00',
+    m.posBreakdown ? m.posBreakdown.seniatRetBs.toFixed(2) : '0.00',
+    m.auditHash
+  ]);
+  return [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\n');
+}
+
+export function downloadPdfBankReconciliationAudit(
+  tenantName: string,
+  tenantRif: string,
+  period: string,
+  reconciledMoves: BankMovement[]
+) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
+  doc.rect(10, 10, 277, 190);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(15, 23, 42);
+  doc.text('CERTIFICADO OFICIAL DE CONCILIACIÓN BANCARIA Y MEDIOS DE PAGO FEHACIENTES', 148.5, 18, { align: 'center' });
+
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Cumplimiento Estricto Art. 177 Código Orgánico Tributario y Art. 55 Ley de Impuesto Sobre la Renta', 148.5, 23, { align: 'center' });
+
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 28, 269, 14, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`EMPRESA: ${tenantName.toUpperCase()} · RIF: ${tenantRif} · PERÍODO: ${period}`, 18, 36);
+
+  let curY = 48;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text('BANCO', 16, curY);
+  doc.text('FECHA', 36, curY);
+  doc.text('REFERENCIA', 58, curY);
+  doc.text('CONCEPTO / MOVIMIENTO', 85, curY);
+  doc.text('MONTO BS.', 160, curY, { align: 'right' });
+  doc.text('ESTADO', 185, curY);
+  doc.text('FACTURA VINCULADA', 220, curY);
+  doc.text('DIF. CAMBIARIO', 265, curY, { align: 'right' });
+
+  doc.line(14, curY + 2, 283, curY + 2);
+  curY += 7;
+
+  doc.setFont('helvetica', 'normal');
+  reconciledMoves.slice(0, 16).forEach(m => {
+    doc.text(m.bankName, 16, curY);
+    doc.text(m.date, 36, curY);
+    doc.text(m.referenceNumber.slice(0, 10), 58, curY);
+    doc.text(m.description.slice(0, 36), 85, curY);
+    doc.text(m.amountBs.toLocaleString('es-VE', { minimumFractionDigits: 2 }), 160, curY, { align: 'right' });
+    doc.text(m.reconciliationStatus, 185, curY);
+    doc.text(m.matchedInvoiceNumber ? `#${m.matchedInvoiceNumber}` : 'N/A', 220, curY);
+    doc.text(m.exchangeDiffBs ? `Bs. ${m.exchangeDiffBs.toFixed(2)}` : 'Bs. 0,00', 265, curY, { align: 'right' });
+    curY += 6;
+  });
+
+  drawVectorQr(doc, 16, 165, 20, `CONCIL_${tenantRif}_${period}_${reconciledMoves.length}`);
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Documento generado inmutablemente con sello SHA-256 por VeneTurco Fiscal OS v3.2', 40, 172);
+  doc.text('Validez probatoria de medios de pago para sustentar deducciones y créditos fiscales de IVA ante el SENIAT.', 40, 177);
+
+  doc.save(`Conciliacion_Bancaria_${tenantRif}_${period}.pdf`);
+}
+
 
 
