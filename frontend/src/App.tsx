@@ -40,75 +40,15 @@ import {
 } from './utils/seniatEngine';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
-
-type SkinId =
-  | 'apple-craft-pro'
-  | 'obsidian-linear'
-  | 'mercury-sovereign'
-  | 'spatial-titanium'
-  | 'tactile-bento'
-  | 'hyperframe-tactical'
-  | 'kinetic-studio'
-  | 'editorial-swiss'
-  | 'eink-auditor'
-  | 'neo-brutal';
-
-interface Tenant {
-  id: string;
-  name: string;
-  rif: string;
-  regime: 'SPE' | 'ORDINARIO' | 'FORMAL';
-  planId: 'COMERCIO_PRO' | 'EMPRESA_MAX' | 'FIRMA_CONTABLE';
-  subscriptionStatus: 'ACTIVA' | 'SUSPENDIDA';
-  nextBillingDate: string;
-  telegramCode: string;
-  telegramChatLinked?: string;
-  // Sub-cuenta de empresa (Monetización SaaS B2B2B)
-  subAccountEnabled?: boolean;
-  subAccountContactName?: string;
-  subAccountPhone?: string;
-  subAccountEmail?: string;
-  subAccountRole?: 'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA';
-  subAccountStatus?: 'TRIAL_15_DIAS' | 'ACTIVA' | 'POR_VENCER' | 'SUSPENDIDA';
-  trialDaysLeft?: number;
-  monthlyFeeUsd?: number;
-  accountantCommissionPercent?: number;
-}
-
-export interface AccountantPartner {
-  id: string;
-  name: string;
-  cpcNumber: string;
-  rif: string;
-  email: string;
-  phone: string;
-  city: string;
-  planId: 'CONTADOR_INDIVIDUAL' | 'FIRMA_PRO' | 'CONSORCIO_MAX';
-  monthlyFeeUsd: number;
-  maxCompaniesLimit: number;
-  assignedTenantIds: string[];
-  subscriptionStatus: 'ACTIVA' | 'SUSPENDIDA' | 'EN_PRUEBA';
-  nextBillingDate: string;
-  payoutMethod: 'PAGO_MOVIL' | 'BINANCE_PAY' | 'ZELLE';
-  payoutDetails: string;
-  pendingCommissionUsd: number;
-  paidCommissionsTotalUsd: number;
-  firmLogoText?: string;
-  createdAt: string;
-}
-
-const SKINS: { id: SkinId; label: string }[] = [
-  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Emil Kowalski)' },
-  { id: 'obsidian-linear', label: 'Obsidian Linear' },
-  { id: 'mercury-sovereign', label: 'Mercury Sovereign (Fintech 2026)' },
-  { id: 'spatial-titanium', label: 'Liquid Glass Titanium (Spatial)' },
-  { id: 'tactile-bento', label: 'Tactile Hardware Bento' },
-  { id: 'hyperframe-tactical', label: 'Hyperframe HUD (Tactical)' },
-  { id: 'kinetic-studio', label: 'Kinetic Studio (Volt)' },
-  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger' },
-  { id: 'eink-auditor', label: 'E-Ink Paper Audit (No-Glare)' },
-  { id: 'neo-brutal', label: 'Neo-Brutalist Raw' }
-];
+import {
+  SkinId,
+  ActiveTabId,
+  OperationStepId,
+  Tenant,
+  AccountantPartner,
+  SKINS
+} from './types/fiscal';
+export type { AccountantPartner };
 
 const INITIAL_TENANTS: Tenant[] = [
   {
@@ -707,7 +647,70 @@ export default function App() {
   ]);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'apple-craft-pro'));
-  const [activeTab, setActiveTab] = useState<'accountants' | 'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'reconciliation' | 'mobile' | 'security'>('accountants');
+  const [activeTab, setActiveTab] = useState<ActiveTabId>(() => {
+    if (typeof window === 'undefined') return 'clients';
+    const raw = window.location.hash.replace(/^#\/?/, '').split('/')[0] as ActiveTabId;
+    const valid: ActiveTabId[] = ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'];
+    return valid.includes(raw) ? raw : 'clients';
+  });
+  const [operationStep, setOperationStep] = useState<OperationStepId>(() => {
+    if (typeof window === 'undefined') return 'scanner';
+    const parts = window.location.hash.replace(/^#\/?/, '').split('/');
+    if (parts[0] === 'operations' && (parts[1] === 'scanner' || parts[1] === 'books' || parts[1] === 'reconciliation')) {
+      return parts[1];
+    }
+    return 'scanner';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const targetHash = activeTab === 'operations' ? `#/operations/${operationStep}` : `#/${activeTab}`;
+    if (window.location.hash !== targetHash) {
+      window.history.pushState(null, '', targetHash);
+    }
+  }, [activeTab, operationStep]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHashChange = () => {
+      const parts = window.location.hash.replace(/^#\/?/, '').split('/');
+      const rawTab = parts[0] as ActiveTabId;
+      const valid: ActiveTabId[] = ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'];
+      if (valid.includes(rawTab)) {
+        setActiveTab(rawTab);
+        if (rawTab === 'operations' && (parts[1] === 'scanner' || parts[1] === 'books' || parts[1] === 'reconciliation')) {
+          setOperationStep(parts[1]);
+        }
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Navegación Dinámica Adaptativa por Rol (Apple Minimalist UX Cleaner 2026)
+  const navTabs = useMemo(() => {
+    const role = currentUser?.role || 'admin';
+    if (role === 'superadmin') {
+      return [
+        { id: 'accountants', label: '👑 Red Contadores & SaaS', icon: Users },
+        { id: 'security', label: '🛡️ Ciberseguridad & WAF', icon: ShieldCheck },
+        { id: 'clients', label: '👥 Cartera (Vista Auditor)', icon: Building2 },
+        { id: 'operations', label: '⚡ Operaciones Fiscales', icon: Cpu }
+      ];
+    }
+    if (role === 'client') {
+      return [
+        { id: 'mobile', label: '📱 Mi Comercio (Portal Móvil)', icon: Smartphone },
+        { id: 'saas', label: '💳 Mi Suscripción & Pagos', icon: CreditCard }
+      ];
+    }
+    // Rol Contador (Auditor CPC) - La tríada dorada limpia
+    return [
+      { id: 'clients', label: '👥 Cartera & Radar Fiscal', icon: Building2 },
+      { id: 'operations', label: '⚡ Operaciones SENIAT & Banco', icon: Cpu },
+      { id: 'payroll', label: '💼 Nómina LOTTT', icon: Users }
+    ];
+  }, [currentUser?.role]);
   const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
   const [clientSearchQuery, setClientSearchQuery] = useState<string>('');
   const [copiedTelegramTenantId, setCopiedTelegramTenantId] = useState<string | null>(null);
@@ -2843,6 +2846,67 @@ export default function App() {
             Snapshot Drive
           </button>
 
+          {/* Selector Rápido de Espacio de Trabajo por Rol (Apple Minimalist UX) */}
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] font-medium">
+            <button
+              onClick={() => {
+                if (currentUser) {
+                  const updated = { ...currentUser, role: 'admin' as const, name: 'Lic. Auditor Principal (Firma)' };
+                  setCurrentUser(updated);
+                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                  setActiveTab('clients');
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                currentUser?.role === 'admin'
+                  ? 'bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30'
+                  : 'text-[#9898A0] hover:text-white'
+              }`}
+              title="Espacio de Trabajo: Contador Aliado (3 Módulos Limpios)"
+            >
+              <span>💼</span>
+              <span className="hidden md:inline">Contador</span>
+            </button>
+            <button
+              onClick={() => {
+                if (currentUser) {
+                  const updated = { ...currentUser, role: 'superadmin' as const, name: 'Director General / Super-Admin SaaS' };
+                  setCurrentUser(updated);
+                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                  setActiveTab('accountants');
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                currentUser?.role === 'superadmin'
+                  ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30'
+                  : 'text-[#9898A0] hover:text-white'
+              }`}
+              title="Espacio de Trabajo: Super-Admin (Torre de Control)"
+            >
+              <span>👑</span>
+              <span className="hidden md:inline">Super-Admin</span>
+            </button>
+            <button
+              onClick={() => {
+                if (currentUser) {
+                  const updated = { ...currentUser, role: 'client' as const, name: `Comercio (${activeTenant.name})` };
+                  setCurrentUser(updated);
+                  localStorage.setItem('vt_auth_user', JSON.stringify(updated));
+                  setActiveTab('mobile');
+                }
+              }}
+              className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                currentUser?.role === 'client'
+                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30'
+                  : 'text-[#9898A0] hover:text-white'
+              }`}
+              title="Espacio de Trabajo: Comercio (Portal Móvil)"
+            >
+              <span>📱</span>
+              <span className="hidden md:inline">Cliente</span>
+            </button>
+          </div>
+
           <button
             onClick={handleLogout}
             title="Cerrar Sesión"
@@ -2907,36 +2971,34 @@ export default function App() {
       )}
 
       {/* Navigation Tabs · Apple macOS / OpenDesign Segmented Navigation Pill Track */}
-      <nav className="apple-segmented-track flex flex-wrap items-center gap-1.5 mb-6 p-1.5">
-        {[
-          { id: 'accountants', label: '👑 Red Contadores', icon: Users },
-          { id: 'clients', label: '👥 Cartera Radar', icon: Building2 },
-          { id: 'simplified', label: '⭐ Asistente', icon: CheckCircle2 },
-          { id: 'command', label: '01. Mando', icon: Cpu },
-          { id: 'ocr', label: '02. Escáner IA', icon: Send },
-          { id: 'books', label: '03. Libros SENIAT', icon: FileText },
-          { id: 'payroll', label: '04. Nómina LOTTT', icon: Users },
-          { id: 'saas', label: '05. Licencias', icon: CreditCard },
-          { id: 'reconciliation', label: '06. Conciliación', icon: Scale },
-          { id: 'mobile', label: '07. Portal Móvil', icon: Smartphone },
-          { id: 'security', label: '08. Ciberseguridad', icon: ShieldCheck }
-        ].map(tab => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              id={`nav-tab-${tab.id}`}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`apple-tab-pill px-3.5 py-2 text-xs font-medium tracking-tight flex items-center gap-2 ${
-                active ? 'apple-tab-pill-active' : 'apple-tab-pill-inactive'
-              }`}
-            >
-              <Icon className={`w-3.5 h-3.5 ${active ? 'text-white' : 'opacity-70'}`} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      <nav className="apple-segmented-track flex flex-wrap items-center justify-between gap-2 mb-6 p-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {navTabs.map(tab => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id || (tab.id === 'operations' && ['ocr', 'books', 'reconciliation'].includes(activeTab));
+            return (
+              <button
+                key={tab.id}
+                id={`nav-tab-${tab.id}`}
+                onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                className={`apple-tab-pill px-4 py-2 text-xs font-semibold tracking-tight flex items-center gap-2 ${
+                  active ? 'apple-tab-pill-active' : 'apple-tab-pill-inactive'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${active ? 'text-white' : 'opacity-70'}`} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Badge Contextual del Espacio Activo */}
+        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-white/[0.04] text-[11px] text-[#9898A0] font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          <span>
+            {currentUser?.role === 'superadmin' ? 'MODO: SUPER-ADMIN SAAS' : currentUser?.role === 'client' ? 'MODO: CLIENTE COMERCIO' : 'MODO: CONTADOR ALIADO (CPC)'}
+          </span>
+        </div>
       </nav>
 
       {/* =====================================================================
@@ -3515,6 +3577,128 @@ export default function App() {
               Registrar Nueva Empresa (RIF)
             </button>
           </div>
+
+          {/* FASE 1 UX: Tarjeta Guiada "Tu Día Fiscal en 3 Pasos" (Reduce carga cognitiva) */}
+          {(() => {
+            const pendingCount = tenantInvoices.filter(i => i.status !== 'APROBADA').length;
+            const step1Done = pendingCount === 0 && tenantInvoices.length > 0;
+            const step2Done = reconciliationStats.totalMoves > 0 && reconciliationStats.matchPercent === 100;
+            const step3Done = tenantInvoices.some(i => i.status === 'APROBADA');
+            const completedSteps = [step1Done, step2Done, step3Done].filter(Boolean).length;
+            const progressPct = Math.round((completedSteps / 3) * 100);
+
+            return (
+              <div className="ui-card p-5 border border-white/10 bg-gradient-to-br from-[#121319] via-[#151822] to-[#0E1318] space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 font-bold">
+                        Siguiente Mejor Acción · {activeTenant.name}
+                      </span>
+                      {completedSteps === 3 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          ✓ Mes Fiscal Al Día
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-base font-bold text-white mt-0.5">
+                      Tu Día Fiscal en 3 Pasos ({completedSteps}/3 completados)
+                    </h3>
+                  </div>
+
+                  <div className="flex items-center gap-3 min-w-[180px]">
+                    <div className="flex-1 h-2 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-emerald-400 to-emerald-500 transition-all duration-500"
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-mono font-bold text-emerald-400 tabular-nums">{progressPct}%</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <button
+                    onClick={() => {
+                      setOperationStep('scanner');
+                      setActiveTab('operations');
+                    }}
+                    className={`text-left p-3.5 rounded-xl border transition-all duration-200 flex items-start gap-3 ${
+                      step1Done
+                        ? 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15'
+                        : 'bg-white/[0.03] border-white/10 hover:border-cyan-400/40 hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+                      step1Done ? 'bg-emerald-500 text-slate-950' : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                    }`}>
+                      {step1Done ? '✓' : '1'}
+                    </span>
+                    <div>
+                      <div className="text-xs font-bold text-white">
+                        {step1Done ? 'Facturas IA Revisadas' : `Revisar ${pendingCount} Factura${pendingCount === 1 ? '' : 's'} IA`}
+                      </div>
+                      <p className="text-[11px] text-white/60 mt-0.5">
+                        {step1Done ? 'Todas las facturas del período están aprobadas.' : 'Aprobar borradores de Telegram/OCR.'}
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setOperationStep('reconciliation');
+                      setActiveTab('operations');
+                    }}
+                    className={`text-left p-3.5 rounded-xl border transition-all duration-200 flex items-start gap-3 ${
+                      step2Done
+                        ? 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15'
+                        : 'bg-white/[0.03] border-white/10 hover:border-amber-400/40 hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+                      step2Done ? 'bg-emerald-500 text-slate-950' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    }`}>
+                      {step2Done ? '✓' : '2'}
+                    </span>
+                    <div>
+                      <div className="text-xs font-bold text-white">
+                        {step2Done ? 'Banco 100% Conciliado' : `Conciliar Banco (${reconciliationStats.matchPercent}%)`}
+                      </div>
+                      <p className="text-[11px] text-white/60 mt-0.5">
+                        {step2Done ? 'Diferencial NIC 21 y lotes POS cuadrados.' : 'Cruzar extractos bancarios y POS en 1 clic.'}
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setOperationStep('books');
+                      setActiveTab('operations');
+                    }}
+                    className={`text-left p-3.5 rounded-xl border transition-all duration-200 flex items-start gap-3 ${
+                      step3Done
+                        ? 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15'
+                        : 'bg-white/[0.03] border-white/10 hover:border-emerald-400/40 hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono font-bold shrink-0 ${
+                      step3Done ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    }`}>
+                      {step3Done ? '✓' : '3'}
+                    </span>
+                    <div>
+                      <div className="text-xs font-bold text-white">
+                        Exportar TXT / XML SENIAT
+                      </div>
+                      <p className="text-[11px] text-white/60 mt-0.5">
+                        Libros 16 columnas y comprobantes ARC listos.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 4 Bento KPI Cards de la Cartera Global */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -4614,9 +4798,69 @@ export default function App() {
       )}
 
       {/* =====================================================================
+          UNIFIED OPERATIONS HUB: APPLE 3-STEP PIPELINE SWITCHER
+         ===================================================================== */}
+      {activeTab === 'operations' && (
+        <div className="ui-card p-4 mb-6 backdrop-blur-xl bg-[var(--bg-frosted)] border border-white/10 shadow-lg">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-bold">
+                  Flujo Operativo Continuo SENIAT · {activeTenant.name}
+                </span>
+              </div>
+              <h2 className="text-base font-bold text-white tracking-tight mt-0.5">
+                Mesa Operativa Unificada: IA, Libros y Bancos
+              </h2>
+            </div>
+
+            {/* Apple Segmented 3-Step Pill */}
+            <div className="inline-flex p-1 rounded-xl bg-black/40 border border-white/10 backdrop-blur-md">
+              <button
+                onClick={() => setOperationStep('scanner')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                  operationStep === 'scanner'
+                    ? 'bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full bg-cyan-500/30 text-[10px] flex items-center justify-center font-mono">1</span>
+                <span>Ingesta IA & Telegram</span>
+              </button>
+
+              <button
+                onClick={() => setOperationStep('books')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                  operationStep === 'books'
+                    ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full bg-emerald-500/30 text-[10px] flex items-center justify-center font-mono">2</span>
+                <span>Libros SENIAT & Retenciones</span>
+              </button>
+
+              <button
+                onClick={() => setOperationStep('reconciliation')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                  operationStep === 'reconciliation'
+                    ? 'bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-sm'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span className="w-4 h-4 rounded-full bg-amber-500/30 text-[10px] flex items-center justify-center font-mono">3</span>
+                <span>Conciliación Bancaria NIC 21</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
           TAB 02: ESCÁNER IA GEMINI 2.5 FLASH & BOT DE TELEGRAM (8 + 4 BENTO)
          ===================================================================== */}
-      {activeTab === 'ocr' && (
+      {(activeTab === 'ocr' || (activeTab === 'operations' && operationStep === 'scanner')) && (
         <div className="grid grid-cols-12 gap-5">
           {/* 8-Column Main OCR Workbench */}
           <div className="col-span-12 lg:col-span-8 space-y-5">
@@ -4936,7 +5180,7 @@ export default function App() {
       {/* =====================================================================
           TAB 03: LIBROS FISCALES SENIAT & EXPORTACIÓN TXT 16 COLS / XML ISLR
          ===================================================================== */}
-      {activeTab === 'books' && (
+      {(activeTab === 'books' || (activeTab === 'operations' && operationStep === 'books')) && (
         <div className="space-y-5">
           <div className="ui-card p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -6007,7 +6251,7 @@ export default function App() {
       {/* =====================================================================
           TAB 06: CONCILIACIÓN BANCARIA MULTI-BANCO & DIFERENCIAL CAMBIARIO (NIC 21)
          ===================================================================== */}
-      {activeTab === 'reconciliation' && (
+      {(activeTab === 'reconciliation' || (activeTab === 'operations' && operationStep === 'reconciliation')) && (
         <div className="space-y-6">
           {/* Header & KPI Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -7373,7 +7617,7 @@ export default function App() {
                 autoFocus
                 value={commandQuery}
                 onChange={e => setCommandQuery(e.target.value)}
-                placeholder="Escribe un comando (ej. TXT, XML, BCV, Escanear, Apple, Conciliar)..."
+                placeholder="Buscar empresa por RIF, factura # o comando (ej. J-4019, TXT, BCV, Conciliar)..."
                 className="w-full bg-transparent focus:outline-none text-sm text-white placeholder-slate-500 font-sans"
               />
               <kbd className="px-1.5 py-0.5 text-[10px] rounded bg-white/10 text-slate-300 font-mono">ESC</kbd>
@@ -7381,6 +7625,23 @@ export default function App() {
 
             <div className="max-h-80 overflow-y-auto space-y-1">
               {[
+                ...tenants.map(t => ({
+                  label: `🏢 Cambiar a ${t.name} (${t.rif})`,
+                  category: 'CLIENTE',
+                  action: () => {
+                    setSelectedTenantId(t.id);
+                    setActiveTab('clients');
+                    setCommandPaletteOpen(false);
+                  }
+                })),
+                ...tenantInvoices.slice(0, 15).map(inv => ({
+                  label: `🧾 Inspeccionar Factura #${inv.invoiceNumber} · ${inv.supplierName} (${inv.currency} ${inv.totalOriginal.toFixed(2)})`,
+                  category: 'FACTURA',
+                  action: () => {
+                    setInspectedInvoice(inv);
+                    setCommandPaletteOpen(false);
+                  }
+                })),
                 {
                   label: '👑 Ir a Torre de Control Super-Admin (Red de Contadores)',
                   category: 'SUPER-ADMIN',
