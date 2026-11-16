@@ -54,6 +54,16 @@ interface Tenant {
   nextBillingDate: string;
   telegramCode: string;
   telegramChatLinked?: string;
+  // Sub-cuenta de empresa (Monetización SaaS B2B2B)
+  subAccountEnabled?: boolean;
+  subAccountContactName?: string;
+  subAccountPhone?: string;
+  subAccountEmail?: string;
+  subAccountRole?: 'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA';
+  subAccountStatus?: 'TRIAL_15_DIAS' | 'ACTIVA' | 'POR_VENCER' | 'SUSPENDIDA';
+  trialDaysLeft?: number;
+  monthlyFeeUsd?: number;
+  accountantCommissionPercent?: number;
 }
 
 const SKINS: { id: SkinId; label: string }[] = [
@@ -78,7 +88,16 @@ const INITIAL_TENANTS: Tenant[] = [
     subscriptionStatus: 'ACTIVA',
     nextBillingDate: '2026-12-14',
     telegramCode: 'VT-BODE-9A41F2',
-    telegramChatLinked: '@bodega_jh_admin (ID: 59182041)'
+    telegramChatLinked: '@bodega_jh_admin (ID: 59182041)',
+    subAccountEnabled: true,
+    subAccountContactName: 'Don José Hernández (Gerencia)',
+    subAccountPhone: '+58 414-9918273',
+    subAccountEmail: 'gerencia@bodegajh.com',
+    subAccountRole: 'ADMIN_EMPRESA',
+    subAccountStatus: 'TRIAL_15_DIAS',
+    trialDaysLeft: 12,
+    monthlyFeeUsd: 29.99,
+    accountantCommissionPercent: 20
   },
   {
     id: 'tenant_ccmi',
@@ -89,7 +108,16 @@ const INITIAL_TENANTS: Tenant[] = [
     subscriptionStatus: 'ACTIVA',
     nextBillingDate: '2026-12-05',
     telegramCode: 'VT-CCMI-7C18E0',
-    telegramChatLinked: '@ccmi_facturacion (ID: 88210492)'
+    telegramChatLinked: '@ccmi_facturacion (ID: 88210492)',
+    subAccountEnabled: true,
+    subAccountContactName: 'Dra. Carmen Mendoza (Administradora)',
+    subAccountPhone: '+58 412-3849102',
+    subAccountEmail: 'carmen@ccmi.com',
+    subAccountRole: 'ADMIN_EMPRESA',
+    subAccountStatus: 'ACTIVA',
+    trialDaysLeft: 0,
+    monthlyFeeUsd: 49.99,
+    accountantCommissionPercent: 20
   },
   {
     id: 'tenant_veneturco',
@@ -100,7 +128,10 @@ const INITIAL_TENANTS: Tenant[] = [
     subscriptionStatus: 'ACTIVA',
     nextBillingDate: '2026-12-28',
     telegramCode: 'VT-VENE-3D88B5',
-    telegramChatLinked: '@veneturco_hq (ID: 10948271)'
+    telegramChatLinked: '@veneturco_hq (ID: 10948271)',
+    subAccountEnabled: false,
+    monthlyFeeUsd: 79.99,
+    accountantCommissionPercent: 20
   }
 ];
 
@@ -446,6 +477,21 @@ export default function App() {
   const [newTenantRegime, setNewTenantRegime] = useState<'SPE' | 'ORDINARIO' | 'FORMAL'>('SPE');
   const [newTenantPlan, setNewTenantPlan] = useState<'COMERCIO_PRO' | 'EMPRESA_MAX' | 'FIRMA_CONTABLE'>('EMPRESA_MAX');
 
+  // Sub-Account Management & Monetization States (B2B2B)
+  const [subAccountModalTenant, setSubAccountModalTenant] = useState<Tenant | null>(null);
+  const [subModalContactName, setSubModalContactName] = useState<string>('');
+  const [subModalPhone, setSubModalPhone] = useState<string>('');
+  const [subModalEmail, setSubModalEmail] = useState<string>('');
+  const [subModalRole, setSubModalRole] = useState<'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA'>('ADMIN_EMPRESA');
+  const [subModalPlanFee, setSubModalPlanFee] = useState<number>(29.99);
+
+  // Sub-Account Direct Payment Gateway Modal (Pago Móvil / Binance / Zelle)
+  const [subPaymentModalTenant, setSubPaymentModalTenant] = useState<Tenant | null>(null);
+  const [subPayMethod, setSubPayMethod] = useState<'PAGO_MOVIL' | 'BINANCE_PAY' | 'ZELLE'>('PAGO_MOVIL');
+  const [subPayRefInput, setSubPayRefInput] = useState<string>('');
+  const [subPayBank, setSubPayBank] = useState<string>('Banesco (0134)');
+  const [subPayToast, setSubPayToast] = useState<string | null>(null);
+
   // New Employee Form State
   const [newEmpName, setNewEmpName] = useState<string>('');
   const [newEmpCedula, setNewEmpCedula] = useState<string>('V-20.111.222');
@@ -661,6 +707,115 @@ export default function App() {
       pendingCount > 0 ? `\n⚠️ Actualmente tiene *${pendingCount} factura(s) pendiente(s)* por revisar.\n` : ''
     }\nPor favor envíe sus fotos o PDFs de compras/ventas al bot oficial de Telegram:\n👉 */vincular ${telegramCode}*\n\n¡Muchas gracias para mantener su empresa al día y evitar sanciones del SENIAT!`;
     return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  function handleOpenSubAccountModal(t: Tenant) {
+    setSubAccountModalTenant(t);
+    setSubModalContactName(t.subAccountContactName || `${t.name.split(' ')[0]} Gerencia`);
+    setSubModalPhone(t.subAccountPhone || '+58 414-');
+    setSubModalEmail(t.subAccountEmail || `admin@${t.rif.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`);
+    setSubModalRole(t.subAccountRole || 'ADMIN_EMPRESA');
+    setSubModalPlanFee(t.monthlyFeeUsd || 29.99);
+  }
+
+  function handleSaveSubAccount(e: React.FormEvent) {
+    e.preventDefault();
+    if (!subAccountModalTenant) return;
+    const targetId = subAccountModalTenant.id;
+    setTenants(prev =>
+      prev.map(t =>
+        t.id === targetId
+          ? {
+              ...t,
+              subAccountEnabled: true,
+              subAccountContactName: subModalContactName.trim(),
+              subAccountPhone: subModalPhone.trim(),
+              subAccountEmail: subModalEmail.trim(),
+              subAccountRole: subModalRole,
+              monthlyFeeUsd: subModalPlanFee,
+              subAccountStatus: t.subAccountStatus || 'TRIAL_15_DIAS',
+              trialDaysLeft: t.trialDaysLeft !== undefined ? t.trialDaysLeft : 15,
+              accountantCommissionPercent: 20
+            }
+          : t
+      )
+    );
+    appendAuditLog(
+      'SUB_CUENTA_ACTIVADA',
+      currentUser?.email || 'admin:contador',
+      targetId,
+      `Sub-cuenta empresarial habilitada para ${subAccountModalTenant.name} (${subModalEmail}) · Rol: ${subModalRole} · Plan: $${subModalPlanFee}/mes`
+    );
+    setSubAccountModalTenant(null);
+  }
+
+  function getWhatsAppSubAccountInviteUrl(
+    tenant: Tenant,
+    contactName: string,
+    phone: string,
+    email: string,
+    feeUsd: number
+  ): string {
+    const link = `https://vt-contadora-os.onrender.com/?sub=${tenant.id}&rif=${tenant.rif}`;
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  function handleConfirmSubAccountPayment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!subPaymentModalTenant || !subPayRefInput.trim()) return;
+    const t = subPaymentModalTenant;
+    const feeUsd = t.monthlyFeeUsd || 29.99;
+    const amountBs = Number((feeUsd * bcvRate).toFixed(2));
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+    const nextDateStr = nextDate.toISOString().slice(0, 10);
+
+    const commissionUsd = Number((feeUsd * 0.20).toFixed(2));
+    const commissionBs = Number((commissionUsd * bcvRate).toFixed(2));
+
+    const newPayment: SaasPaymentRecord = {
+      id: `pay_${Date.now()}`,
+      tenantId: t.id,
+      planId: t.planId,
+      planName: `SaaS Sub-Cuenta ${t.name}`,
+      paymentMethod: subPayMethod,
+      referenceNumber: subPayRefInput.trim(),
+      amountUsd: feeUsd,
+      bcvRate,
+      amountBs,
+      status: 'VERIFICADO',
+      auditHash: computeDeterministicHash('PAY_SALT', { tenantId: t.id, ref: subPayRefInput, feeUsd }),
+      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19)
+    };
+
+    setPayments(prev => [newPayment, ...prev]);
+    setTenants(prev =>
+      prev.map(item =>
+        item.id === t.id
+          ? {
+              ...item,
+              subAccountStatus: 'ACTIVA',
+              trialDaysLeft: 0,
+              subscriptionStatus: 'ACTIVA',
+              nextBillingDate: nextDateStr
+            }
+          : item
+      )
+    );
+
+    appendAuditLog(
+      'PAGO_SUB_CUENTA_VERIFICADO',
+      currentUser?.email || 'admin:saas',
+      t.id,
+      `Pago de suscripción verificado para ${t.name}: $${feeUsd} USD (Bs. ${amountBs.toFixed(2)}) vía ${subPayMethod} Ref: ${subPayRefInput}. Comisión contador: $${commissionUsd} USD (Bs. ${commissionBs.toFixed(2)})`
+    );
+
+    setSubPayToast(`¡Pago Verificado! Sub-cuenta de ${t.name} renovada por 30 días. Comisión para el contador: $${commissionUsd} USD (Bs. ${commissionBs.toFixed(2)})`);
+    setSubPayRefInput('');
+    setSubPaymentModalTenant(null);
+    setTimeout(() => setSubPayToast(null), 6000);
   }
 
   const portfolioStats = useMemo(() => {
@@ -2061,6 +2216,56 @@ export default function App() {
                         className="h-full bg-rose-500 animate-pulse"
                         title="Borradores Pendientes"
                       />
+                    </div>
+                  </div>
+
+                  {/* Sub-Cuenta Empresarial (Monetización B2B2B) */}
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      <div>
+                        <span className="text-[10px] text-[var(--muted-foreground)] block uppercase">Sub-Cuenta Empresa:</span>
+                        <div className="font-bold text-white flex items-center gap-1.5">
+                          <span>{tenant.subAccountContactName || (tenant.subAccountEnabled ? 'Acceso Habilitado' : 'Sin Acceso Configurado')}</span>
+                          {tenant.subAccountEnabled && (
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                              tenant.subAccountStatus === 'TRIAL_15_DIAS'
+                                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                : tenant.subAccountStatus === 'ACTIVA'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            }`}>
+                              {tenant.subAccountStatus === 'TRIAL_15_DIAS'
+                                ? `🎁 Trial (${tenant.trialDaysLeft ?? 12}d)`
+                                : tenant.subAccountStatus === 'ACTIVA'
+                                ? `🟢 Solvente ($${tenant.monthlyFeeUsd || 29.99}/m)`
+                                : '🔴 Por Renovar'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleOpenSubAccountModal(tenant)}
+                        className="px-2.5 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/10 text-emerald-300 flex items-center gap-1 text-[11px] font-bold transition"
+                        title="Configurar Sub-Cuenta y Enviar Acceso por WhatsApp"
+                      >
+                        <KeyRound className="w-3 h-3" />
+                        {tenant.subAccountEnabled ? 'Gestionar Sub-Cuenta' : '+ Crear Sub-Cuenta'}
+                      </button>
+
+                      {tenant.subAccountEnabled && (
+                        <button
+                          onClick={() => setSubPaymentModalTenant(tenant)}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 text-[11px] font-bold transition"
+                          title="Cobrar / Renovar Suscripción (Pago Móvil / Binance)"
+                        >
+                          <CreditCard className="w-3 h-3" />
+                          Cobrar / Pago Móvil
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -3793,6 +3998,123 @@ export default function App() {
               </div>
             </div>
 
+            {/* Matriz de Sub-Cuentas Empresariales Monetizadas (B2B2B) */}
+            <div className="ui-card p-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="ui-heading text-base font-bold flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[var(--accent-primary)]" />
+                    Matriz de Sub-Cuentas Empresariales Monetizadas (B2B2B)
+                  </h3>
+                  <p className="text-xs font-mono opacity-75">
+                    Habilita el acceso directo a cada cliente, cobra suscripciones y genera comisiones del 20% recurrente
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                    20% Comisión Contador Automática
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-[var(--border-subtle)] opacity-75">
+                      <th className="py-2 px-2">Empresa / RIF</th>
+                      <th className="py-2 px-2">Contacto Sub-Cuenta</th>
+                      <th className="py-2 px-2">Rol Asignado</th>
+                      <th className="py-2 px-2 text-right">Cuota Mensual</th>
+                      <th className="py-2 px-2">Estatus / Quincena</th>
+                      <th className="py-2 px-2 text-center">Reparto Rev-Share</th>
+                      <th className="py-2 px-2 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tenants.map(t => {
+                      const fee = t.monthlyFeeUsd || 29.99;
+                      const feeBs = (fee * bcvRate).toLocaleString('es-VE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      });
+                      const comm = (fee * 0.2).toFixed(2);
+                      const net = (fee * 0.8).toFixed(2);
+
+                      return (
+                        <tr key={t.id} className="border-b border-[var(--border-subtle)]/50 hover:bg-white/[0.02]">
+                          <td className="py-2.5 px-2">
+                            <div className="font-bold">{t.name}</div>
+                            <div className="text-[10px] opacity-65">{t.rif}</div>
+                          </td>
+                          <td className="py-2.5 px-2">
+                            {t.subAccountContactName ? (
+                              <div>
+                                <div className="font-medium">{t.subAccountContactName}</div>
+                                <div className="text-[10px] opacity-65">{t.subAccountPhone || t.subAccountEmail}</div>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] opacity-50 italic">Sin configurar</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-2">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-white/10">
+                              {t.subAccountRole || 'ADMIN_EMPRESA'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-2 text-right tabular-nums">
+                            <div className="font-bold text-[var(--accent-primary)]">${fee.toFixed(2)}/mes</div>
+                            <div className="text-[10px] opacity-65">Bs. {feeBs}</div>
+                          </td>
+                          <td className="py-2.5 px-2">
+                            {t.subAccountStatus === 'TRIAL_15_DIAS' ? (
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                                🎁 TRIAL ({t.trialDaysLeft ?? 15}d)
+                              </span>
+                            ) : t.subAccountStatus === 'ACTIVA' ? (
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+                                🟢 SOLVENTE
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 text-[10px] font-bold border border-rose-500/30">
+                                🔴 POR RENOVAR
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-2 text-center">
+                            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px]">
+                              <span className="text-[var(--accent-primary)] font-bold">80% (${net})</span>
+                              <span className="opacity-40">|</span>
+                              <span className="text-emerald-400 font-bold">20% (${comm})</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => handleOpenSubAccountModal(t)}
+                                className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-[10px] font-bold flex items-center gap-1"
+                                title="Configurar e invitar por WhatsApp"
+                              >
+                                <KeyRound className="w-3 h-3 text-[var(--accent-primary)]" />
+                                Gestionar
+                              </button>
+                              <button
+                                onClick={() => setSubPaymentModalTenant(t)}
+                                className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1"
+                                title="Cobrar por Pago Móvil / Binance / Zelle"
+                              >
+                                <CreditCard className="w-3 h-3" />
+                                Cobrar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             {/* Payment Ledger Table */}
             <div className="ui-card p-5 space-y-3">
               <div className="flex items-center justify-between">
@@ -4407,6 +4729,343 @@ export default function App() {
       )}
 
       {/* =====================================================================
+          SUB-ACCOUNT CONFIGURATION & PROVISIONING MODAL (B2B2B SAAS)
+         ===================================================================== */}
+      {subAccountModalTenant && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setSubAccountModalTenant(null)}
+        >
+          <form
+            onSubmit={handleSaveSubAccount}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-lg ui-card p-6 space-y-4 text-xs font-mono shadow-2xl my-8 border border-[var(--border-highlight)]"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/40 flex items-center justify-center">
+                  <KeyRound className="w-4 h-4 text-[var(--accent-primary)]" />
+                </div>
+                <div>
+                  <h3 className="ui-heading text-base font-bold">Sub-Cuenta Empresarial (Acceso Cliente)</h3>
+                  <p className="text-[11px] opacity-75">
+                    {subAccountModalTenant.name} · RIF: {subAccountModalTenant.rif}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSubAccountModalTenant(null)}
+                className="opacity-75 hover:opacity-100 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Trial Banner */}
+            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] leading-relaxed">
+                <strong className="text-emerald-400">🎁 15 Días de Prueba Gratis (1 Quincena SENIAT):</strong> La empresa
+                podrá emitir comprobantes de retención IVA de 14 dígitos y cargar facturas por foto/Telegram sin costo
+                durante su primera quincena.
+              </div>
+            </div>
+
+            {/* Form Fields */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Contacto / Administrador</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Lic. Mariana Delgado"
+                  value={subModalContactName}
+                  onChange={e => setSubModalContactName(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">WhatsApp Corporativo</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="+58 414-1234567"
+                  value={subModalPhone}
+                  onChange={e => setSubModalPhone(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block mb-1 opacity-80 font-bold">Correo de Acceso (Usuario)</label>
+              <input
+                type="email"
+                required
+                placeholder="admin@empresa.com"
+                value={subModalEmail}
+                onChange={e => setSubModalEmail(e.target.value)}
+                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] focus:outline-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Rol Asignado a la Empresa</label>
+                <select
+                  value={subModalRole}
+                  onChange={e =>
+                    setSubModalRole(e.target.value as 'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA')
+                  }
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                >
+                  <option value="ADMIN_EMPRESA">Admin Empresa (Retenciones + OCR)</option>
+                  <option value="OPERADOR_CAJA">Operador Caja (Solo Escanear Facturas)</option>
+                  <option value="SOLO_CONSULTA">Solo Consulta (Reportes y Solvencia)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Cuota Mensual (USD)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="10"
+                    max="500"
+                    value={subModalPlanFee}
+                    onChange={e => setSubModalPlanFee(Number(e.target.value))}
+                    className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] pl-8 font-bold text-[var(--accent-primary)]"
+                  />
+                  <span className="absolute left-3 top-2.5 opacity-60">$</span>
+                </div>
+                <div className="text-[10px] opacity-60 mt-0.5">
+                  Equivale a Bs. {(subModalPlanFee * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })} @ BCV
+                </div>
+              </div>
+            </div>
+
+            {/* Revenue-Share Callout */}
+            <div className="p-3 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-between text-[11px]">
+              <div>
+                <div className="font-bold text-[var(--accent-primary)]">Comisión Contador (20% Rev-Share):</div>
+                <div className="opacity-75">Ganas ${(subModalPlanFee * 0.2).toFixed(2)}/mes de forma recurrente</div>
+              </div>
+              <div className="text-right">
+                <div className="font-bold text-emerald-400">+Bs. {((subModalPlanFee * 0.2) * bcvRate).toFixed(2)}</div>
+                <div className="text-[10px] opacity-60">por mes solvente</div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-2 flex flex-col sm:flex-row gap-2">
+              <button
+                type="submit"
+                className="ui-btn-primary flex-1 py-2.5 text-xs font-bold flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                Habilitar Sub-Cuenta
+              </button>
+
+              <a
+                href={getWhatsAppSubAccountInviteUrl(
+                  subAccountModalTenant,
+                  subModalContactName,
+                  subModalPhone,
+                  subModalEmail,
+                  subModalPlanFee
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-center gap-1.5 transition-colors text-xs"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Enviar WhatsApp
+              </a>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          VENEZUELAN PAYMENT GATEWAY MODAL (PAGO MÓVIL / BINANCE / ZELLE)
+         ===================================================================== */}
+      {subPaymentModalTenant && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setSubPaymentModalTenant(null)}
+        >
+          <form
+            onSubmit={handleConfirmSubAccountPayment}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-lg ui-card p-6 space-y-4 text-xs font-mono shadow-2xl my-8 border border-[var(--border-highlight)]"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center">
+                  <CreditCard className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="ui-heading text-base font-bold">Pasarela Bimoneda · Cobro de Sub-Cuenta</h3>
+                  <p className="text-[11px] opacity-75">
+                    {subPaymentModalTenant.name} · RIF: {subPaymentModalTenant.rif}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSubPaymentModalTenant(null)}
+                className="opacity-75 hover:opacity-100 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Total to Charge Banner */}
+            {(() => {
+              const feeUsd = subPaymentModalTenant.monthlyFeeUsd || 29.99;
+              const feeBs = (feeUsd * bcvRate).toLocaleString('es-VE', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              });
+              const commUsd = (feeUsd * 0.2).toFixed(2);
+              const commBs = ((feeUsd * 0.2) * bcvRate).toLocaleString('es-VE', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              });
+              const netUsd = (feeUsd * 0.8).toFixed(2);
+
+              return (
+                <div className="space-y-3">
+                  <div className="p-3.5 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] uppercase opacity-75">Monto de Suscripción (30 Días)</div>
+                      <div className="text-xl font-bold text-[var(--accent-primary)] tabular-nums">
+                        ${feeUsd.toFixed(2)} USD
+                      </div>
+                      <div className="text-xs font-bold text-emerald-400 tabular-nums">
+                        Bs. {feeBs} <span className="text-[10px] font-normal opacity-75">@ BCV {bcvRate}</span>
+                      </div>
+                    </div>
+                    <div className="text-right border-l border-[var(--border-subtle)] pl-4">
+                      <div className="text-[10px] text-emerald-400 font-bold">Comisión Contador (20%):</div>
+                      <div className="text-sm font-bold text-white tabular-nums">${commUsd} USD</div>
+                      <div className="text-[10px] opacity-75 tabular-nums">Bs. {commBs}</div>
+                      <div className="text-[9px] text-[var(--accent-primary)] mt-1">Neto Plataforma: ${netUsd}</div>
+                    </div>
+                  </div>
+
+                  {/* Payment Method Selector */}
+                  <div>
+                    <label className="block mb-1.5 opacity-80 font-bold">Seleccione Método de Pago:</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSubPayMethod('PAGO_MOVIL')}
+                        className={`p-2.5 rounded text-center border transition-all ${
+                          subPayMethod === 'PAGO_MOVIL'
+                            ? 'bg-[var(--accent-primary)] text-black font-bold border-[var(--accent-primary)]'
+                            : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+                        }`}
+                      >
+                        Pago Móvil (Bs.)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubPayMethod('BINANCE_PAY')}
+                        className={`p-2.5 rounded text-center border transition-all ${
+                          subPayMethod === 'BINANCE_PAY'
+                            ? 'bg-[var(--accent-primary)] text-black font-bold border-[var(--accent-primary)]'
+                            : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+                        }`}
+                      >
+                        Binance Pay (USDT)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubPayMethod('ZELLE')}
+                        className={`p-2.5 rounded text-center border transition-all ${
+                          subPayMethod === 'ZELLE'
+                            ? 'bg-[var(--accent-primary)] text-black font-bold border-[var(--accent-primary)]'
+                            : 'bg-[var(--bg-surface)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+                        }`}
+                      >
+                        Zelle (USD)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Payment Instructions Box */}
+                  <div className="p-3 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] space-y-1.5 text-[11px]">
+                    {subPayMethod === 'PAGO_MOVIL' && (
+                      <>
+                        <div className="font-bold text-[var(--accent-primary)]">Datos para Pago Móvil Interbancario:</div>
+                        <div>· Banco: <strong>Banesco (0134) / Mercantil (0105)</strong></div>
+                        <div>· Teléfono: <strong>0414-234.5678</strong></div>
+                        <div>· RIF / C.I.: <strong>J-50123456-7</strong></div>
+                        <div>
+                          · Monto Exacto en Bolívares: <strong className="text-emerald-400">Bs. {feeBs}</strong>
+                        </div>
+                      </>
+                    )}
+                    {subPayMethod === 'BINANCE_PAY' && (
+                      <>
+                        <div className="font-bold text-amber-400">Datos para Binance Pay:</div>
+                        <div>· Binance Pay ID: <strong>284910284</strong> (VeneTurco OS)</div>
+                        <div>· Moneda: <strong>USDT (Tether)</strong></div>
+                        <div>
+                          · Monto Exacto: <strong className="text-emerald-400">${feeUsd.toFixed(2)} USDT</strong>
+                        </div>
+                      </>
+                    )}
+                    {subPayMethod === 'ZELLE' && (
+                      <>
+                        <div className="font-bold text-purple-400">Datos para Transferencia Zelle:</div>
+                        <div>· Correo Zelle: <strong>pagos@veneturco.com</strong></div>
+                        <div>· Titular: <strong>VeneTurco Software LLC</strong></div>
+                        <div>
+                          · Monto Exacto: <strong className="text-emerald-400">${feeUsd.toFixed(2)} USD</strong>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Reference Input */}
+                  <div>
+                    <label className="block mb-1 opacity-80 font-bold">
+                      Nº Referencia Bancaria / Hash de Transacción
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej: 0098234827 o Hash Binance"
+                      value={subPayRefInput}
+                      onChange={e => setSubPayRefInput(e.target.value)}
+                      className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={!subPayRefInput.trim()}
+                      className="ui-btn-primary w-full py-2.5 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Confirmar Pago y Renovar 30 Días (+${commUsd} Comisión Contador)
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
           NEW TENANT / COMPANY REGISTRATION MODAL (+ NUEVO RIF)
          ===================================================================== */}
       {newTenantModalOpen && (
@@ -4597,6 +5256,19 @@ export default function App() {
                 ))}
             </div>
           </div>
+        </div>
+      )}
+      {/* Toast Notification for Sub-Account & Payments */}
+      {subPayToast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md p-4 rounded-xl bg-emerald-950/95 border border-emerald-500/80 text-emerald-200 text-xs font-mono shadow-2xl backdrop-blur-md flex items-start gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-bold text-emerald-300">Notificación de Conciliación B2B2B</div>
+            <div className="mt-1 leading-relaxed">{subPayToast}</div>
+          </div>
+          <button onClick={() => setSubPayToast(null)} className="opacity-75 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </div>
