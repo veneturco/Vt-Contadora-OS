@@ -19,6 +19,7 @@ import {
   buildVoucher14Digits,
   exportSeniatIvaTxt16,
   exportIslrXmlDecreto1808,
+  exportSeniatPurchaseAndSalesBookCsv,
   computeDeterministicHash,
   simulateAes256GcmEncrypt,
   simulateAes256GcmDecrypt,
@@ -1711,6 +1712,19 @@ export default function App() {
               <button
                 onClick={() =>
                   handleDownloadFile(
+                    `LIBRO_FISCAL_SENIAT_${activeTenant.rif}_202611.csv`,
+                    exportSeniatPurchaseAndSalesBookCsv(activeTenant.name, activeTenant.rif, '202611', 'ALL', tenantInvoices),
+                    'text/csv;charset=utf-8'
+                  )
+                }
+                className="px-3.5 py-2 text-xs font-bold rounded-lg bg-[var(--bg-elevated)] hover:bg-white/10 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 transition"
+              >
+                <Download className="w-4 h-4" />
+                Exportar Libro Excel (CSV)
+              </button>
+              <button
+                onClick={() =>
+                  handleDownloadFile(
                     `RET_IVA_${activeTenant.rif}_202611.txt`,
                     exportSeniatIvaTxt16(activeTenant.rif, '202611', tenantInvoices),
                     'text/plain'
@@ -2728,6 +2742,24 @@ export default function App() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() =>
+                    handleDownloadFile(
+                      `LIBRO_FISCAL_SENIAT_${activeTenant.rif}_202611.csv`,
+                      exportSeniatPurchaseAndSalesBookCsv(
+                        activeTenant.name,
+                        activeTenant.rif,
+                        '202611',
+                        bookFilter === 'COMPRA' || bookFilter === 'VENTA' ? bookFilter : 'ALL',
+                        tenantInvoices
+                      ),
+                      'text/csv;charset=utf-8'
+                    )
+                  }
+                  className="px-3 py-2 text-xs font-mono border border-emerald-500/50 text-emerald-300 rounded bg-emerald-500/10 hover:bg-emerald-500/20 font-bold"
+                >
+                  Exportar Libro Excel (CSV)
+                </button>
                 <button
                   onClick={() =>
                     handleDownloadFile(

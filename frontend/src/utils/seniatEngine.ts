@@ -24,6 +24,7 @@ export interface FiscalInvoice {
   totalOriginal: number;
   vatRetentionRate: 0 | 75 | 100;
   islrRetentionRate: number;
+  islrConceptCode?: string; // Decreto 1808 (ej. 053 Servicios/Obras 2%, 055 Honorarios PJ 5%, 004 Honorarios PN 3%)
   status: 'BORRADOR_IA' | 'APROBADA';
   sourceChannel: 'WEB_OCR' | 'TELEGRAM_BOT' | 'MANUAL';
   auditHash: string;
@@ -53,7 +54,7 @@ export function toVes(amount: number, currency: 'VES' | 'USD', rate: number): nu
 }
 
 export function isVatDeductible(inv: FiscalInvoice): boolean {
-  // Art. 10.4 Providencia SNAT/2026/00093: Ticket de maquina fiscal sin RIF/Razon Social no da derecho a credito fiscal
+  // Art. 54 Providencia SNAT/2011/00071 y Art. 10.4 SNAT/2026/00093: Ticket de maquina fiscal sin RIF/Razon Social no da derecho a credito fiscal
   if (inv.channel === 'MAQUINA_FISCAL' && !inv.hasBuyerRifOnTicket) return false;
   return true;
 }
@@ -114,24 +115,116 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+export function resolveIslrConceptCode(inv: FiscalInvoice): string {
+  if (inv.islrConceptCode) return inv.islrConceptCode;
+  if (inv.islrRetentionRate === 5) return '055'; // Honorarios Profesionales PJ / Comisiones
+  if (inv.islrRetentionRate === 3) return '004'; // Honorarios PN / Fletes PJ
+  if (inv.islrRetentionRate === 1) return '054'; // Contratistas / Servicios PN
+  return '053'; // Servicios Generales / Contratistas PJ (2% Decreto 1808 Art. 9 Num. 11)
+}
+
 export function exportIslrXmlDecreto1808(agentRif: string, periodYYYYMM: string, invoices: FiscalInvoice[]): string {
   const cleanAgent = escapeXml(agentRif.replace(/-/g, '').toUpperCase());
   const items = invoices
     .filter(i => i.bookType === 'COMPRA' && i.status === 'APROBADA' && i.islrRetentionRate > 0)
     .map(inv => {
       const baseBs = toVes(inv.taxableBaseOriginal, inv.currency, inv.bcvRateOnDate);
+      const conceptCode = resolveIslrConceptCode(inv);
       return `  <DetalleRetencion>
     <RifRetenido>${escapeXml(inv.supplierRif.replace(/-/g, '').toUpperCase())}</RifRetenido>
     <NumeroFactura>${escapeXml(inv.invoiceNumber)}</NumeroFactura>
     <NumeroControl>${escapeXml(inv.controlNumber)}</NumeroControl>
     <FechaOperacion>${escapeXml(inv.emissionDate)}</FechaOperacion>
-    <CodigoConcepto>001</CodigoConcepto>
+    <CodigoConcepto>${escapeXml(conceptCode)}</CodigoConcepto>
     <MontoOperacion>${baseBs.toFixed(2)}</MontoOperacion>
     <PorcentajeRetencion>${inv.islrRetentionRate.toFixed(2)}</PorcentajeRetencion>
   </DetalleRetencion>`;
     }).join('\n');
 
   return `<?xml version="1.0" encoding="ISO-8859-1"?>\n<RelacionRetencionesISLR RifAgente="${cleanAgent}" Periodo="${escapeXml(periodYYYYMM)}">\n${items}\n</RelacionRetencionesISLR>`;
+}
+
+export function exportSeniatPurchaseAndSalesBookCsv(
+  companyName: string,
+  companyRif: string,
+  periodYYYYMM: string,
+  bookFilter: 'ALL' | 'COMPRA' | 'VENTA',
+  invoices: FiscalInvoice[]
+): string {
+  const rows = invoices.filter(i => bookFilter === 'ALL' || i.bookType === bookFilter);
+  const headerMeta = [
+    `"CONTRIBUYENTE: ${companyName.replace(/"/g, '""')}"`,
+    `"RIF: ${companyRif}"`,
+    `"PERIODO FISCAL: ${periodYYYYMM}"`,
+    `"LIBRO FISCAL HOMOLOGADO ART. 75 REGLAMENTO LEY IVA / PROVIDENCIA SNAT/2011/00071"`
+  ].join(',');
+
+  const cols = [
+    'Nro_Operacion',
+    'Libro',
+    'Fecha_Emision',
+    'RIF_Proveedor_Cliente',
+    'Nombre_o_Razon_Social',
+    'Tipo_Doc',
+    'Nro_Factura',
+    'Nro_Control',
+    'Doc_Afectado',
+    'Canal_Emision',
+    'Moneda_Orig',
+    'Tasa_BCV',
+    'Total_Con_IVA_Bs',
+    'Compras_Ventas_Exentas_Bs',
+    'Base_Imponible_Bs',
+    'Alicuota_IVA_%',
+    'Impuesto_IVA_Bs',
+    'Deducible_Credito_Fiscal',
+    'Porcentaje_Ret_IVA',
+    'IVA_Retenido_Bs',
+    'Nro_Comprobante_14_Digitos',
+    'IGTF_3%_Bs',
+    'Estado_SENIAT',
+    'Sello_SHA256_COT'
+  ].join(',');
+
+  const dataLines = rows.map((inv, idx) => {
+    const sign = inv.docType === '03' ? -1 : 1;
+    const totalBs = toVes(inv.totalOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const exemptBs = toVes(inv.exemptOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const baseBs = toVes(inv.taxableBaseOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const vatBs = toVes(inv.vatOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const withheldBs = inv.bookType === 'COMPRA' ? Number((vatBs * (inv.vatRetentionRate / 100)).toFixed(2)) : 0;
+    const igtfBs = toVes(inv.igtfOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const voucher14 = inv.vatRetentionRate > 0 ? buildVoucher14Digits(periodYYYYMM, idx + 1) : 'N/A';
+
+    return [
+      idx + 1,
+      inv.bookType,
+      inv.emissionDate,
+      inv.supplierRif,
+      `"${inv.supplierName.replace(/"/g, '""')}"`,
+      inv.docType === '01' ? '01-FACTURA' : inv.docType === '02' ? '02-NOTA_DEBITO' : '03-NOTA_CREDITO',
+      `"${inv.invoiceNumber}"`,
+      `"${inv.controlNumber}"`,
+      `"${inv.affectedDocument || '-'}"`,
+      inv.channel,
+      inv.currency,
+      inv.bcvRateOnDate.toFixed(2),
+      totalBs.toFixed(2),
+      exemptBs.toFixed(2),
+      baseBs.toFixed(2),
+      inv.vatRate.toFixed(2),
+      vatBs.toFixed(2),
+      isVatDeductible(inv) ? 'SI_DEDUCIBLE' : 'NO_DEDUCIBLE_ART54',
+      `${inv.vatRetentionRate}%`,
+      withheldBs.toFixed(2),
+      `"${voucher14}"`,
+      igtfBs.toFixed(2),
+      inv.status,
+      inv.auditHash
+    ].join(',');
+  });
+
+  return `\uFEFF${headerMeta}\n\n${cols}\n${dataLines.join('\n')}`;
 }
 
 export interface AuditLogEntry {
