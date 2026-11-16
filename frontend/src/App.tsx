@@ -73,6 +73,28 @@ interface Tenant {
   accountantCommissionPercent?: number;
 }
 
+export interface AccountantPartner {
+  id: string;
+  name: string;
+  cpcNumber: string;
+  rif: string;
+  email: string;
+  phone: string;
+  city: string;
+  planId: 'CONTADOR_INDIVIDUAL' | 'FIRMA_PRO' | 'CONSORCIO_MAX';
+  monthlyFeeUsd: number;
+  maxCompaniesLimit: number;
+  assignedTenantIds: string[];
+  subscriptionStatus: 'ACTIVA' | 'SUSPENDIDA' | 'EN_PRUEBA';
+  nextBillingDate: string;
+  payoutMethod: 'PAGO_MOVIL' | 'BINANCE_PAY' | 'ZELLE';
+  payoutDetails: string;
+  pendingCommissionUsd: number;
+  paidCommissionsTotalUsd: number;
+  firmLogoText?: string;
+  createdAt: string;
+}
+
 const SKINS: { id: SkinId; label: string }[] = [
   { id: 'hyperframe-tactical', label: 'Hyperframe HUD (Tactical)' },
   { id: 'mercury-sovereign', label: 'Mercury Sovereign (Fintech 2026)' },
@@ -536,20 +558,125 @@ const INITIAL_BANK_MOVEMENTS: BankMovement[] = [
   }
 ];
 
+const ACCOUNTANT_PLANS_CATALOG = [
+  {
+    id: 'CONTADOR_INDIVIDUAL',
+    name: 'Contador Independiente',
+    priceUsdMonthly: 29.99,
+    maxCompanies: 3,
+    features: [
+      'Hasta 3 Empresas (Multi-RIF)',
+      'Libros SENIAT y TXT IVA / XML ISLR',
+      'Escáner OCR Gemini 2.5 Flash (0 Tokens)',
+      'Soporte estándar vía WhatsApp'
+    ]
+  },
+  {
+    id: 'FIRMA_PRO',
+    name: 'Firma Contable Pro',
+    priceUsdMonthly: 69.99,
+    maxCompanies: 10,
+    features: [
+      'Hasta 10 Empresas (Multi-RIF)',
+      'Conciliador Bancario Multi-Banco 1-Clic',
+      'Sub-cuentas para clientes (20% Rev-Share)',
+      'Desglose de Lotes POS y Diferencial Cambiario'
+    ]
+  },
+  {
+    id: 'CONSORCIO_MAX',
+    name: 'Consorcio Contable Max',
+    priceUsdMonthly: 149.99,
+    maxCompanies: 999,
+    features: [
+      'Empresas Ilimitadas (Multi-RIF)',
+      'Co-Branding / Marca Blanca en reportes PDF',
+      'Gestión de Nómina LOTTT Ilimitada',
+      'Directorio Público Nacional de Contadores'
+    ]
+  }
+];
+
+const INITIAL_ACCOUNTANTS: AccountantPartner[] = [
+  {
+    id: 'acc_001',
+    name: 'Lic. Mariana Delgado',
+    cpcNumber: 'CPC-74.192',
+    rif: 'V-19.482.710-3',
+    email: 'mariana.delgado@cpcvalencia.com',
+    phone: '+58 414-5551234',
+    city: 'Valencia, Edo. Carabobo',
+    planId: 'FIRMA_PRO',
+    monthlyFeeUsd: 69.99,
+    maxCompaniesLimit: 10,
+    assignedTenantIds: ['tenant_bodega_jh', 'tenant_ccmi'],
+    subscriptionStatus: 'ACTIVA',
+    nextBillingDate: '2026-12-15',
+    payoutMethod: 'PAGO_MOVIL',
+    payoutDetails: 'Banesco (0134) · 0414-5551234 · V-19482710',
+    pendingCommissionUsd: 60.00,
+    paidCommissionsTotalUsd: 240.00,
+    firmLogoText: 'Delgado & Asociados Contadores Públicos',
+    createdAt: '2026-01-10'
+  },
+  {
+    id: 'acc_002',
+    name: 'Lic. Pedro José Uzcátegui',
+    cpcNumber: 'CPC-61.804',
+    rif: 'V-14.819.201-9',
+    email: 'pedro.uzcategui@asesoresfiscales.ve',
+    phone: '+58 412-8889900',
+    city: 'Caracas, Distrito Capital',
+    planId: 'CONSORCIO_MAX',
+    monthlyFeeUsd: 149.99,
+    maxCompaniesLimit: 999,
+    assignedTenantIds: ['tenant_veneturco'],
+    subscriptionStatus: 'ACTIVA',
+    nextBillingDate: '2026-12-05',
+    payoutMethod: 'PAGO_MOVIL',
+    payoutDetails: 'Mercantil (0105) · 0412-8889900 · V-14819201',
+    pendingCommissionUsd: 90.00,
+    paidCommissionsTotalUsd: 480.00,
+    firmLogoText: 'Uzcátegui Consultoría Tributaria',
+    createdAt: '2025-11-20'
+  },
+  {
+    id: 'acc_003',
+    name: 'Lic. Carmen Elena Rivas',
+    cpcNumber: 'CPC-88.315',
+    rif: 'V-22.104.938-1',
+    email: 'carmen.rivas@contadoreszulia.com',
+    phone: '+58 416-3334455',
+    city: 'Maracaibo, Edo. Zulia',
+    planId: 'CONTADOR_INDIVIDUAL',
+    monthlyFeeUsd: 29.99,
+    maxCompaniesLimit: 3,
+    assignedTenantIds: [],
+    subscriptionStatus: 'EN_PRUEBA',
+    nextBillingDate: '2026-11-28',
+    payoutMethod: 'BINANCE_PAY',
+    payoutDetails: 'Binance Pay ID: 784910291 (USDT)',
+    pendingCommissionUsd: 15.00,
+    paidCommissionsTotalUsd: 0.00,
+    firmLogoText: 'Rivas Contabilidad Digital',
+    createdAt: '2026-11-12'
+  }
+];
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'admin' | 'client'; name: string } | null>(() =>
+  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'superadmin' | 'admin' | 'client'; name: string } | null>(() =>
     safeGetStorage('vt_auth_user', null)
   );
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [loginEmail, setLoginEmail] = useState<string>('auditor@veneturco.com');
+  const [loginEmail, setLoginEmail] = useState<string>('founder@veneturco.com');
   const [loginPassword, setLoginPassword] = useState<string>('Seniat2026#');
-  const [loginRole, setLoginRole] = useState<'admin' | 'client'>('admin');
+  const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('superadmin');
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'hyperframe-tactical'));
-  const [activeTab, setActiveTab] = useState<'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'reconciliation' | 'mobile' | 'security'>('clients');
+  const [activeTab, setActiveTab] = useState<'accountants' | 'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'reconciliation' | 'mobile' | 'security'>('accountants');
   const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
   const [clientSearchQuery, setClientSearchQuery] = useState<string>('');
   const [copiedTelegramTenantId, setCopiedTelegramTenantId] = useState<string | null>(null);
@@ -563,6 +690,26 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
+
+  // Super-Admin & Accountants Management States
+  const [accountants, setAccountants] = useState<AccountantPartner[]>(() => safeGetStorage('vt_accountants_v32', INITIAL_ACCOUNTANTS));
+  const [impersonatedAccountant, setImpersonatedAccountant] = useState<AccountantPartner | null>(null);
+  const [payoutModalAccountant, setPayoutModalAccountant] = useState<AccountantPartner | null>(null);
+  const [payoutRefInput, setPayoutRefInput] = useState<string>('');
+  const [accFilterStatus, setAccFilterStatus] = useState<'TODOS' | 'ACTIVA' | 'EN_PRUEBA' | 'SUSPENDIDA'>('TODOS');
+  const [accSearchQuery, setAccSearchQuery] = useState<string>('');
+
+  // New/Edit Accountant Modal State
+  const [accountantModalOpen, setAccountantModalOpen] = useState<boolean>(false);
+  const [editAccId, setEditAccId] = useState<string | null>(null);
+  const [accFormName, setAccFormName] = useState<string>('');
+  const [accFormCpc, setAccFormCpc] = useState<string>('');
+  const [accFormRif, setAccFormRif] = useState<string>('');
+  const [accFormEmail, setAccFormEmail] = useState<string>('');
+  const [accFormPhone, setAccFormPhone] = useState<string>('');
+  const [accFormCity, setAccFormCity] = useState<string>('Caracas, Distrito Capital');
+  const [accFormPlan, setAccFormPlan] = useState<'CONTADOR_INDIVIDUAL' | 'FIRMA_PRO' | 'CONSORCIO_MAX'>('FIRMA_PRO');
+  const [accFormPayout, setAccFormPayout] = useState<string>('');
 
   // Bank Reconciliation States (VEN-NIF NIC 21 & Art. 177 COT)
   const [bankMovements, setBankMovements] = useState<BankMovement[]>(() => safeGetStorage('vt_bank_moves_v32', INITIAL_BANK_MOVEMENTS));
@@ -766,6 +913,10 @@ export default function App() {
   useEffect(() => {
     safeSetStorage('vt_employees_v31', employees);
   }, [employees]);
+
+  useEffect(() => {
+    safeSetStorage('vt_accountants_v32', accountants);
+  }, [accountants]);
 
   const activeTenant = useMemo(
     () => tenants.find(t => t.id === selectedTenantId) || tenants[0],
@@ -1142,17 +1293,277 @@ export default function App() {
     });
   }, [portfolioStats, clientPortfolioFilter, clientSearchQuery]);
 
+  const superAdminStats = useMemo(() => {
+    const totalAccountants = accountants.length;
+    const activeAccountants = accountants.filter(a => a.subscriptionStatus === 'ACTIVA').length;
+    const trialAccountants = accountants.filter(a => a.subscriptionStatus === 'EN_PRUEBA').length;
+    const suspendedAccountants = accountants.filter(a => a.subscriptionStatus === 'SUSPENDIDA').length;
+
+    // Direct MRR from accountants plans
+    const mrrAccountantsUsd = accountants.reduce(
+      (sum, a) => sum + (a.subscriptionStatus === 'ACTIVA' ? a.monthlyFeeUsd : 0),
+      0
+    );
+
+    // B2B2B Sub-accounts MRR from clients
+    const mrrSubAccountsUsd = tenants.reduce(
+      (sum, t) => sum + (t.subAccountEnabled && t.subAccountStatus === 'ACTIVA' ? (t.monthlyFeeUsd || 29.99) : 0),
+      0
+    );
+
+    const consolidatedMrrUsd = mrrAccountantsUsd + mrrSubAccountsUsd;
+    const consolidatedMrrBs = consolidatedMrrUsd * bcvRate;
+
+    const pendingCommissionsUsd = accountants.reduce((sum, a) => sum + (a.pendingCommissionUsd || 0), 0);
+    const pendingCommissionsBs = pendingCommissionsUsd * bcvRate;
+    const totalPaidCommissionsUsd = accountants.reduce((sum, a) => sum + (a.paidCommissionsTotalUsd || 0), 0);
+    const totalPaidCommissionsBs = totalPaidCommissionsUsd * bcvRate;
+
+    const totalCompaniesInNetwork = tenants.length;
+
+    return {
+      totalAccountants,
+      activeAccountants,
+      trialAccountants,
+      suspendedAccountants,
+      mrrAccountantsUsd,
+      mrrSubAccountsUsd,
+      consolidatedMrrUsd,
+      consolidatedMrrBs,
+      pendingCommissionsUsd,
+      pendingCommissionsBs,
+      totalPaidCommissionsUsd,
+      totalPaidCommissionsBs,
+      totalCompaniesInNetwork
+    };
+  }, [accountants, tenants, bcvRate]);
+
+  const filteredAccountants = useMemo(() => {
+    return accountants.filter(acc => {
+      if (accFilterStatus !== 'TODOS' && acc.subscriptionStatus !== accFilterStatus) return false;
+      if (accSearchQuery.trim()) {
+        const q = accSearchQuery.toLowerCase();
+        const match =
+          acc.name.toLowerCase().includes(q) ||
+          acc.cpcNumber.toLowerCase().includes(q) ||
+          acc.rif.toLowerCase().includes(q) ||
+          acc.city.toLowerCase().includes(q) ||
+          (acc.firmLogoText && acc.firmLogoText.toLowerCase().includes(q));
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [accountants, accFilterStatus, accSearchQuery]);
+
+  function handleOpenAccountantModal(acc?: AccountantPartner) {
+    if (acc) {
+      setEditAccId(acc.id);
+      setAccFormName(acc.name);
+      setAccFormCpc(acc.cpcNumber);
+      setAccFormRif(acc.rif);
+      setAccFormEmail(acc.email);
+      setAccFormPhone(acc.phone);
+      setAccFormCity(acc.city);
+      setAccFormPlan(acc.planId);
+      setAccFormPayout(acc.payoutDetails);
+    } else {
+      setEditAccId(null);
+      setAccFormName('');
+      setAccFormCpc('CPC-');
+      setAccFormRif('V-');
+      setAccFormEmail('');
+      setAccFormPhone('+58 414-');
+      setAccFormCity('Caracas, Distrito Capital');
+      setAccFormPlan('FIRMA_PRO');
+      setAccFormPayout('Banesco (0134) · 0414-0000000 · V-00000000');
+    }
+    setAccountantModalOpen(true);
+  }
+
+  function handleSaveAccountant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accFormName.trim() || !accFormCpc.trim()) return;
+
+    const planCatalog = ACCOUNTANT_PLANS_CATALOG.find(p => p.id === accFormPlan) || ACCOUNTANT_PLANS_CATALOG[1];
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+
+    if (editAccId) {
+      setAccountants(prev =>
+        prev.map(a =>
+          a.id === editAccId
+            ? {
+                ...a,
+                name: accFormName.trim(),
+                cpcNumber: accFormCpc.trim(),
+                rif: accFormRif.trim(),
+                email: accFormEmail.trim(),
+                phone: accFormPhone.trim(),
+                city: accFormCity.trim(),
+                planId: accFormPlan,
+                monthlyFeeUsd: planCatalog.priceUsdMonthly,
+                maxCompaniesLimit: planCatalog.maxCompanies,
+                payoutDetails: accFormPayout.trim()
+              }
+            : a
+        )
+      );
+      appendAuditLog(
+        'CONTADOR_PARTNER_ACTUALIZADO',
+        currentUser?.email || 'founder@veneturco.com',
+        editAccId,
+        `Contador ${accFormName} (${accFormCpc}) actualizado · Plan: ${planCatalog.name}`
+      );
+      setSubPayToast(`Contador ${accFormName} actualizado correctamente.`);
+    } else {
+      const newAcc: AccountantPartner = {
+        id: `acc_${Date.now()}`,
+        name: accFormName.trim(),
+        cpcNumber: accFormCpc.trim(),
+        rif: accFormRif.trim(),
+        email: accFormEmail.trim(),
+        phone: accFormPhone.trim(),
+        city: accFormCity.trim(),
+        planId: accFormPlan,
+        monthlyFeeUsd: planCatalog.priceUsdMonthly,
+        maxCompaniesLimit: planCatalog.maxCompanies,
+        assignedTenantIds: [],
+        subscriptionStatus: 'ACTIVA',
+        nextBillingDate: nextDate.toISOString().slice(0, 10),
+        payoutMethod: 'PAGO_MOVIL',
+        payoutDetails: accFormPayout.trim(),
+        pendingCommissionUsd: 0,
+        paidCommissionsTotalUsd: 0,
+        firmLogoText: `${accFormName.trim()} & Asociados`,
+        createdAt: new Date().toISOString().slice(0, 10)
+      };
+      setAccountants(prev => [newAcc, ...prev]);
+      appendAuditLog(
+        'ALTA_CONTADOR_PARTNER',
+        currentUser?.email || 'founder@veneturco.com',
+        newAcc.id,
+        `Nuevo Contador Partner registrado: ${newAcc.name} (${newAcc.cpcNumber}) · Plan ${planCatalog.name} ($${planCatalog.priceUsdMonthly}/mes)`
+      );
+      setSubPayToast(`¡Nuevo Contador Partner registrado con éxito! Código ${newAcc.cpcNumber}`);
+    }
+
+    setAccountantModalOpen(false);
+    setTimeout(() => setSubPayToast(null), 5000);
+  }
+
+  function handleToggleAccountantStatus(accId: string) {
+    setAccountants(prev =>
+      prev.map(a => {
+        if (a.id !== accId) return a;
+        const newStatus = a.subscriptionStatus === 'ACTIVA' ? 'SUSPENDIDA' : 'ACTIVA';
+        appendAuditLog(
+          'ESTADO_CONTADOR_MODIFICADO',
+          currentUser?.email || 'founder@veneturco.com',
+          accId,
+          `Estado de suscripción de ${a.name} cambiado a: ${newStatus}`
+        );
+        return { ...a, subscriptionStatus: newStatus };
+      })
+    );
+  }
+
+  function handleImpersonateAccountant(acc: AccountantPartner) {
+    setImpersonatedAccountant(acc);
+    if (acc.assignedTenantIds.length > 0) {
+      setSelectedTenantId(acc.assignedTenantIds[0]);
+    }
+    setActiveTab('clients');
+    appendAuditLog(
+      'SOPORTE_IMPERSONACION_INICIADA',
+      currentUser?.email || 'founder@veneturco.com',
+      acc.id,
+      `Modo Asistencia / Impersonación activado para ver como ${acc.name} (${acc.cpcNumber})`
+    );
+    setSubPayToast(`Modo Soporte Activado: Visualizando como ${acc.name} (${acc.cpcNumber})`);
+    setTimeout(() => setSubPayToast(null), 4000);
+  }
+
+  function handleExitImpersonation() {
+    if (impersonatedAccountant) {
+      appendAuditLog(
+        'SOPORTE_IMPERSONACION_FINALIZADA',
+        currentUser?.email || 'founder@veneturco.com',
+        impersonatedAccountant.id,
+        `Modo Asistencia / Impersonación cerrado para ${impersonatedAccountant.name}`
+      );
+    }
+    setImpersonatedAccountant(null);
+    setActiveTab('accountants');
+    setSubPayToast('Has regresado a la Torre de Control Super-Admin.');
+    setTimeout(() => setSubPayToast(null), 4000);
+  }
+
+  function handleOpenPayoutModal(acc: AccountantPartner) {
+    setPayoutModalAccountant(acc);
+    setPayoutRefInput('');
+  }
+
+  function handleConfirmCommissionPayout(e: React.FormEvent) {
+    e.preventDefault();
+    if (!payoutModalAccountant || !payoutRefInput.trim()) return;
+    const acc = payoutModalAccountant;
+    const amountUsd = acc.pendingCommissionUsd;
+    const amountBs = Number((amountUsd * bcvRate).toFixed(2));
+
+    setAccountants(prev =>
+      prev.map(a =>
+        a.id === acc.id
+          ? {
+              ...a,
+              pendingCommissionUsd: 0,
+              paidCommissionsTotalUsd: Number(((a.paidCommissionsTotalUsd || 0) + amountUsd).toFixed(2))
+            }
+          : a
+      )
+    );
+
+    appendAuditLog(
+      'LIQUIDACION_COMISION_PAGADA',
+      currentUser?.email || 'founder@veneturco.com',
+      acc.id,
+      `Liquidación de Rev-Share pagada a ${acc.name} (${acc.cpcNumber}): $${amountUsd} USD (Bs. ${amountBs.toFixed(2)} @ BCV ${bcvRate}) · Ref: ${payoutRefInput.trim()} vía ${acc.payoutMethod}`
+    );
+
+    setSubPayToast(`¡Comisión Liquidada! Se pagaron $${amountUsd} USD (Bs. ${amountBs.toFixed(2)}) a ${acc.name}.`);
+    setPayoutModalAccountant(null);
+    setPayoutRefInput('');
+    setTimeout(() => setSubPayToast(null), 5000);
+  }
+
+  function getWhatsAppCommissionVoucherUrl(
+    acc: AccountantPartner,
+    amountUsd: number,
+    ref: string
+  ): string {
+    const amountBs = (amountUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 });
+    const msg = `Hola *${acc.name}* (${acc.cpcNumber}), le saluda el equipo de *VeneTurco Fiscal OS*.\n\n🎉 Le confirmamos que hemos liquidado su comisión mensual por *Revenue-Share (20%)*:\n\n💵 *Monto en USD:* $${amountUsd.toFixed(2)} USD\n🇻🇪 *Monto en Bolívares:* Bs. ${amountBs} (@ Tasa Oficial BCV ${bcvRate})\n💳 *Método de Pago:* ${acc.payoutMethod}\n🔢 *Nº de Referencia / Hash:* ${ref}\n🏦 *Datos:* ${acc.payoutDetails}\n\n¡Muchas gracias por ser parte de nuestra red de contadores aliados en Venezuela!`;
+    const cleanPhone = acc.phone.replace(/[^0-9]/g, '');
+    return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     const user = {
-      email: loginEmail.trim() || 'auditor@veneturco.com',
+      email: loginEmail.trim() || 'founder@veneturco.com',
       role: loginRole,
-      name: loginRole === 'admin' ? 'Lic. Auditor Principal (Firma)' : `Comercio (${activeTenant.name})`
+      name:
+        loginRole === 'superadmin'
+          ? 'Director General / Super-Admin SaaS'
+          : loginRole === 'admin'
+            ? 'Lic. Auditor Principal (Firma)'
+            : `Comercio (${activeTenant.name})`
     };
     setCurrentUser(user);
     localStorage.setItem('vt_auth_user', JSON.stringify(user));
     if (loginRole === 'client') {
       setActiveTab('mobile');
+    } else if (loginRole === 'superadmin') {
+      setActiveTab('accountants');
     } else {
       setActiveTab('clients');
     }
@@ -1927,20 +2338,36 @@ export default function App() {
             <p className="opacity-75">Acceso Blindado Multi-Empresa · SENIAT & Contabilidad Cloud</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setLoginRole('superadmin');
+                setLoginEmail('founder@veneturco.com');
+              }}
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
+                loginRole === 'superadmin'
+                  ? 'bg-amber-500/20 text-amber-300 font-bold border-amber-400'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
+              }`}
+            >
+              <span>👑</span>
+              <span className="leading-tight">Super-Admin (Dueño)</span>
+            </button>
             <button
               type="button"
               onClick={() => {
                 setLoginRole('admin');
                 setLoginEmail('auditor@veneturco.com');
               }}
-              className={`p-2.5 rounded border text-center ${
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'admin'
                   ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-bold border-[var(--border-highlight)]'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
               }`}
             >
-              Firma Contable / Admin
+              <span>💼</span>
+              <span className="leading-tight">Firma Contable (CPC)</span>
             </button>
             <button
               type="button"
@@ -1948,13 +2375,14 @@ export default function App() {
                 setLoginRole('client');
                 setLoginEmail('gerencia@bodegajh.com');
               }}
-              className={`p-2.5 rounded border text-center ${
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'client'
-                  ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-bold border-[var(--border-highlight)]'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80'
+                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border-emerald-400'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
               }`}
             >
-              Cliente Comercio (9:16)
+              <span>📱</span>
+              <span className="leading-tight">Cliente Comercio</span>
             </button>
           </div>
 
@@ -2152,9 +2580,44 @@ export default function App() {
         </div>
       )}
 
+      {/* Impersonation / Shadow Support Banner */}
+      {impersonatedAccountant && (
+        <div className="mb-5 p-4 rounded-xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-2 border-amber-400 text-amber-200 text-xs font-mono flex flex-wrap items-center justify-between gap-4 shadow-2xl">
+          <div className="flex items-center gap-3">
+            <span className="p-2 rounded-lg bg-amber-400 text-slate-950 font-black text-base animate-pulse">
+              👁️
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-amber-100 uppercase tracking-wider text-sm">
+                  MODO ASISTENCIA REMOTA ACTIVA: {impersonatedAccountant.name}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 text-[10px] font-bold">
+                  {impersonatedAccountant.cpcNumber}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/10 text-slate-300 text-[10px]">
+                  {impersonatedAccountant.city}
+                </span>
+              </div>
+              <p className="text-[11px] opacity-80 mt-0.5">
+                Visualizando el despacho como este contador. Las acciones quedan registradas en el log criptográfico con su firma.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleExitImpersonation}
+            className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg transition-all"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Salir de Asistencia</span>
+          </button>
+        </div>
+      )}
+
       {/* Navigation Tabs */}
       <nav className="flex flex-wrap gap-2 mb-6">
         {[
+          { id: 'accountants', label: '👑 Red de Contadores', icon: Users },
           { id: 'clients', label: '👥 Cartera de Clientes (Radar)', icon: Building2 },
           { id: 'simplified', label: '⭐ Asistente del Contador', icon: CheckCircle2 },
           { id: 'command', label: '01. Centro de Mando', icon: Cpu },
@@ -2185,6 +2648,420 @@ export default function App() {
           );
         })}
       </nav>
+
+      {/* =====================================================================
+          TAB 00-SUPER: TORRE DE CONTROL SUPER-ADMIN (RED DE CONTADORES)
+         ===================================================================== */}
+      {activeTab === 'accountants' && (
+        <div className="space-y-6">
+          {/* Header de la Torre de Control */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-[var(--bg-elevated)] to-slate-900 border border-amber-500/30 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-center gap-3.5">
+              <div className="p-3 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex-shrink-0">
+                <Users className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
+                    Torre de Control Super-Admin · Red de Contadores Aliados
+                  </h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
+                    SaaS Founder Portal
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Monitoreo de suscripciones de firmas contables, liquidación de comisiones Rev-Share (20%) y asistencia remota directa.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleOpenAccountantModal()}
+                className="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold font-mono flex items-center gap-2 shadow-md transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Registrar Contador Partner</span>
+              </button>
+              <button
+                onClick={() => {
+                  const dataStr = JSON.stringify(accountants, null, 2);
+                  handleDownloadFile(`DIRECTORIO_CONTADORES_VT_${new Date().toISOString().slice(0, 10)}.json`, dataStr, 'application/json');
+                }}
+                className="px-3.5 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/5 text-xs font-mono flex items-center gap-2 transition-all"
+                title="Descargar Directorio en JSON"
+              >
+                <Download className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <span>Exportar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Bento KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Card 1: Contadores Aliados */}
+            <div className="ui-card p-4 space-y-2 border-l-4 border-l-amber-400">
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+                <span>RED DE CONTADORES</span>
+                <Users className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="text-2xl font-black font-mono tracking-tight text-white">
+                {superAdminStats.totalAccountants} <span className="text-sm font-normal opacity-70">Firmas</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-1 text-[10px] font-mono">
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                  {superAdminStats.activeAccountants} Activas
+                </span>
+                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                  {superAdminStats.trialAccountants} En Prueba
+                </span>
+                {superAdminStats.suspendedAccountants > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold">
+                    {superAdminStats.suspendedAccountants} Suspendidas
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Card 2: Empresas en Red */}
+            <div className="ui-card p-4 space-y-2 border-l-4 border-l-cyan-400">
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+                <span>EMPRESAS GESTIONADAS</span>
+                <Building2 className="w-4 h-4 text-cyan-400" />
+              </div>
+              <div className="text-2xl font-black font-mono tracking-tight text-white">
+                {superAdminStats.totalCompaniesInNetwork} <span className="text-sm font-normal opacity-70">Multi-RIF</span>
+              </div>
+              <p className="text-[10px] opacity-75 font-mono">
+                Promedio: {(superAdminStats.totalCompaniesInNetwork / Math.max(1, superAdminStats.totalAccountants)).toFixed(1)} empresas por firma contable
+              </p>
+            </div>
+
+            {/* Card 3: MRR Consolidado */}
+            <div className="ui-card p-4 space-y-2 border-l-4 border-l-emerald-400">
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+                <span>MRR CONSOLIDADO</span>
+                <CreditCard className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="text-2xl font-black font-mono tracking-tight text-emerald-400 tabular-nums">
+                ${superAdminStats.consolidatedMrrUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD/mes</span>
+              </div>
+              <div className="text-[11px] font-mono text-white/90 tabular-nums">
+                Bs. {superAdminStats.consolidatedMrrBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-[10px] opacity-60 ml-1">@ BCV {bcvRate}</span>
+              </div>
+              <div className="text-[9px] opacity-65 font-mono">
+                Firmas: ${superAdminStats.mrrAccountantsUsd.toFixed(2)} · Sub-cuentas: ${superAdminStats.mrrSubAccountsUsd.toFixed(2)}
+              </div>
+            </div>
+
+            {/* Card 4: Comisiones por Liquidar */}
+            <div className="ui-card p-4 space-y-2 border-l-4 border-l-purple-400">
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+                <span>REV-SHARE PENDIENTE</span>
+                <Scale className="w-4 h-4 text-purple-400" />
+              </div>
+              <div className="text-2xl font-black font-mono tracking-tight text-purple-300 tabular-nums">
+                ${superAdminStats.pendingCommissionsUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD</span>
+              </div>
+              <div className="text-[11px] font-mono text-purple-200/90 tabular-nums">
+                Bs. {superAdminStats.pendingCommissionsBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[9px] opacity-65 font-mono">
+                Liquidado acumulado: ${superAdminStats.totalPaidCommissionsUsd.toFixed(2)} USD
+              </div>
+            </div>
+          </div>
+
+          {/* Filtros y Buscador */}
+          <div className="ui-card p-4 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
+            <div className="flex-1 min-w-[260px] relative">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 opacity-60" />
+              <input
+                type="text"
+                placeholder="Buscar por Licenciado, CPC, RIF, Ciudad o Firma..."
+                value={accSearchQuery}
+                onChange={e => setAccSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-[var(--accent-primary)] focus:outline-none"
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] opacity-60 mr-1">ESTADO:</span>
+              {(['TODOS', 'ACTIVA', 'EN_PRUEBA', 'SUSPENDIDA'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setAccFilterStatus(st)}
+                  className={`px-3 py-1.5 rounded text-[11px] font-bold border transition-all ${
+                    accFilterStatus === st
+                      ? 'bg-[var(--accent-primary)] text-slate-950 border-[var(--border-highlight)]'
+                      : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tabla de Contadores Partners */}
+          <div className="ui-card overflow-hidden">
+            <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold font-mono text-sm text-white">Directorio Oficial de Firmas & Contadores</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 font-mono text-[var(--accent-primary)]">
+                  {filteredAccountants.length} registros
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] opacity-75 text-[10px] uppercase tracking-wider">
+                    <th className="p-3">Contador & Colegio (CPC)</th>
+                    <th className="p-3">Plan & Cuota</th>
+                    <th className="p-3">Cartera Asignada</th>
+                    <th className="p-3">Rev-Share Pendiente</th>
+                    <th className="p-3">Estado Suscripción</th>
+                    <th className="p-3 text-right">Acciones de Gestión</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-subtle)]">
+                  {filteredAccountants.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center opacity-60">
+                        No se encontraron contadores con los filtros seleccionados.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAccountants.map(acc => {
+                      const planInfo = ACCOUNTANT_PLANS_CATALOG.find(p => p.id === acc.planId) || ACCOUNTANT_PLANS_CATALOG[1];
+                      const assignedTenants = tenants.filter(t => acc.assignedTenantIds.includes(t.id));
+
+                      return (
+                        <tr key={acc.id} className="hover:bg-white/[0.02] transition-colors">
+                          {/* Contador & CPC */}
+                          <td className="p-3">
+                            <div className="font-bold text-white text-sm flex items-center gap-2">
+                              <span>{acc.name}</span>
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                {acc.cpcNumber}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
+                              {acc.firmLogoText || 'Firma Independiente'} · {acc.rif}
+                            </div>
+                            <div className="text-[10px] opacity-60 flex items-center gap-2 mt-0.5">
+                              <span>📍 {acc.city}</span>
+                              <span>·</span>
+                              <span>✉️ {acc.email}</span>
+                            </div>
+                          </td>
+
+                          {/* Plan & Cuota */}
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] uppercase">
+                              {planInfo.name}
+                            </span>
+                            <div className="font-bold text-white mt-1 tabular-nums">
+                              ${acc.monthlyFeeUsd.toFixed(2)} USD/mes
+                            </div>
+                            <div className="text-[10px] opacity-65">
+                              Capacidad: {acc.assignedTenantIds.length} / {acc.maxCompaniesLimit === 999 ? '∞' : acc.maxCompaniesLimit} empresas
+                            </div>
+                          </td>
+
+                          {/* Cartera Asignada */}
+                          <td className="p-3">
+                            {assignedTenants.length > 0 ? (
+                              <div className="flex flex-wrap gap-1 max-w-xs">
+                                {assignedTenants.map(t => (
+                                  <span
+                                    key={t.id}
+                                    className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px] text-white/90 truncate max-w-[140px]"
+                                    title={`${t.name} (${t.rif})`}
+                                  >
+                                    {t.name}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] opacity-50 italic">Sin empresas vinculadas</span>
+                            )}
+                          </td>
+
+                          {/* Rev-Share Pendiente */}
+                          <td className="p-3">
+                            <div className="font-bold text-purple-300 tabular-nums">
+                              ${acc.pendingCommissionUsd.toFixed(2)} USD
+                            </div>
+                            <div className="text-[10px] text-purple-200/80 tabular-nums">
+                              Bs. {(acc.pendingCommissionUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[9px] opacity-60 mt-0.5">
+                              Pagado histórico: ${acc.paidCommissionsTotalUsd.toFixed(2)}
+                            </div>
+                          </td>
+
+                          {/* Estado Suscripción */}
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  acc.subscriptionStatus === 'ACTIVA'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                    : acc.subscriptionStatus === 'EN_PRUEBA'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                                }`}
+                              >
+                                {acc.subscriptionStatus}
+                              </span>
+                              <button
+                                onClick={() => handleToggleAccountantStatus(acc.id)}
+                                title="Cambiar Estado de Suscripción"
+                                className="p-1 rounded hover:bg-white/10 opacity-70 hover:opacity-100 text-[10px]"
+                              >
+                                🔄
+                              </button>
+                            </div>
+                            <div className="text-[9px] opacity-60 mt-1">
+                              Próx. Cobro: {acc.nextBillingDate}
+                            </div>
+                          </td>
+
+                          {/* Acciones */}
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {/* Botón Impersonar / Shadow Support */}
+                              <button
+                                onClick={() => handleImpersonateAccountant(acc)}
+                                className="px-2.5 py-1.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                title="Ingresar en Modo Asistencia (Ver la plataforma como este contador)"
+                              >
+                                <span>👁️</span>
+                                <span>Asistir</span>
+                              </button>
+
+                              {/* Botón Liquidar Comisión */}
+                              {acc.pendingCommissionUsd > 0 && (
+                                <button
+                                  onClick={() => handleOpenPayoutModal(acc)}
+                                  className="px-2.5 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                  title="Liquidar Comisión Rev-Share vía Pago Móvil / Binance"
+                                >
+                                  <span>💵</span>
+                                  <span>Liquidar</span>
+                                </button>
+                              )}
+
+                              {/* Botón Editar */}
+                              <button
+                                onClick={() => handleOpenAccountantModal(acc)}
+                                className="px-2 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/10 text-[10px] text-white flex items-center gap-1"
+                                title="Editar Datos y Plan"
+                              >
+                                <span>✏️</span>
+                              </button>
+
+                              {/* WhatsApp Directo */}
+                              <a
+                                href={`https://wa.me/${acc.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hola Lic. ${acc.name}, le saludamos de la Dirección de VeneTurco Fiscal OS.`)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-1.5 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 text-[10px] flex items-center"
+                                title="Contactar por WhatsApp"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Catálogo de Planes para Contadores Aliados */}
+          <div className="ui-card p-6 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-[var(--border-subtle)]">
+              <div>
+                <h3 className="ui-heading text-base font-bold flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-amber-400" />
+                  Planes de Suscripción para Contadores Colegiados
+                </h3>
+                <p className="text-xs opacity-75 font-mono mt-0.5">
+                  Estructura comercial de cuotas mensuales para despachos y firmas aliadas en Venezuela.
+                </p>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-1 rounded bg-amber-500/20 text-amber-300 font-bold">
+                REV-SHARE 20% ACTIVO
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+              {ACCOUNTANT_PLANS_CATALOG.map(plan => (
+                <div
+                  key={plan.id}
+                  className={`p-4 rounded-xl border flex flex-col justify-between ${
+                    plan.id === 'FIRMA_PRO'
+                      ? 'bg-gradient-to-b from-amber-950/30 to-[var(--bg-elevated)] border-amber-400/50 shadow-lg'
+                      : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)]'
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-sm text-white">{plan.name}</span>
+                      {plan.id === 'FIRMA_PRO' && (
+                        <span className="text-[9px] px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-bold uppercase">
+                          MÁS POPULAR
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-2xl font-black text-amber-400 tabular-nums">
+                        ${plan.priceUsdMonthly} <span className="text-xs font-normal opacity-70">USD/mes</span>
+                      </div>
+                      <div className="text-[11px] opacity-75 tabular-nums">
+                        Bs. {(plan.priceUsdMonthly * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })} @ BCV
+                      </div>
+                    </div>
+                    <div className="text-[10px] px-2 py-1 rounded bg-white/10 text-cyan-300 font-bold">
+                      Hasta {plan.maxCompanies === 999 ? 'Empresas Ilimitadas' : `${plan.maxCompanies} Empresas (Multi-RIF)`}
+                    </div>
+                    <ul className="space-y-1.5 pt-2 text-[11px] opacity-85">
+                      {plan.features.map((feat, idx) => (
+                        <li key={idx} className="flex items-start gap-1.5">
+                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                          <span>{feat}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="pt-4 mt-4 border-t border-[var(--border-subtle)]">
+                    <button
+                      onClick={() => handleOpenAccountantModal()}
+                      className={`w-full py-2 rounded font-bold text-xs transition-all ${
+                        plan.id === 'FIRMA_PRO'
+                          ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                          : 'bg-white/10 hover:bg-white/20 text-white'
+                      }`}
+                    >
+                      Asignar Este Plan
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =====================================================================
           TAB 00: CARTERA DE CLIENTES (RADAR FISCAL SENIAT 2026 & BENTO HUB)
@@ -5766,6 +6643,275 @@ export default function App() {
       )}
 
       {/* =====================================================================
+          SUPER-ADMIN COMMISSION PAYOUT MODAL (PAGO MÓVIL / BINANCE / ZELLE)
+         ===================================================================== */}
+      {payoutModalAccountant && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setPayoutModalAccountant(null)}
+        >
+          <form
+            onSubmit={handleConfirmCommissionPayout}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-lg ui-card p-6 space-y-4 text-xs font-mono shadow-2xl my-8 border border-purple-500/60"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
+                  <Scale className="w-4 h-4 text-purple-400" />
+                </div>
+                <div>
+                  <h3 className="ui-heading text-base font-bold text-white">
+                    Liquidación de Rev-Share (20%)
+                  </h3>
+                  <p className="text-[11px] opacity-75">
+                    {payoutModalAccountant.name} · {payoutModalAccountant.cpcNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPayoutModalAccountant(null)}
+                className="opacity-75 hover:opacity-100 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Monto a Liquidar */}
+            <div className="p-4 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-purple-300">Comisión Acumulada por Transferir</span>
+                <div className="text-2xl font-black text-purple-200 tabular-nums">
+                  ${payoutModalAccountant.pendingCommissionUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD</span>
+                </div>
+                <div className="text-xs font-bold text-emerald-400 tabular-nums mt-0.5">
+                  Bs. {(payoutModalAccountant.pendingCommissionUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="text-[10px] font-normal opacity-70 ml-1">@ BCV {bcvRate}</span>
+                </div>
+              </div>
+              <div className="text-right border-l border-purple-500/30 pl-4">
+                <span className="text-[10px] opacity-65">Método Registrado:</span>
+                <div className="font-bold text-white uppercase text-[11px] mt-0.5">
+                  {payoutModalAccountant.payoutMethod}
+                </div>
+                <span className="text-[9px] text-purple-300">Rev-Share 20%</span>
+              </div>
+            </div>
+
+            {/* Datos Bancarios del Contador */}
+            <div className="p-3 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-1">
+              <span className="text-[10px] uppercase font-bold text-amber-300">Coordenadas de Pago del Aliado:</span>
+              <p className="font-bold text-white text-[11px]">{payoutModalAccountant.payoutDetails}</p>
+              <p className="text-[10px] opacity-65">RIF: {payoutModalAccountant.rif} · Teléfono: {payoutModalAccountant.phone}</p>
+            </div>
+
+            {/* Referencia de Transferencia */}
+            <div>
+              <label className="block mb-1 opacity-80 font-bold">
+                Nº de Referencia Bancaria / Comprobante de Pago Móvil o Binance
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Ej: 009824102948 o TxID Binance"
+                value={payoutRefInput}
+                onChange={e => setPayoutRefInput(e.target.value)}
+                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-purple-400 focus:outline-none"
+              />
+            </div>
+
+            {/* Botones de Acción */}
+            <div className="pt-2 flex flex-col sm:flex-row gap-2">
+              <button
+                type="submit"
+                disabled={!payoutRefInput.trim()}
+                className="ui-btn-primary flex-1 py-2.5 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Registrar Pago y Sellar Auditoría
+              </button>
+
+              <a
+                href={getWhatsAppCommissionVoucherUrl(
+                  payoutModalAccountant,
+                  payoutModalAccountant.pendingCommissionUsd,
+                  payoutRefInput || 'PENDIENTE_ENVIO'
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center justify-center gap-1.5 transition-colors text-xs"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Voucher WhatsApp
+              </a>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          NEW / EDIT ACCOUNTANT PARTNER MODAL
+         ===================================================================== */}
+      {accountantModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setAccountantModalOpen(false)}
+        >
+          <form
+            onSubmit={handleSaveAccountant}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-lg ui-card p-6 space-y-4 text-xs font-mono shadow-2xl my-8 border border-amber-500/50"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border-subtle)]">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center">
+                  <Users className="w-4 h-4 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="ui-heading text-base font-bold text-white">
+                    {editAccId ? 'Editar Firma / Contador Partner' : 'Registrar Nuevo Contador Partner'}
+                  </h3>
+                  <p className="text-[11px] opacity-75">
+                    Afiliación al Programa Nacional de Contadores Aliados VeneTurco OS
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccountantModalOpen(false)}
+                className="opacity-75 hover:opacity-100 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Nombre Completo del Licenciado</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Lic. Mariana Delgado"
+                  value={accFormName}
+                  onChange={e => setAccFormName(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Nº de Colegio (CPC)</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: CPC-74.192"
+                  value={accFormCpc}
+                  onChange={e => setAccFormCpc(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">RIF Personal o de la Firma</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: V-19.482.710-3"
+                  value={accFormRif}
+                  onChange={e => setAccFormRif(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Ciudad y Estado</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Valencia, Edo. Carabobo"
+                  value={accFormCity}
+                  onChange={e => setAccFormCity(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Correo de Contacto</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="contador@firma.com"
+                  value={accFormEmail}
+                  onChange={e => setAccFormEmail(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">WhatsApp Móvil</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="+58 414-1234567"
+                  value={accFormPhone}
+                  onChange={e => setAccFormPhone(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Plan Asignado</label>
+                <select
+                  value={accFormPlan}
+                  onChange={e => setAccFormPlan(e.target.value as typeof accFormPlan)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                >
+                  <option value="CONTADOR_INDIVIDUAL">Contador Independiente ($29.99/m · 3 Emp)</option>
+                  <option value="FIRMA_PRO">Firma Contable Pro ($69.99/m · 10 Emp)</option>
+                  <option value="CONSORCIO_MAX">Consorcio Contable Max ($149.99/m · Ilimitado)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block mb-1 opacity-80 font-bold">Datos Pago Móvil / Binance</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Banesco (0134) · 0414-0000000 · V-00000000"
+                  value={accFormPayout}
+                  onChange={e => setAccFormPayout(e.target.value)}
+                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAccountantModalOpen(false)}
+                className="px-4 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-white text-xs"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+              >
+                <Check className="w-4 h-4" />
+                <span>{editAccId ? 'Actualizar Contador' : 'Guardar y Activar'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
           ELITE FINTECH UI 2026: UNIVERSAL COMMAND PALETTE (Ctrl+K / Cmd+K)
          ===================================================================== */}
       {commandPaletteOpen && (
@@ -5792,6 +6938,22 @@ export default function App() {
 
             <div className="max-h-80 overflow-y-auto space-y-1">
               {[
+                {
+                  label: '👑 Ir a Torre de Control Super-Admin (Red de Contadores)',
+                  category: 'SUPER-ADMIN',
+                  action: () => {
+                    setActiveTab('accountants');
+                    setCommandPaletteOpen(false);
+                  }
+                },
+                {
+                  label: '👑 Registrar Nuevo Contador Partner (CPC)',
+                  category: 'SUPER-ADMIN',
+                  action: () => {
+                    handleOpenAccountantModal();
+                    setCommandPaletteOpen(false);
+                  }
+                },
                 {
                   label: 'Sincronizar Tasa Oficial BCV Ahora',
                   category: 'ORÁCULO',
