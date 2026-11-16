@@ -5,7 +5,7 @@ import {
   Lock, Download, CheckCircle2, AlertTriangle, RefreshCw, Plus,
   Building2, Scale, Hash, Eye, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
-  Printer, LogOut, Wifi, WifiOff
+  Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock
 } from 'lucide-react';
 import {
   FiscalInvoice,
@@ -424,7 +424,10 @@ export default function App() {
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'hyperframe-tactical'));
-  const [activeTab, setActiveTab] = useState<'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('simplified');
+  const [activeTab, setActiveTab] = useState<'clients' | 'simplified' | 'command' | 'ocr' | 'books' | 'payroll' | 'saas' | 'mobile' | 'security'>('clients');
+  const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
+  const [clientSearchQuery, setClientSearchQuery] = useState<string>('');
+  const [copiedTelegramTenantId, setCopiedTelegramTenantId] = useState<string | null>(null);
   const [calcUsdInput, setCalcUsdInput] = useState<number>(150);
   const [calcRetPercent, setCalcRetPercent] = useState<number>(75);
   const [calcIgtfPercent, setCalcIgtfPercent] = useState<number>(0);
@@ -637,6 +640,111 @@ export default function App() {
     [employees, activeTenant]
   );
 
+  function getTenantInitials(name: string): string {
+    const parts = name
+      .trim()
+      .split(/\s+/)
+      .filter(p => !['C.A.', 'S.A.', 'S.R.L.', 'DE', 'DEL', 'LOS', 'LAS', 'LA', 'EL'].includes(p.toUpperCase()));
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return name.slice(0, 2).toUpperCase();
+  }
+
+  function getWhatsAppRemindUrl(
+    tenantName: string,
+    rif: string,
+    terminalDigit: string,
+    deadline: string,
+    pendingCount: number,
+    telegramCode: string
+  ): string {
+    const msg = `Hola equipo de *${tenantName}* (${rif}), le saluda su departamento contable.\n\nLe recordamos que el cierre de quincena del SENIAT vence el *${deadline}* (Terminal de RIF: *${terminalDigit}*).\n${
+      pendingCount > 0 ? `\n⚠️ Actualmente tiene *${pendingCount} factura(s) pendiente(s)* por revisar.\n` : ''
+    }\nPor favor envíe sus fotos o PDFs de compras/ventas al bot oficial de Telegram:\n👉 */vincular ${telegramCode}*\n\n¡Muchas gracias para mantener su empresa al día y evitar sanciones del SENIAT!`;
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  const portfolioStats = useMemo(() => {
+    let totalPendingDrafts = 0;
+    let totalUrgentCount = 0;
+    let totalEstimatedQuotaBs = 0;
+
+    const clientCards = tenants.map(t => {
+      const tInvoices = invoices.filter(i => i.tenantId === t.id);
+      const tSpe = getSeniatSpeCalendarByRif(t.rif);
+      const conformeCount = tInvoices.filter(i => i.status === 'APROBADA' && isVatDeductible(i)).length;
+      const advertenciaCount = tInvoices.filter(i => !isVatDeductible(i)).length;
+      const pendienteCount = tInvoices.filter(i => i.status === 'BORRADOR_IA').length;
+
+      let debitBs = 0;
+      let creditBs = 0;
+      let withheldBs = 0;
+
+      tInvoices.forEach(inv => {
+        const sign = inv.docType === '03' ? -1 : 1;
+        const vatBs = toVes(inv.vatOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+        if (inv.bookType === 'VENTA') {
+          debitBs += vatBs;
+        } else {
+          if (isVatDeductible(inv)) creditBs += vatBs;
+          withheldBs += vatBs * (inv.vatRetentionRate / 100);
+        }
+      });
+
+      const netQuotaBs = Math.max(0, debitBs - creditBs);
+      totalPendingDrafts += pendienteCount;
+      totalEstimatedQuotaBs += netQuotaBs;
+
+      const isUrgent = pendienteCount > 0 || ['0', '1', '2', '8', '9'].includes(tSpe.terminalDigit);
+      if (isUrgent) totalUrgentCount++;
+
+      return {
+        tenant: t,
+        invoices: tInvoices,
+        spe: tSpe,
+        conformeCount,
+        advertenciaCount,
+        pendienteCount,
+        totalCount: tInvoices.length,
+        debitBs,
+        creditBs,
+        withheldBs,
+        netQuotaBs,
+        isUrgent
+      };
+    });
+
+    return {
+      clientCards,
+      totalTenants: tenants.length,
+      totalPendingDrafts,
+      totalUrgentCount,
+      totalEstimatedQuotaBs
+    };
+  }, [tenants, invoices, bcvRate]);
+
+  const filteredClientCards = useMemo(() => {
+    return portfolioStats.clientCards.filter(card => {
+      const { tenant, isUrgent, pendienteCount } = card;
+
+      if (clientPortfolioFilter === 'URGENTES' && !isUrgent) return false;
+      if (clientPortfolioFilter === 'SPE' && tenant.regime !== 'SPE') return false;
+      if (clientPortfolioFilter === 'ORDINARIO' && tenant.regime !== 'ORDINARIO') return false;
+      if (clientPortfolioFilter === 'PENDIENTES' && pendienteCount === 0) return false;
+      if (clientPortfolioFilter === 'AL_DIA' && pendienteCount > 0) return false;
+
+      if (clientSearchQuery.trim()) {
+        const q = clientSearchQuery.toLowerCase();
+        const match =
+          tenant.name.toLowerCase().includes(q) ||
+          tenant.rif.toLowerCase().includes(q) ||
+          tenant.telegramCode.toLowerCase().includes(q) ||
+          card.spe.terminalDigit === q.trim();
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [portfolioStats, clientPortfolioFilter, clientSearchQuery]);
+
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     const user = {
@@ -649,7 +757,7 @@ export default function App() {
     if (loginRole === 'client') {
       setActiveTab('mobile');
     } else {
-      setActiveTab('command');
+      setActiveTab('clients');
     }
   }
 
@@ -1650,6 +1758,7 @@ export default function App() {
       {/* Navigation Tabs */}
       <nav className="flex flex-wrap gap-2 mb-6">
         {[
+          { id: 'clients', label: '👥 Cartera de Clientes (Radar)', icon: Building2 },
           { id: 'simplified', label: '⭐ Asistente del Contador', icon: CheckCircle2 },
           { id: 'command', label: '01. Centro de Mando', icon: Cpu },
           { id: 'ocr', label: '02. Escáner IA & Telegram', icon: Send },
@@ -1680,7 +1789,360 @@ export default function App() {
       </nav>
 
       {/* =====================================================================
-          TAB 00: ASISTENTE DEL CONTADOR SIMPLIFICADO (SENIAT 2026)
+          TAB 00: CARTERA DE CLIENTES (RADAR FISCAL SENIAT 2026 & BENTO HUB)
+         ===================================================================== */}
+      {activeTab === 'clients' && (
+        <div className="space-y-6">
+          {/* Header del Radar y Acceso Rápido */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-[var(--bg-elevated)] to-slate-900 border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-center gap-3.5">
+              <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex-shrink-0">
+                <Building2 className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
+                    Cartera de Clientes & Radar Fiscal SENIAT
+                  </h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold uppercase">
+                    Modo Despacho Contable
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                  Monitoreo simultáneo de empresas por terminal de RIF, alertas de quincena y acciones directas en 1 clic.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setNewTenantModalOpen(true)}
+              className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-2 transition"
+            >
+              <Plus className="w-4 h-4" />
+              Registrar Nueva Empresa (RIF)
+            </button>
+          </div>
+
+          {/* 4 Bento KPI Cards de la Cartera Global */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] uppercase">
+                <span>Empresas a Cargo</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white font-bold">
+                  GESTIÓN
+                </span>
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-white">
+                {portfolioStats.totalTenants}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Bóveda inmutable COT 10 años activa
+              </div>
+            </div>
+
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-amber-300 uppercase">
+                <span>Vencimiento Próximo (&lt;72h)</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold">
+                  RADAR
+                </span>
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-amber-400">
+                {portfolioStats.totalUrgentCount}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Terminales RIF prioritarios de quincena
+              </div>
+            </div>
+
+            <div className="ui-card p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-rose-300 uppercase">
+                <span>Borradores por Aprobar</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold">
+                  POR FIRMAR
+                </span>
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-rose-400">
+                {portfolioStats.totalPendingDrafts}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
+                Facturas IA y Telegram pendientes de firma
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2">
+              <div className="flex items-center justify-between text-xs text-emerald-300 font-bold uppercase">
+                <span>Cuota Global SENIAT</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">ESTIMADA</span>
+              </div>
+              <div className="text-xl font-extrabold font-mono text-emerald-400">
+                Bs. {portfolioStats.totalEstimatedQuotaBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-emerald-200 font-mono">
+                Ref: USD {(portfolioStats.totalEstimatedQuotaBs / bcvRate).toFixed(2)} @ Tasa BCV ({bcvRate} Bs.)
+              </div>
+            </div>
+          </div>
+
+          {/* Filtros Rápidos y Buscador en Tiempo Real */}
+          <div className="p-4 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[260px]">
+              <Search className="w-4 h-4 absolute left-3 top-3 opacity-60 text-[var(--muted-foreground)]" />
+              <input
+                type="text"
+                value={clientSearchQuery}
+                onChange={e => setClientSearchQuery(e.target.value)}
+                placeholder="Buscar empresa por nombre, RIF, terminal o código Telegram..."
+                className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs font-mono focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 text-xs font-mono">
+              {[
+                { id: 'ALL', label: `Todos (${portfolioStats.totalTenants})` },
+                { id: 'URGENTES', label: `🔥 Urgentes (${portfolioStats.totalUrgentCount})` },
+                { id: 'SPE', label: 'Especiales (SPE)' },
+                { id: 'ORDINARIO', label: 'Ordinarios' },
+                { id: 'PENDIENTES', label: `⚠️ Con Pendientes (${portfolioStats.totalPendingDrafts})` },
+                { id: 'AL_DIA', label: '✅ Al Día' }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setClientPortfolioFilter(f.id as typeof clientPortfolioFilter)}
+                  className={`px-3 py-1.5 rounded-lg border transition ${
+                    clientPortfolioFilter === f.id
+                      ? 'bg-emerald-500/20 text-emerald-400 font-bold border-emerald-500/40'
+                      : 'border-transparent bg-[var(--bg-surface)] text-[var(--muted-foreground)] hover:text-white'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {copiedTelegramTenantId && (
+            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center justify-between">
+              <span>[CÓDIGO TELEGRAM COPIADO] Listo para pegar en WhatsApp o enviar al dueño del negocio.</span>
+              <button onClick={() => setCopiedTelegramTenantId(null)} className="opacity-70 hover:opacity-100">
+                [X]
+              </button>
+            </div>
+          )}
+
+          {/* Grid de Fichas Bento Inteligentes de Clientes */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            {filteredClientCards.map(card => {
+              const { tenant, invoices: cInvoices, spe, conformeCount, advertenciaCount, pendienteCount, totalCount, debitBs, creditBs, netQuotaBs } = card;
+              const isSelected = tenant.id === selectedTenantId;
+              const initials = getTenantInitials(tenant.name);
+              const waUrl = getWhatsAppRemindUrl(tenant.name, tenant.rif, spe.terminalDigit, spe.quincena1Deadline, pendienteCount, tenant.telegramCode);
+
+              return (
+                <div
+                  key={tenant.id}
+                  className={`p-5 rounded-2xl border transition-all space-y-4 ${
+                    isSelected
+                      ? 'bg-[var(--bg-elevated)] border-emerald-500/60 shadow-lg shadow-emerald-500/5 ring-1 ring-emerald-500/30'
+                      : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] hover:border-white/20'
+                  }`}
+                >
+                  {/* Top Row: Avatar, Nombre, RIF con Terminal Resaltado y Badges */}
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/30 border border-emerald-500/40 flex items-center justify-center font-extrabold text-base text-emerald-300 font-mono shadow-sm">
+                        {initials}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-extrabold text-base text-white tracking-tight">
+                            {tenant.name}
+                          </h3>
+                          {isSelected && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                              ACTIVO EN SESIÓN
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                          <span className="text-[var(--muted-foreground)]">
+                            RIF: <strong className="text-white">{tenant.rif.slice(0, -1)}</strong>
+                            <span className="ml-0.5 px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-extrabold text-xs">
+                              {spe.terminalDigit}
+                            </span>
+                          </span>
+
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            tenant.regime === 'SPE'
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                              : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                          }`}>
+                            {tenant.regime === 'SPE' ? 'SPE (Quincenal)' : 'Ordinario (Mensual)'}
+                          </span>
+
+                          <span className="text-[10px] opacity-70">
+                            Telegram: {tenant.telegramCode}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right space-y-1">
+                      {pendienteCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
+                          <AlertTriangle className="w-3 h-3" /> {pendienteCount} Por Firmar
+                        </span>
+                      ) : totalCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          <CheckCircle2 className="w-3 h-3" /> Al Día
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/10 text-[var(--muted-foreground)]">
+                          Sin Movimientos
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Vencimiento SENIAT y Calendario Quincenal */}
+                  <div className="p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <span>
+                        Vence 1ª Quincena: <strong className="text-white underline decoration-amber-400">{spe.quincena1Deadline}</strong>
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>2ª Quincena: {spe.quincena2Deadline}</span>
+                    </div>
+                  </div>
+
+                  {/* Balanza Fiscal Express del Cliente */}
+                  <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs font-mono">
+                    <div>
+                      <span className="text-[10px] text-[var(--muted-foreground)] uppercase block">Ventas (Débito)</span>
+                      <strong className="text-sm text-white block">Bs. {debitBs.toFixed(2)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-[var(--muted-foreground)] uppercase block">Compras (Crédito)</span>
+                      <strong className="text-sm text-sky-400 block">Bs. {creditBs.toFixed(2)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-emerald-400 uppercase font-bold block">Cuota SENIAT</span>
+                      <strong className="text-sm text-emerald-400 block">Bs. {netQuotaBs.toFixed(2)}</strong>
+                    </div>
+                  </div>
+
+                  {/* Barra de Semáforo de Facturas */}
+                  <div className="space-y-1.5 text-xs font-mono">
+                    <div className="flex justify-between text-[11px] text-[var(--muted-foreground)]">
+                      <span>Documentos: {totalCount} en quincena</span>
+                      <span className="flex items-center gap-2">
+                        <span className="text-emerald-400 font-bold">{conformeCount} Conformes</span>
+                        {advertenciaCount > 0 && <span className="text-amber-400 font-bold">· {advertenciaCount} Advertencias</span>}
+                        {pendienteCount > 0 && <span className="text-rose-400 font-bold">· {pendienteCount} Borradores</span>}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded bg-slate-800 overflow-hidden flex">
+                      <div
+                        style={{ width: `${totalCount > 0 ? (conformeCount / totalCount) * 100 : 0}%` }}
+                        className="h-full bg-emerald-500"
+                        title="Conformes"
+                      />
+                      <div
+                        style={{ width: `${totalCount > 0 ? (advertenciaCount / totalCount) * 100 : 0}%` }}
+                        className="h-full bg-amber-400"
+                        title="Advertencias"
+                      />
+                      <div
+                        style={{ width: `${totalCount > 0 ? (pendienteCount / totalCount) * 100 : 0}%` }}
+                        className="h-full bg-rose-500 animate-pulse"
+                        title="Borradores Pendientes"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Acciones Rápidas en 1 Clic (Entregables y WhatsApp) */}
+                  <div className="pt-2 border-t border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setSelectedTenantId(tenant.id);
+                          setActiveTab('simplified');
+                        }}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 shadow transition"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Abrir Asistente
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          handleDownloadFile(
+                            `RET_IVA_${tenant.rif}_202611.txt`,
+                            exportSeniatIvaTxt16(tenant.rif, '202611', cInvoices),
+                            'text/plain'
+                          )
+                        }
+                        title="Descargar TXT IVA (16 columnas) oficial SENIAT"
+                        className="px-2.5 py-2 rounded-lg bg-[var(--bg-surface)] hover:bg-white/10 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 transition"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        TXT IVA
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          handleDownloadFile(
+                            `LIBRO_FISCAL_${tenant.rif}_202611.csv`,
+                            exportSeniatPurchaseAndSalesBookCsv(tenant.name, tenant.rif, '202611', 'ALL', cInvoices),
+                            'text/csv;charset=utf-8'
+                          )
+                        }
+                        title="Descargar Libro de Compras y Ventas Excel (CSV)"
+                        className="px-2.5 py-2 rounded-lg bg-[var(--bg-surface)] hover:bg-white/10 text-sky-300 border border-sky-500/40 flex items-center gap-1 transition"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Libro Excel
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={waUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1.5 transition"
+                        title="Abrir WhatsApp con mensaje pre-redactado de quincena"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                        Pedir Facturas WhatsApp
+                      </a>
+
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`/vincular ${tenant.telegramCode}`);
+                          setCopiedTelegramTenantId(tenant.id);
+                          setTimeout(() => setCopiedTelegramTenantId(null), 4000);
+                        }}
+                        title="Copiar comando de vinculación Telegram"
+                        className="p-2 rounded-lg bg-[var(--bg-surface)] hover:bg-white/10 text-[var(--muted-foreground)] hover:text-white border border-[var(--border-subtle)] transition"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          TAB 01: ASISTENTE DEL CONTADOR SIMPLIFICADO (SENIAT 2026)
          ===================================================================== */}
       {activeTab === 'simplified' && (
         <div className="space-y-6">
