@@ -48,6 +48,7 @@ import {
   AccountantPartner,
   SKINS
 } from './types/fiscal';
+import { AppleEmptyState } from './components/AppleFeedback';
 export type { AccountantPartner };
 
 const INITIAL_TENANTS: Tenant[] = [
