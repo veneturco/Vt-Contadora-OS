@@ -40,16 +40,115 @@ import {
 } from './utils/seniatEngine';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
-import {
-  SkinId,
-  ActiveTabId,
-  OperationStepId,
-  Tenant,
-  AccountantPartner,
-  SKINS
-} from './types/fiscal';
-import { AppleEmptyState } from './components/AppleFeedback';
-export type { AccountantPartner };
+
+type SkinId =
+  | 'apple-craft-pro'
+  | 'obsidian-linear'
+  | 'mercury-sovereign'
+  | 'spatial-titanium'
+  | 'tactile-bento'
+  | 'hyperframe-tactical'
+  | 'kinetic-studio'
+  | 'editorial-swiss'
+  | 'eink-auditor'
+  | 'neo-brutal';
+
+type ActiveTabId =
+  | 'accountants'
+  | 'clients'
+  | 'simplified'
+  | 'command'
+  | 'ocr'
+  | 'books'
+  | 'payroll'
+  | 'saas'
+  | 'reconciliation'
+  | 'mobile'
+  | 'security'
+  | 'operations';
+
+type OperationStepId = 'scanner' | 'books' | 'reconciliation';
+
+interface Tenant {
+  id: string;
+  name: string;
+  rif: string;
+  regime: 'SPE' | 'ORDINARIO' | 'FORMAL';
+  planId: 'COMERCIO_PRO' | 'EMPRESA_MAX' | 'FIRMA_CONTABLE';
+  subscriptionStatus: 'ACTIVA' | 'SUSPENDIDA';
+  nextBillingDate: string;
+  telegramCode: string;
+  telegramChatLinked?: string;
+  subAccountEnabled?: boolean;
+  subAccountContactName?: string;
+  subAccountPhone?: string;
+  subAccountEmail?: string;
+  subAccountRole?: 'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA';
+  subAccountStatus?: 'TRIAL_15_DIAS' | 'ACTIVA' | 'POR_VENCER' | 'SUSPENDIDA';
+  trialDaysLeft?: number;
+  monthlyFeeUsd?: number;
+  accountantCommissionPercent?: number;
+}
+
+export interface AccountantPartner {
+  id: string;
+  name: string;
+  cpcNumber: string;
+  rif: string;
+  email: string;
+  phone: string;
+  city: string;
+  planId: 'CONTADOR_INDIVIDUAL' | 'FIRMA_PRO' | 'CONSORCIO_MAX';
+  monthlyFeeUsd: number;
+  maxCompaniesLimit: number;
+  assignedTenantIds: string[];
+  subscriptionStatus: 'ACTIVA' | 'SUSPENDIDA' | 'EN_PRUEBA';
+  nextBillingDate: string;
+  payoutMethod: 'PAGO_MOVIL' | 'BINANCE_PAY' | 'ZELLE';
+  payoutDetails: string;
+  pendingCommissionUsd: number;
+  paidCommissionsTotalUsd: number;
+  firmLogoText?: string;
+  createdAt: string;
+}
+
+const SKINS: { id: SkinId; label: string }[] = [
+  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Emil Kowalski)' },
+  { id: 'obsidian-linear', label: 'Obsidian Linear' },
+  { id: 'mercury-sovereign', label: 'Mercury Sovereign (Fintech 2026)' },
+  { id: 'spatial-titanium', label: 'Liquid Glass Titanium (Spatial)' },
+  { id: 'tactile-bento', label: 'Tactile Hardware Bento' },
+  { id: 'hyperframe-tactical', label: 'Hyperframe HUD (Tactical)' },
+  { id: 'kinetic-studio', label: 'Kinetic Studio (Volt)' },
+  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger' },
+  { id: 'eink-auditor', label: 'E-Ink Paper Audit (No-Glare)' },
+  { id: 'neo-brutal', label: 'Neo-Brutalist Raw' }
+];
+
+const AppleEmptyState: React.FC<{
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}> = ({ title, description, actionLabel, onAction }) => (
+  <div className="ui-card p-8 text-center flex flex-col items-center justify-center space-y-3 border border-white/10 bg-white/[0.02]">
+    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)]">
+      <FileText className="w-5 h-5" />
+    </div>
+    <div className="max-w-md space-y-1">
+      <h4 className="text-sm font-bold text-white tracking-tight">{title}</h4>
+      <p className="text-xs text-white/60 leading-relaxed">{description}</p>
+    </div>
+    {actionLabel && onAction && (
+      <button
+        onClick={onAction}
+        className="mt-1 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-all active:scale-[0.97] shadow"
+      >
+        {actionLabel}
+      </button>
+    )}
+  </div>
+);
 
 const INITIAL_TENANTS: Tenant[] = [
   {
