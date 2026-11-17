@@ -520,7 +520,8 @@ app.post('/api/Voucher14', verifyFirebaseToken, requireTenantAccess, (req, res, 
 // Servir archivos estáticos del frontend de producción (React 19 + Vite)
 const possibleDistPaths = [
   path.resolve(__dirname, '../dist'),
-  path.resolve(__dirname, '../frontend/dist')
+  path.resolve(__dirname, '../frontend/dist'),
+  path.resolve(__dirname, '../Vt_Contadora_OS_v3_2_production/dist')
 ];
 const distPath = possibleDistPaths.find(p => fs.existsSync(p));
 if (distPath) {
