@@ -1212,7 +1212,7 @@ export default function App() {
 
   function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
     const link = `https://vt-contadora-os.onrender.com/?role=admin&cpc=${acc.cpcNumber}`;
-    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedo a su disposición para cualquier consulta.`;
+    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda la Dirección General de *VeneTurco Fiscal OS*.\n\nLe hemos activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedamos a su completa disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1817,7 +1817,7 @@ export default function App() {
       role: userRole as 'superadmin' | 'admin' | 'client',
       name:
         isOwner || userRole === 'superadmin'
-          ? 'Dr. Samir Moucharrafie / Super-Admin & Creador'
+          ? 'Super-Admin / Director General'
           : userRole === 'admin'
             ? 'Lic. Auditor Principal (Firma)'
             : `Comercio (${activeTenant.name})`
@@ -2698,7 +2698,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
               disabled={isAccountLocked}
@@ -2707,14 +2707,14 @@ export default function App() {
                 setLoginEmail('moucharrafiepc@gmail.com');
                 setLoginPassword('*036Yasir');
               }}
-              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
+              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'superadmin'
-                  ? 'bg-amber-500/20 text-amber-300 font-bold border-amber-400'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
-              } disabled:opacity-40`}
+                  ? 'bg-blue-600/20 text-blue-400 font-bold border-blue-500/50 shadow-sm'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+              } disabled:opacity-40 transition-all`}
             >
-              <span>👑</span>
-              <span className="leading-tight">Super-Admin (Dr. Samir)</span>
+              <span className="text-base sm:text-lg">👑</span>
+              <span className="leading-tight font-semibold">Super-Admin</span>
             </button>
             <button
               type="button"
@@ -2724,14 +2724,14 @@ export default function App() {
                 setLoginEmail('auditor@veneturco.com');
                 setLoginPassword('Contadora2026#');
               }}
-              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
+              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'admin'
-                  ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-bold border-[var(--border-highlight)]'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
-              } disabled:opacity-40`}
+                  ? 'bg-blue-600/20 text-blue-400 font-bold border-blue-500/50 shadow-sm'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+              } disabled:opacity-40 transition-all`}
             >
-              <span>💼</span>
-              <span className="leading-tight">Firma Contable (CPC)</span>
+              <span className="text-base sm:text-lg">💼</span>
+              <span className="leading-tight font-semibold">Firma Contable</span>
             </button>
             <button
               type="button"
@@ -2740,38 +2740,38 @@ export default function App() {
                 setLoginRole('client');
                 setLoginEmail('gerencia@bodegajh.com');
               }}
-              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
+              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'client'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border-emerald-400'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
-              } disabled:opacity-40`}
+                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border-emerald-400/50 shadow-sm'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
+              } disabled:opacity-40 transition-all`}
             >
-              <span>📱</span>
-              <span className="leading-tight">Cliente Comercio</span>
+              <span className="text-base sm:text-lg">📱</span>
+              <span className="leading-tight font-semibold">Cliente Comercio</span>
             </button>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3 pt-1">
             <div>
-              <label className="block mb-1 opacity-75">Correo Corporativo</label>
+              <label className="block mb-1.5 text-xs text-white/70 font-medium">Correo Corporativo</label>
               <input
                 type="email"
                 required
                 disabled={isAccountLocked}
                 value={loginEmail}
                 onChange={e => setLoginEmail(e.target.value)}
-                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] disabled:opacity-50"
+                className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
               />
             </div>
             <div>
-              <label className="block mb-1 opacity-75">Contraseña de Bóveda</label>
+              <label className="block mb-1.5 text-xs text-white/70 font-medium">Contraseña de Bóveda</label>
               <input
                 type="password"
                 required
                 disabled={isAccountLocked}
                 value={loginPassword}
                 onChange={e => setLoginPassword(e.target.value)}
-                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] disabled:opacity-50"
+                className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
               />
             </div>
           </div>
@@ -3134,9 +3134,9 @@ export default function App() {
         </div>
       )}
 
-      {/* Navigation Tabs · Apple macOS / OpenDesign Segmented Navigation Pill Track */}
-      <nav className="apple-segmented-track flex flex-wrap items-center justify-between gap-2 mb-6 p-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
+      {/* Navigation Tabs · Apple macOS / iOS Segmented Pill Track */}
+      <nav className="apple-segmented-track flex items-center justify-between gap-2 mb-6 p-1.5 overflow-hidden">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 w-full lg:w-auto -mx-1 px-1 sm:mx-0 sm:px-0">
           {navTabs.map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id || (tab.id === 'operations' && ['ocr', 'books', 'reconciliation'].includes(activeTab));
@@ -3145,7 +3145,7 @@ export default function App() {
                 key={tab.id}
                 id={`nav-tab-${tab.id}`}
                 onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`apple-tab-pill px-4 py-2 text-xs font-semibold tracking-tight flex items-center gap-2 ${
+                className={`apple-tab-pill whitespace-nowrap px-3.5 py-2 text-xs font-semibold tracking-tight flex items-center gap-2 flex-shrink-0 ${
                   active ? 'apple-tab-pill-active' : 'apple-tab-pill-inactive'
                 }`}
               >
