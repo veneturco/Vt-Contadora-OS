@@ -1206,14 +1206,14 @@ export default function App() {
     feeUsd: number
   ): string {
     const link = `https://vt-contadora-os.onrender.com/?sub=${tenant.id}&rif=${tenant.rif}`;
-    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
   function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
     const link = `https://vt-contadora-os.onrender.com/?role=admin&cpc=${acc.cpcNumber}`;
-    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda la Dirección General de *VeneTurco Fiscal OS*.\n\nLe hemos activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedamos a su completa disposición para cualquier consulta.`;
+    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda la Dirección General de *VT Fiscal OS*.\n\nLe hemos activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedamos a su completa disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1745,7 +1745,7 @@ export default function App() {
     ref: string
   ): string {
     const amountBs = (amountUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 });
-    const msg = `Hola *${acc.name}* (${acc.cpcNumber}), le saluda el equipo de *VeneTurco Fiscal OS*.\n\n🎉 Le confirmamos que hemos liquidado su comisión mensual por *Revenue-Share (20%)*:\n\n💵 *Monto en USD:* $${amountUsd.toFixed(2)} USD\n🇻🇪 *Monto en Bolívares:* Bs. ${amountBs} (@ Tasa Oficial BCV ${bcvRate})\n💳 *Método de Pago:* ${acc.payoutMethod}\n🔢 *Nº de Referencia / Hash:* ${ref}\n🏦 *Datos:* ${acc.payoutDetails}\n\n¡Muchas gracias por ser parte de nuestra red de contadores aliados en Venezuela!`;
+    const msg = `Hola *${acc.name}* (${acc.cpcNumber}), le saluda el equipo de *VT Fiscal OS*.\n\n🎉 Le confirmamos que hemos liquidado su comisión mensual por *Revenue-Share (20%)*:\n\n💵 *Monto en USD:* $${amountUsd.toFixed(2)} USD\n🇻🇪 *Monto en Bolívares:* Bs. ${amountBs} (@ Tasa Oficial BCV ${bcvRate})\n💳 *Método de Pago:* ${acc.payoutMethod}\n🔢 *Nº de Referencia / Hash:* ${ref}\n🏦 *Datos:* ${acc.payoutDetails}\n\n¡Muchas gracias por ser parte de nuestra red de contadores aliados en Venezuela!`;
     const cleanPhone = acc.phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -2642,8 +2642,8 @@ export default function App() {
               </span>
               <span className="text-[10px] opacity-70">v3.2 COMMERCIAL</span>
             </div>
-            <h1 className="ui-heading text-2xl font-extrabold tracking-tight pt-1">
-              VENETURCO FISCAL OS
+            <h1 className="ui-heading text-2xl font-bold tracking-tight pt-1 text-white">
+              VT FISCAL OS
             </h1>
             <p className="opacity-75">Acceso Blindado Multi-Empresa · SENIAT & Contabilidad Cloud</p>
           </div>
@@ -2889,7 +2889,7 @@ export default function App() {
               </span>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">VENETURCO</span>
+                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">VT</span>
                   <span className="text-xs font-mono font-medium text-[#8E8E93]">Fiscal OS</span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70">v3.2</span>
                 </div>
