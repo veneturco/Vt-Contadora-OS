@@ -6,7 +6,7 @@ import {
   Building2, Scale, Hash, Eye, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
   Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock,
-  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers
+  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers, Trash2
 } from 'lucide-react';
 import {
   FiscalInvoice,
@@ -1700,6 +1700,70 @@ export default function App() {
     setActiveTab('accountants');
     setSubPayToast('Has regresado a la Torre de Control Super-Admin.');
     setTimeout(() => setSubPayToast(null), 4000);
+  }
+
+  function handleDeleteAccountant(accId: string, accName: string) {
+    if (window.confirm(`¿Está seguro de eliminar definitivamente al contador "${accName}" del directorio? Esta acción no se puede deshacer.`)) {
+      setAccountants(prev => prev.filter(a => a.id !== accId));
+      appendAuditLog(
+        'BAJA_CONTADOR_PARTNER',
+        currentUser?.email || 'founder@veneturco.com',
+        accId,
+        `Contador Partner eliminado del directorio: ${accName}`
+      );
+      setSubPayToast(`Contador "${accName}" eliminado correctamente del directorio.`);
+      setTimeout(() => setSubPayToast(null), 4000);
+    }
+  }
+
+  function handleDeleteTenant(tenantId: string, tenantName: string) {
+    if (tenants.length <= 1) {
+      alert('No se puede eliminar la única empresa activa. Debe haber al menos una empresa registrada.');
+      return;
+    }
+    if (window.confirm(`¿Está seguro de eliminar definitivamente la empresa "${tenantName}" de su cartera? Se desvincularán sus comprobantes fiscales asociados.`)) {
+      setTenants(prev => prev.filter(t => t.id !== tenantId));
+      if (selectedTenantId === tenantId) {
+        const remaining = tenants.filter(t => t.id !== tenantId);
+        if (remaining.length > 0) setSelectedTenantId(remaining[0].id);
+      }
+      appendAuditLog(
+        'BAJA_EMPRESA_CARTERA',
+        currentUser?.email || 'founder@veneturco.com',
+        tenantId,
+        `Empresa eliminada de la cartera: ${tenantName}`
+      );
+      setSubPayToast(`Empresa "${tenantName}" eliminada correctamente.`);
+      setTimeout(() => setSubPayToast(null), 4000);
+    }
+  }
+
+  function handleDeleteInvoice(invId: string, invoiceNum: string) {
+    if (window.confirm(`¿Está seguro de eliminar la factura #${invoiceNum} del libro fiscal?`)) {
+      setInvoices(prev => prev.filter(i => i.id !== invId));
+      appendAuditLog(
+        'ELIMINAR_DOCUMENTO_FISCAL',
+        currentUser?.email || 'founder@veneturco.com',
+        invId,
+        `Factura eliminada del libro fiscal: #${invoiceNum}`
+      );
+      setSubPayToast(`Factura #${invoiceNum} eliminada del libro.`);
+      setTimeout(() => setSubPayToast(null), 4000);
+    }
+  }
+
+  function handleDeleteEmployee(empId: string, empName: string) {
+    if (window.confirm(`¿Está seguro de eliminar a "${empName}" de la nómina LOTTT?`)) {
+      setEmployees(prev => prev.filter(e => e.id !== empId));
+      appendAuditLog(
+        'BAJA_TRABAJADOR_LOTTT',
+        currentUser?.email || 'founder@veneturco.com',
+        empId,
+        `Trabajador eliminado de nómina: ${empName}`
+      );
+      setSubPayToast(`Trabajador "${empName}" eliminado de nómina.`);
+      setTimeout(() => setSubPayToast(null), 4000);
+    }
   }
 
   function handleOpenPayoutModal(acc: AccountantPartner) {
@@ -3488,6 +3552,15 @@ export default function App() {
                                 <Edit3 className="w-3.5 h-3.5" />
                               </button>
 
+                              {/* Botón Eliminar */}
+                              <button
+                                onClick={() => handleDeleteAccountant(acc.id, acc.name)}
+                                className="p-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-all active:scale-[0.98]"
+                                title="Eliminar Contador del Directorio"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+
                               {/* Invitación WhatsApp Oficial */}
                               <a
                                 href={getWhatsAppAccountantInviteUrl(acc)}
@@ -4229,6 +4302,15 @@ export default function App() {
                         className="p-2 rounded-lg bg-[var(--bg-surface)] hover:bg-white/10 text-[var(--muted-foreground)] hover:text-white border border-[var(--border-subtle)] transition"
                       >
                         <Copy className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Botón Eliminar Empresa */}
+                      <button
+                        onClick={() => handleDeleteTenant(tenant.id, tenant.name)}
+                        title="Eliminar Empresa de la Cartera"
+                        className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 transition active:scale-[0.98]"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -5586,14 +5668,30 @@ export default function App() {
                                   + Nota C/D
                                 </button>
                               )}
+                              <button
+                                onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNumber)}
+                                className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
+                                title="Eliminar Documento Fiscal"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
                             </div>
                           ) : (
-                            <button
-                              onClick={() => handleApproveInvoice(inv.id)}
-                              className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                            >
-                              Aprobar Borrador
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleApproveInvoice(inv.id)}
+                                className="px-2 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-medium"
+                              >
+                                Aprobar
+                              </button>
+                              <button
+                                onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNumber)}
+                                className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
+                                title="Eliminar Borrador"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -5807,6 +5905,13 @@ export default function App() {
                               className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
                             >
                               <Download className="w-3 h-3" /> PDF QR
+                            </button>
+                            <button
+                              onClick={() => handleDeleteEmployee(emp.id, emp.fullName)}
+                              title="Eliminar Trabajador de la Nómina"
+                              className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
+                            >
+                              <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
                         </td>
