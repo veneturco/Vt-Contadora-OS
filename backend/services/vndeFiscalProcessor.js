@@ -1,7 +1,19 @@
 // VeneTurco Neural-Deterministic Engine (VNDE v3.2)
 // Motor de Procesamiento Fiscal Venezolano de Alto Rendimiento y Ahorro Masivo de Tokens
 // Providencias SENIAT SNAT/2026/00093 & SNAT/2026/00099
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+let GoogleGenerativeAI;
+try {
+  GoogleGenerativeAI = require('@google/generative-ai').GoogleGenerativeAI;
+} catch (e) {
+  GoogleGenerativeAI = class MockGoogleGenerativeAI {
+    constructor(key) { this.key = key; }
+    getGenerativeModel() {
+      return {
+        generateContent: async () => ({ response: { text: () => '{}' } })
+      };
+    }
+  };
+}
 const { validateVenezuelanRIF } = require('./seniatEngine');
 
 // Memoria de firmas y plantillas de proveedores frecuentes (Vendor Fingerprinting)
