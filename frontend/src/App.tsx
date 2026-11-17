@@ -113,16 +113,16 @@ export interface AccountantPartner {
 }
 
 const SKINS: { id: SkinId; label: string }[] = [
-  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Emil Kowalski)' },
-  { id: 'obsidian-linear', label: 'Obsidian Linear' },
-  { id: 'mercury-sovereign', label: 'Mercury Sovereign (Fintech 2026)' },
-  { id: 'spatial-titanium', label: 'Liquid Glass Titanium (Spatial)' },
-  { id: 'tactile-bento', label: 'Tactile Hardware Bento' },
-  { id: 'hyperframe-tactical', label: 'Hyperframe HUD (Tactical)' },
-  { id: 'kinetic-studio', label: 'Kinetic Studio (Volt)' },
-  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger' },
-  { id: 'eink-auditor', label: 'E-Ink Paper Audit (No-Glare)' },
-  { id: 'neo-brutal', label: 'Neo-Brutalist Raw' }
+  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Estándar Ejecutivo)' },
+  { id: 'obsidian-linear', label: 'Linear Obsidian (Dark Minimal)' },
+  { id: 'mercury-sovereign', label: 'Mercury Fintech Pro' },
+  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger (Light)' },
+  { id: 'eink-auditor', label: 'E-Ink Auditor (Monocromo)' },
+  { id: 'spatial-titanium', label: 'Titanium Dark' },
+  { id: 'tactile-bento', label: 'Tactile Industrial' },
+  { id: 'hyperframe-tactical', label: 'Contabilidad Técnica' },
+  { id: 'kinetic-studio', label: 'Estudio Financiero' },
+  { id: 'neo-brutal', label: 'Alto Contraste' }
 ];
 
 const AppleEmptyState: React.FC<{
