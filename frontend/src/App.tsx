@@ -713,8 +713,8 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [loginEmail, setLoginEmail] = useState<string>('founder@veneturco.com');
-  const [loginPassword, setLoginPassword] = useState<string>('Seniat2026#');
+  const [loginEmail, setLoginEmail] = useState<string>('moucharrafiepc@gmail.com');
+  const [loginPassword, setLoginPassword] = useState<string>('*036Yasir');
   const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('superadmin');
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
@@ -1207,6 +1207,13 @@ export default function App() {
     const link = `https://vt-contadora-os.onrender.com/?sub=${tenant.id}&rif=${tenant.rif}`;
     const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
+    return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
+    const link = `https://vt-contadora-os.onrender.com/?role=admin&cpc=${acc.cpcNumber}`;
+    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedo a su disposición para cualquier consulta.`;
+    const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
@@ -1751,7 +1758,7 @@ export default function App() {
       return;
     }
 
-    const validPasswords = ['Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
+    const validPasswords = ['*036Yasir', 'Contadora2026#', 'Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
     const isPasswordValid = validPasswords.includes(loginPassword.trim());
 
     if (!isPasswordValid) {
@@ -1803,21 +1810,23 @@ export default function App() {
       body: JSON.stringify({ email: loginEmail, password: loginPassword, role: loginRole })
     }).catch(() => {});
 
+    const isOwner = loginEmail.trim().toLowerCase() === 'moucharrafiepc@gmail.com';
+    const userRole = isOwner ? 'superadmin' : loginRole;
     const user = {
-      email: loginEmail.trim() || 'founder@veneturco.com',
-      role: loginRole,
+      email: loginEmail.trim() || 'moucharrafiepc@gmail.com',
+      role: userRole as 'superadmin' | 'admin' | 'client',
       name:
-        loginRole === 'superadmin'
-          ? 'Director General / Super-Admin SaaS'
-          : loginRole === 'admin'
+        isOwner || userRole === 'superadmin'
+          ? 'Dr. Samir Moucharrafie / Super-Admin & Creador'
+          : userRole === 'admin'
             ? 'Lic. Auditor Principal (Firma)'
             : `Comercio (${activeTenant.name})`
     };
     setCurrentUser(user);
     localStorage.setItem('vt_auth_user', JSON.stringify(user));
-    if (loginRole === 'client') {
+    if (userRole === 'client') {
       setActiveTab('mobile');
-    } else if (loginRole === 'superadmin') {
+    } else if (userRole === 'superadmin') {
       setActiveTab('accountants');
     } else {
       setActiveTab('clients');
@@ -2695,7 +2704,8 @@ export default function App() {
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('superadmin');
-                setLoginEmail('founder@veneturco.com');
+                setLoginEmail('moucharrafiepc@gmail.com');
+                setLoginPassword('*036Yasir');
               }}
               className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'superadmin'
@@ -2704,7 +2714,7 @@ export default function App() {
               } disabled:opacity-40`}
             >
               <span>👑</span>
-              <span className="leading-tight">Super-Admin (Dueño)</span>
+              <span className="leading-tight">Super-Admin (Dr. Samir)</span>
             </button>
             <button
               type="button"
@@ -2712,6 +2722,7 @@ export default function App() {
               onClick={() => {
                 setLoginRole('admin');
                 setLoginEmail('auditor@veneturco.com');
+                setLoginPassword('Contadora2026#');
               }}
               className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'admin'
@@ -3471,15 +3482,16 @@ export default function App() {
                                 <span>✏️</span>
                               </button>
 
-                              {/* WhatsApp Directo */}
+                              {/* Invitación WhatsApp Oficial */}
                               <a
-                                href={`https://wa.me/${acc.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hola Lic. ${acc.name}, le saludamos de la Dirección de VeneTurco Fiscal OS.`)}`}
+                                href={getWhatsAppAccountantInviteUrl(acc)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="px-2 py-1.5 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 text-[10px] flex items-center"
-                                title="Contactar por WhatsApp"
+                                className="px-2.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                title="Enviar Carta de Invitación y Credenciales por WhatsApp"
                               >
                                 <MessageSquare className="w-3.5 h-3.5" />
+                                <span>Invitar WhatsApp</span>
                               </a>
                             </div>
                           </td>
