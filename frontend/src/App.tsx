@@ -39,6 +39,7 @@ import {
   exportBankReconciliationCsv,
   downloadPdfBankReconciliationAudit
 } from './utils/seniatEngine';
+import { generateTotpSecret, getTotpUri, verifyTotpCode } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
 
@@ -748,6 +749,13 @@ export default function App() {
   ]);
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'apple-craft-pro'));
 
+  // Super-Admin 2FA (TOTP) States
+  const [superAdmin2faSecret, setSuperAdmin2faSecret] = useState<string>(() => localStorage.getItem('vt_superadmin_2fa_secret') || '');
+  const [pending2faUser, setPending2faUser] = useState<{ email: string; role: 'superadmin' | 'admin' | 'client'; name: string } | null>(null);
+  const [loginTotpInput, setLoginTotpInput] = useState<string>('');
+  const [setupTotpSecret, setSetupTotpSecret] = useState<string>('');
+  const [setupTotpCode, setSetupTotpCode] = useState<string>('');
+
   // Candado de Seguridad RBAC y Enrutamiento Protegido por Rol
   const ROLE_ALLOWED_TABS: Record<'superadmin' | 'admin' | 'client', ActiveTabId[]> = {
     superadmin: ['accountants', 'clients', 'simplified', 'command', 'ocr', 'books', 'payroll', 'saas', 'reconciliation', 'mobile', 'security', 'operations'],
@@ -1115,6 +1123,31 @@ export default function App() {
     safeSetStorage('vt_accountants_v32', accountants);
   }, [accountants]);
 
+  // Recepción en vivo de facturas vía Server-Sent Events (SSE) desde Telegram Bot
+  useEffect(() => {
+    if (!currentUser || typeof window === 'undefined' || !('EventSource' in window)) return;
+    const tenantParam = currentUser.role === 'superadmin' ? 'all' : selectedTenantId;
+    const evtSource = new EventSource(`/api/events/invoices?tenantId=${encodeURIComponent(tenantParam)}`);
+    evtSource.onmessage = event => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'NEW_INVOICE' && data.invoice) {
+          setInvoices(prev => {
+            if (prev.some(i => i.id === data.invoice.id)) return prev;
+            return [data.invoice, ...prev];
+          });
+          setSubPayToast(`Factura #${data.invoice.invoiceNumber || 'OCR'} recibida en vivo vía Telegram`);
+          setTimeout(() => setSubPayToast(null), 5000);
+        }
+      } catch {
+        // Ignorar heartbeats
+      }
+    };
+    return () => {
+      evtSource.close();
+    };
+  }, [currentUser, selectedTenantId]);
+
   const activeTenant = useMemo(
     () => tenants.find(t => t.id === selectedTenantId) || tenants[0],
     [tenants, selectedTenantId]
@@ -1300,7 +1333,8 @@ export default function App() {
       const parsed = parseBankStatementCsv(
         text,
         selectedBankFilter === 'TODOS' ? 'BANESCO' : selectedBankFilter,
-        activeTenant.id
+        activeTenant.id,
+        bcvRate
       );
       if (parsed.length > 0) {
         setBankMovements(prev => [...parsed, ...prev]);
@@ -1887,6 +1921,12 @@ export default function App() {
             ? 'Lic. Auditor Principal (Firma)'
             : `Comercio (${activeTenant.name})`
     };
+    if (userRole === 'superadmin' && superAdmin2faSecret) {
+      setPending2faUser(user);
+      setLoginTotpInput('');
+      return;
+    }
+
     setCurrentUser(user);
     localStorage.setItem('vt_auth_user', JSON.stringify(user));
     if (userRole === 'client') {
@@ -1896,6 +1936,22 @@ export default function App() {
     } else {
       setActiveTab('clients');
     }
+  }
+
+  async function handleVerifyLoginTotp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pending2faUser || !superAdmin2faSecret) return;
+    const isValid = await verifyTotpCode(superAdmin2faSecret, loginTotpInput);
+    if (!isValid) {
+      setLoginErrorMessage('Código 2FA inválido o expirado. Verifica tu app autenticadora.');
+      return;
+    }
+    setLoginErrorMessage(null);
+    setCurrentUser(pending2faUser);
+    localStorage.setItem('vt_auth_user', JSON.stringify(pending2faUser));
+    setPending2faUser(null);
+    setLoginTotpInput('');
+    setActiveTab('accountants');
   }
 
   function handleSimulateFailedAttempt() {
@@ -2698,7 +2754,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 relative">
-        <form onSubmit={handleLogin} className="ui-card p-6 md:p-8 w-full max-w-md space-y-5 text-xs font-mono relative shadow-2xl">
+        <form onSubmit={pending2faUser ? handleVerifyLoginTotp : handleLogin} className="ui-card p-6 md:p-8 w-full max-w-md space-y-5 text-xs font-mono relative shadow-2xl">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">
@@ -2816,39 +2872,89 @@ export default function App() {
             </button>
           </div>
 
-          <div className="space-y-3 pt-1">
-            <div>
-              <label className="block mb-1.5 text-xs text-white/70 font-medium">Correo Corporativo</label>
-              <input
-                type="email"
-                required
-                disabled={isAccountLocked}
-                value={loginEmail}
-                onChange={e => setLoginEmail(e.target.value)}
-                className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
-              />
+          {pending2faUser ? (
+            <div className="space-y-4 pt-2">
+              <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-xs">
+                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                  <span>Autenticación de Dos Factores (2FA / TOTP)</span>
+                </div>
+                <p className="text-[11px] opacity-85">
+                  Ingresa el código temporal de 6 dígitos generado por tu app autenticadora para confirmar acceso como Super-Admin.
+                </p>
+              </div>
+              <div>
+                <label className="block mb-1.5 text-xs text-white/70 font-medium">Código 2FA de 6 dígitos</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  required
+                  autoFocus
+                  placeholder="000000"
+                  value={loginTotpInput}
+                  onChange={e => setLoginTotpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-blue-500/40 text-center text-xl tracking-[0.4em] font-mono font-bold text-white focus:border-blue-400 focus:outline-none transition-all shadow-inner"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPending2faUser(null);
+                    setLoginTotpInput('');
+                    setLoginErrorMessage(null);
+                  }}
+                  className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-medium transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="ui-btn-primary flex-1 py-3 text-xs flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Verificar y Entrar</span>
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block mb-1.5 text-xs text-white/70 font-medium">Contraseña de Bóveda</label>
-              <input
-                type="password"
-                required
-                disabled={isAccountLocked}
-                value={loginPassword}
-                onChange={e => setLoginPassword(e.target.value)}
-                className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
-              />
-            </div>
-          </div>
+          ) : (
+            <>
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="block mb-1.5 text-xs text-white/70 font-medium">Correo Corporativo</label>
+                  <input
+                    type="email"
+                    required
+                    disabled={isAccountLocked}
+                    value={loginEmail}
+                    onChange={e => setLoginEmail(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1.5 text-xs text-white/70 font-medium">Contraseña de Bóveda</label>
+                  <input
+                    type="password"
+                    required
+                    disabled={isAccountLocked}
+                    value={loginPassword}
+                    onChange={e => setLoginPassword(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
+                  />
+                </div>
+              </div>
 
-          <button
-            type="submit"
-            disabled={isAccountLocked}
-            className="ui-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Lock className="w-4 h-4" />
-            <span>{isAccountLocked ? 'Acceso Bloqueado por Seguridad' : 'Iniciar Sesión Segura'}</span>
-          </button>
+              <button
+                type="submit"
+                disabled={isAccountLocked}
+                className="ui-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Lock className="w-4 h-4" />
+                <span>{isAccountLocked ? 'Acceso Bloqueado por Seguridad' : 'Iniciar Sesión Segura'}</span>
+              </button>
+            </>
+          )}
 
           {/* Barra de Pruebas y Simulación de Ataque */}
           <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
@@ -6962,8 +7068,122 @@ export default function App() {
             </div>
           </div>
 
-          {/* 4-Column AES-256-GCM Interactive Vault & Firestore Rules Matrix */}
+          {/* 4-Column 2FA / AES-256-GCM Interactive Vault & Firestore Rules Matrix */}
           <div className="col-span-12 lg:col-span-4 space-y-5">
+            {/* Super-Admin 2FA / TOTP Configurator */}
+            <div className="ui-card p-5 space-y-3 text-xs font-mono">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-blue-400" />
+                  <h3 className="ui-heading text-base font-bold">2FA Super-Admin (TOTP)</h3>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  superAdmin2faSecret
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-white/10 text-zinc-400 border border-white/10'
+                }`}>
+                  {superAdmin2faSecret ? 'ACTIVO' : 'INACTIVO'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#8E8E93]">
+                Protege el acceso Super-Admin con códigos temporales de 6 dígitos (Google Authenticator / Apple Passwords).
+              </p>
+
+              {superAdmin2faSecret ? (
+                <div className="space-y-3 pt-1">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px]">
+                    Doble Factor activado. El inicio de sesión Super-Admin exige código TOTP cada 30 segundos.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin?')) {
+                        localStorage.removeItem('vt_superadmin_2fa_secret');
+                        setSuperAdmin2faSecret('');
+                        setSubPayToast('2FA desactivado para Super-Admin.');
+                        setTimeout(() => setSubPayToast(null), 4000);
+                      }
+                    }}
+                    className="w-full py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-semibold transition"
+                  >
+                    Desactivar 2FA
+                  </button>
+                </div>
+              ) : setupTotpSecret ? (
+                <div className="space-y-3 pt-1">
+                  <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-1.5">
+                    <span className="text-[10px] text-[#8E8E93] uppercase block">1. Llave Secreta Base32 (Copia en tu App):</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <code className="text-xs font-bold text-white tracking-wider break-all">{setupTotpSecret}</code>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(setupTotpSecret);
+                          setSubPayToast('Llave secreta 2FA copiada.');
+                          setTimeout(() => setSubPayToast(null), 3000);
+                        }}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white"
+                        title="Copiar llave secreta"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <a
+                      href={getTotpUri(setupTotpSecret, currentUser?.email || 'moucharrafiepc@gmail.com')}
+                      className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline pt-1"
+                    >
+                      <ArrowUpRight className="w-3 h-3" /> Abrir en App Autenticadora (otpauth://)
+                    </a>
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-[10px] text-[#8E8E93] uppercase">2. Verifica el código de 6 dígitos:</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        placeholder="000000"
+                        value={setupTotpCode}
+                        onChange={e => setSetupTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        className="flex-1 p-2 rounded-lg bg-[var(--bg-elevated)] border border-white/15 text-center font-mono font-bold tracking-widest text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await verifyTotpCode(setupTotpSecret, setupTotpCode);
+                          if (!ok) {
+                            alert('Código inválido. Asegúrate de ingresar los 6 dígitos actuales de tu app autenticadora.');
+                            return;
+                          }
+                          localStorage.setItem('vt_superadmin_2fa_secret', setupTotpSecret);
+                          setSuperAdmin2faSecret(setupTotpSecret);
+                          setSetupTotpSecret('');
+                          setSetupTotpCode('');
+                          setSubPayToast('¡2FA (TOTP) activado correctamente para Super-Admin!');
+                          setTimeout(() => setSubPayToast(null), 5000);
+                        }}
+                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
+                      >
+                        Activar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSetupTotpSecret(generateTotpSecret(20));
+                    setSetupTotpCode('');
+                  }}
+                  className="ui-btn-primary w-full py-2.5 text-xs flex items-center justify-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  Configurar 2FA Ahora
+                </button>
+              )}
+            </div>
+
             <div className="ui-card p-5 space-y-3 text-xs font-mono">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-4 h-4 text-[var(--accent-primary)]" />

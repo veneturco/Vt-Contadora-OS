@@ -994,13 +994,14 @@ export function downloadPdfPaystub(companyName: string, companyRif: string, emp:
 export interface BankMovement {
   id: string;
   tenantId: string;
-  bankName: 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA' | 'BNC' | 'PROVINCIAL';
+  bankName: 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA' | 'BNC' | 'PROVINCIAL' | 'BANESCO_PANAMA' | 'ZELLE' | 'FACEBANK' | 'MERCURY';
   date: string; // YYYY-MM-DD
   referenceNumber: string;
   description: string;
   amountBs: number; // Positivo = Abono/Ingreso, Negativo = Cargo/Débito
   amountUsd?: number;
-  movementType: 'PAGO_MOVIL' | 'TRANSFERENCIA' | 'CIERRE_LOTE_POS' | 'COMISION_BANCARIA' | 'DEBITO_IGTF' | 'DEPOSITO';
+  currency?: 'VES' | 'USD';
+  movementType: 'PAGO_MOVIL' | 'TRANSFERENCIA' | 'CIERRE_LOTE_POS' | 'COMISION_BANCARIA' | 'DEBITO_IGTF' | 'DEPOSITO' | 'ZELLE_ACH' | 'WIRE_INTL';
   reconciliationStatus: 'CONCILIADO' | 'PENDIENTE' | 'DIFERENCIAL_CAMBIARIO' | 'EN_TRANSITO';
   matchedInvoiceId?: string;
   matchedInvoiceNumber?: string;
@@ -1029,8 +1030,9 @@ export function parseVenezuelanAmount(val: unknown): number {
 
 export function parseBankStatementCsv(
   csvText: string,
-  defaultBank: 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA' | 'BNC' | 'PROVINCIAL' = 'BANESCO',
-  tenantId: string = 'tenant_default'
+  defaultBank: BankMovement['bankName'] = 'BANESCO',
+  tenantId: string = 'tenant_default',
+  bcvRate: number = 914.02
 ): BankMovement[] {
   if (!csvText || typeof csvText !== 'string') return [];
   const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -1043,19 +1045,28 @@ export function parseBankStatementCsv(
 
   const headers = headerLine.split(delim).map(h => h.trim().toUpperCase().replace(/["']/g, ''));
 
-  let bank = defaultBank;
+  let bank: BankMovement['bankName'] = defaultBank;
   const fullText = csvText.toUpperCase();
-  if (fullText.includes('BANCO DE VENEZUELA') || fullText.includes('BDV')) bank = 'BDV';
+  if (fullText.includes('BANESCO PANAMA') || fullText.includes('BANESCO_PA') || fullText.includes('PANAMÁ')) bank = 'BANESCO_PANAMA';
+  else if (fullText.includes('FACEBANK')) bank = 'FACEBANK';
+  else if (fullText.includes('MERCURY')) bank = 'MERCURY';
+  else if (fullText.includes('ZELLE')) bank = 'ZELLE';
+  else if (fullText.includes('BANCO DE VENEZUELA') || fullText.includes('BDV')) bank = 'BDV';
   else if (fullText.includes('MERCANTIL')) bank = 'MERCANTIL';
   else if (fullText.includes('BANCAMIGA')) bank = 'BANCAMIGA';
+  else if (fullText.includes('PROVINCIAL') || fullText.includes('BBVA')) bank = 'PROVINCIAL';
+  else if (fullText.includes('BNC')) bank = 'BNC';
   else if (fullText.includes('BANESCO')) bank = 'BANESCO';
 
-  let dateIdx = headers.findIndex(h => h.includes('FECHA') || h.includes('DATE'));
-  let refIdx = headers.findIndex(h => h.includes('REF') || h.includes('DOCUMENTO') || h.includes('TRANSAC'));
-  let descIdx = headers.findIndex(h => h.includes('CONCEPTO') || h.includes('DESCRIP') || h.includes('DETALLE'));
-  let amountIdx = headers.findIndex(h => h.includes('MONTO') || h.includes('IMPORTE') || h.includes('VALOR'));
-  let debitIdx = headers.findIndex(h => h.includes('DEBITO') || h.includes('CARGO') || h.includes('EGRESO'));
-  let creditIdx = headers.findIndex(h => h.includes('CREDITO') || h.includes('ABONO') || h.includes('INGRESO'));
+  const isInternationalUsd = ['BANESCO_PANAMA', 'ZELLE', 'FACEBANK', 'MERCURY'].includes(bank) ||
+    headers.some(h => h.includes('USD') || h.includes('DOLLAR'));
+
+  let dateIdx = headers.findIndex(h => h.includes('FECHA') || h.includes('DATE') || h.includes('POSTING'));
+  let refIdx = headers.findIndex(h => h.includes('REF') || h.includes('DOCUMENTO') || h.includes('TRANSAC') || h.includes('TRACE') || h.includes('ID'));
+  let descIdx = headers.findIndex(h => h.includes('CONCEPTO') || h.includes('DESCRIP') || h.includes('DETALLE') || h.includes('MEMO') || h.includes('PAYEE') || h.includes('COUNTERPARTY'));
+  let amountIdx = headers.findIndex(h => h.includes('MONTO') || h.includes('IMPORTE') || h.includes('VALOR') || h.includes('AMOUNT') || h.includes('USD'));
+  let debitIdx = headers.findIndex(h => h.includes('DEBITO') || h.includes('CARGO') || h.includes('EGRESO') || h.includes('DEBIT') || h.includes('WITHDRAWAL'));
+  let creditIdx = headers.findIndex(h => h.includes('CREDITO') || h.includes('ABONO') || h.includes('INGRESO') || h.includes('CREDIT') || h.includes('DEPOSIT'));
 
   if (dateIdx === -1) dateIdx = 0;
   if (refIdx === -1) refIdx = 1;
@@ -1071,35 +1082,42 @@ export function parseBankStatementCsv(
     const rawRef = cols[refIdx] || `REF${Date.now()}_${i}`;
     const rawDesc = cols[descIdx] || 'MOVIMIENTO BANCARIO';
 
-    let amount = 0;
+    let rawAmount = 0;
     if (amountIdx !== -1 && cols[amountIdx]) {
-      amount = parseVenezuelanAmount(cols[amountIdx]);
+      rawAmount = parseVenezuelanAmount(cols[amountIdx]);
     } else if (creditIdx !== -1 && debitIdx !== -1) {
       const cr = parseVenezuelanAmount(cols[creditIdx]);
       const db = parseVenezuelanAmount(cols[debitIdx]);
-      amount = cr > 0 ? cr : -Math.abs(db);
+      rawAmount = cr > 0 ? cr : -Math.abs(db);
     } else if (cols[3]) {
-      amount = parseVenezuelanAmount(cols[3]);
+      rawAmount = parseVenezuelanAmount(cols[3]);
     }
 
-    if (isNaN(amount) || amount === 0) continue;
+    if (isNaN(rawAmount) || rawAmount === 0) continue;
+
+    const amountUsd = isInternationalUsd ? rawAmount : undefined;
+    const amountBs = isInternationalUsd ? Number((rawAmount * bcvRate).toFixed(2)) : rawAmount;
 
     const descUpper = rawDesc.toUpperCase();
     let moveType: BankMovement['movementType'] = 'TRANSFERENCIA';
-    if (descUpper.includes('PAGO MOVIL') || descUpper.includes('PAGOMOVIL') || descUpper.includes('C2P') || descUpper.includes('P2P') || descUpper.includes('P2C')) {
+    if (descUpper.includes('ZELLE') || descUpper.includes('ACH') || bank === 'ZELLE') {
+      moveType = 'ZELLE_ACH';
+    } else if (descUpper.includes('WIRE') || descUpper.includes('SWIFT') || descUpper.includes('TRANSFERENCIA INT')) {
+      moveType = 'WIRE_INTL';
+    } else if (descUpper.includes('PAGO MOVIL') || descUpper.includes('PAGOMOVIL') || descUpper.includes('C2P') || descUpper.includes('P2P') || descUpper.includes('P2C')) {
       moveType = 'PAGO_MOVIL';
     } else if (descUpper.includes('LOTE') || descUpper.includes('POS') || descUpper.includes('PUNTO DE VENTA') || descUpper.includes('TARJ')) {
       moveType = 'CIERRE_LOTE_POS';
-    } else if (descUpper.includes('COMISION') || descUpper.includes('MANTENIMIENTO') || descUpper.includes('TARIFA')) {
+    } else if (descUpper.includes('COMISION') || descUpper.includes('MANTENIMIENTO') || descUpper.includes('TARIFA') || descUpper.includes('FEE')) {
       moveType = 'COMISION_BANCARIA';
     } else if (descUpper.includes('IGTF') || descUpper.includes('TRANSACCIONES FINANCIERAS')) {
       moveType = 'DEBITO_IGTF';
-    } else if (amount > 0) {
+    } else if (amountBs > 0) {
       moveType = 'DEPOSITO';
     }
 
     const cleanRef = rawRef.replace(/[^0-9A-Z]/gi, '');
-    const auditHash = computeDeterministicHash('BANK_MOVE', { bank, rawDate, cleanRef, amount });
+    const auditHash = computeDeterministicHash('BANK_MOVE', { bank, rawDate, cleanRef, amountBs });
 
     results.push({
       id: `mov_${bank.toLowerCase()}_${Date.now()}_${i}`,
@@ -1108,7 +1126,9 @@ export function parseBankStatementCsv(
       date: rawDate,
       referenceNumber: cleanRef,
       description: rawDesc,
-      amountBs: amount,
+      amountBs,
+      amountUsd,
+      currency: isInternationalUsd ? 'USD' : 'VES',
       movementType: moveType,
       reconciliationStatus: 'PENDIENTE',
       auditHash

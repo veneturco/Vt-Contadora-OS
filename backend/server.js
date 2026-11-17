@@ -278,6 +278,39 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// Pool de conexiones Server-Sent Events (SSE) para recepción de facturas en tiempo real
+const sseInvoiceClients = new Set();
+
+function broadcastInvoiceEvent(tenantId, invoice) {
+  const payload = `data: ${JSON.stringify({ type: 'NEW_INVOICE', tenantId, invoice })}\n\n`;
+  for (const client of sseInvoiceClients) {
+    if (client.tenantId === 'all' || client.tenantId === tenantId) {
+      client.res.write(payload);
+    }
+  }
+}
+
+app.get('/api/events/invoices', (req, res) => {
+  const tenantId = req.query.tenantId || 'all';
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  res.write(`data: ${JSON.stringify({ type: 'SSE_CONNECTED', tenantId })}\n\n`);
+
+  const client = { res, tenantId };
+  sseInvoiceClients.add(client);
+
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseInvoiceClients.delete(client);
+  });
+});
+
 app.post('/webhooks/telegram', webhookLimiter, async (req, res) => {
   const secretHeader = req.headers['x-telegram-bot-api-secret-token'];
   const isProd = process.env.NODE_ENV === 'production';
@@ -289,6 +322,9 @@ app.post('/webhooks/telegram', webhookLimiter, async (req, res) => {
   }
   try {
     const result = await processTelegramReceiptUpdate(req.body, db);
+    if (result && result.invoice) {
+      broadcastInvoiceEvent(result.tenantId || result.invoice.tenantId, result.invoice);
+    }
     res.json(result);
   } catch (err) {
     console.error('Telegram webhook error:', err);
