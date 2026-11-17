@@ -5,8 +5,7 @@ import {
   Lock, Download, CheckCircle2, AlertTriangle, RefreshCw, Plus,
   Building2, Scale, Hash, Eye, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
-  Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock,
-  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers, Trash2
+  Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock
 } from 'lucide-react';
 import {
   FiscalInvoice,
@@ -39,7 +38,6 @@ import {
   exportBankReconciliationCsv,
   downloadPdfBankReconciliationAudit
 } from './utils/seniatEngine';
-import { generateTotpSecret, getTotpUri, verifyTotpCode } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
 
@@ -115,16 +113,16 @@ export interface AccountantPartner {
 }
 
 const SKINS: { id: SkinId; label: string }[] = [
-  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Estándar Ejecutivo)' },
-  { id: 'obsidian-linear', label: 'Linear Obsidian (Dark Minimal)' },
-  { id: 'mercury-sovereign', label: 'Mercury Fintech Pro' },
-  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger (Light)' },
-  { id: 'eink-auditor', label: 'E-Ink Auditor (Monocromo)' },
-  { id: 'spatial-titanium', label: 'Titanium Dark' },
-  { id: 'tactile-bento', label: 'Tactile Industrial' },
-  { id: 'hyperframe-tactical', label: 'Contabilidad Técnica' },
-  { id: 'kinetic-studio', label: 'Estudio Financiero' },
-  { id: 'neo-brutal', label: 'Alto Contraste' }
+  { id: 'apple-craft-pro', label: ' Apple Craft Pro (Emil Kowalski)' },
+  { id: 'obsidian-linear', label: 'Obsidian Linear' },
+  { id: 'mercury-sovereign', label: 'Mercury Sovereign (Fintech 2026)' },
+  { id: 'spatial-titanium', label: 'Liquid Glass Titanium (Spatial)' },
+  { id: 'tactile-bento', label: 'Tactile Hardware Bento' },
+  { id: 'hyperframe-tactical', label: 'Hyperframe HUD (Tactical)' },
+  { id: 'kinetic-studio', label: 'Kinetic Studio (Volt)' },
+  { id: 'editorial-swiss', label: 'Editorial Swiss Ledger' },
+  { id: 'eink-auditor', label: 'E-Ink Paper Audit (No-Glare)' },
+  { id: 'neo-brutal', label: 'Neo-Brutalist Raw' }
 ];
 
 const AppleEmptyState: React.FC<{
@@ -715,8 +713,8 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [loginEmail, setLoginEmail] = useState<string>('moucharrafiepc@gmail.com');
-  const [loginPassword, setLoginPassword] = useState<string>('*036Yasir');
+  const [loginEmail, setLoginEmail] = useState<string>('founder@veneturco.com');
+  const [loginPassword, setLoginPassword] = useState<string>('Seniat2026#');
   const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('superadmin');
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
@@ -748,13 +746,6 @@ export default function App() {
     }
   ]);
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'apple-craft-pro'));
-
-  // Super-Admin 2FA (TOTP) States
-  const [superAdmin2faSecret, setSuperAdmin2faSecret] = useState<string>(() => localStorage.getItem('vt_superadmin_2fa_secret') || '');
-  const [pending2faUser, setPending2faUser] = useState<{ email: string; role: 'superadmin' | 'admin' | 'client'; name: string } | null>(null);
-  const [loginTotpInput, setLoginTotpInput] = useState<string>('');
-  const [setupTotpSecret, setSetupTotpSecret] = useState<string>('');
-  const [setupTotpCode, setSetupTotpCode] = useState<string>('');
 
   // Candado de Seguridad RBAC y Enrutamiento Protegido por Rol
   const ROLE_ALLOWED_TABS: Record<'superadmin' | 'admin' | 'client', ActiveTabId[]> = {
@@ -846,23 +837,23 @@ export default function App() {
     const role = currentUser?.role || 'admin';
     if (role === 'superadmin') {
       return [
-        { id: 'accountants', label: 'Red Contadores & SaaS', icon: Users },
-        { id: 'security', label: 'Ciberseguridad & Bóveda', icon: ShieldCheck },
-        { id: 'clients', label: 'Cartera (Vista Auditor)', icon: Building2 },
-        { id: 'operations', label: 'Operaciones Fiscales', icon: Layers }
+        { id: 'accountants', label: '👑 Red Contadores & SaaS', icon: Users },
+        { id: 'security', label: '🛡️ Ciberseguridad & WAF', icon: ShieldCheck },
+        { id: 'clients', label: '👥 Cartera (Vista Auditor)', icon: Building2 },
+        { id: 'operations', label: '⚡ Operaciones Fiscales', icon: Cpu }
       ];
     }
     if (role === 'client') {
       return [
-        { id: 'mobile', label: 'Mi Comercio (Portal Móvil)', icon: Smartphone },
-        { id: 'saas', label: 'Mi Suscripción & Pagos', icon: CreditCard }
+        { id: 'mobile', label: '📱 Mi Comercio (Portal Móvil)', icon: Smartphone },
+        { id: 'saas', label: '💳 Mi Suscripción & Pagos', icon: CreditCard }
       ];
     }
     // Rol Contador (Auditor CPC) - La tríada dorada limpia
     return [
-      { id: 'clients', label: 'Cartera & Radar Fiscal', icon: Building2 },
-      { id: 'operations', label: 'Operaciones SENIAT & Banco', icon: Layers },
-      { id: 'payroll', label: 'Nómina LOTTT', icon: Users }
+      { id: 'clients', label: '👥 Cartera & Radar Fiscal', icon: Building2 },
+      { id: 'operations', label: '⚡ Operaciones SENIAT & Banco', icon: Cpu },
+      { id: 'payroll', label: '💼 Nómina LOTTT', icon: Users }
     ];
   }, [currentUser?.role]);
   const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
@@ -1123,31 +1114,6 @@ export default function App() {
     safeSetStorage('vt_accountants_v32', accountants);
   }, [accountants]);
 
-  // Recepción en vivo de facturas vía Server-Sent Events (SSE) desde Telegram Bot
-  useEffect(() => {
-    if (!currentUser || typeof window === 'undefined' || !('EventSource' in window)) return;
-    const tenantParam = currentUser.role === 'superadmin' ? 'all' : selectedTenantId;
-    const evtSource = new EventSource(`/api/events/invoices?tenantId=${encodeURIComponent(tenantParam)}`);
-    evtSource.onmessage = event => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'NEW_INVOICE' && data.invoice) {
-          setInvoices(prev => {
-            if (prev.some(i => i.id === data.invoice.id)) return prev;
-            return [data.invoice, ...prev];
-          });
-          setSubPayToast(`Factura #${data.invoice.invoiceNumber || 'OCR'} recibida en vivo vía Telegram`);
-          setTimeout(() => setSubPayToast(null), 5000);
-        }
-      } catch {
-        // Ignorar heartbeats
-      }
-    };
-    return () => {
-      evtSource.close();
-    };
-  }, [currentUser, selectedTenantId]);
-
   const activeTenant = useMemo(
     () => tenants.find(t => t.id === selectedTenantId) || tenants[0],
     [tenants, selectedTenantId]
@@ -1239,15 +1205,8 @@ export default function App() {
     feeUsd: number
   ): string {
     const link = `https://vt-contadora-os.onrender.com/?sub=${tenant.id}&rif=${tenant.rif}`;
-    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
-    return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-  }
-
-  function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
-    const link = `https://vt-contadora-os.onrender.com/?role=admin&cpc=${acc.cpcNumber}`;
-    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda la Dirección General de *VT Fiscal OS*.\n\nLe hemos activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedamos a su completa disposición para cualquier consulta.`;
-    const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
@@ -1333,8 +1292,7 @@ export default function App() {
       const parsed = parseBankStatementCsv(
         text,
         selectedBankFilter === 'TODOS' ? 'BANESCO' : selectedBankFilter,
-        activeTenant.id,
-        bcvRate
+        activeTenant.id
       );
       if (parsed.length > 0) {
         setBankMovements(prev => [...parsed, ...prev]);
@@ -1736,70 +1694,6 @@ export default function App() {
     setTimeout(() => setSubPayToast(null), 4000);
   }
 
-  function handleDeleteAccountant(accId: string, accName: string) {
-    if (window.confirm(`¿Está seguro de eliminar definitivamente al contador "${accName}" del directorio? Esta acción no se puede deshacer.`)) {
-      setAccountants(prev => prev.filter(a => a.id !== accId));
-      appendAuditLog(
-        'BAJA_CONTADOR_PARTNER',
-        currentUser?.email || 'founder@veneturco.com',
-        accId,
-        `Contador Partner eliminado del directorio: ${accName}`
-      );
-      setSubPayToast(`Contador "${accName}" eliminado correctamente del directorio.`);
-      setTimeout(() => setSubPayToast(null), 4000);
-    }
-  }
-
-  function handleDeleteTenant(tenantId: string, tenantName: string) {
-    if (tenants.length <= 1) {
-      alert('No se puede eliminar la única empresa activa. Debe haber al menos una empresa registrada.');
-      return;
-    }
-    if (window.confirm(`¿Está seguro de eliminar definitivamente la empresa "${tenantName}" de su cartera? Se desvincularán sus comprobantes fiscales asociados.`)) {
-      setTenants(prev => prev.filter(t => t.id !== tenantId));
-      if (selectedTenantId === tenantId) {
-        const remaining = tenants.filter(t => t.id !== tenantId);
-        if (remaining.length > 0) setSelectedTenantId(remaining[0].id);
-      }
-      appendAuditLog(
-        'BAJA_EMPRESA_CARTERA',
-        currentUser?.email || 'founder@veneturco.com',
-        tenantId,
-        `Empresa eliminada de la cartera: ${tenantName}`
-      );
-      setSubPayToast(`Empresa "${tenantName}" eliminada correctamente.`);
-      setTimeout(() => setSubPayToast(null), 4000);
-    }
-  }
-
-  function handleDeleteInvoice(invId: string, invoiceNum: string) {
-    if (window.confirm(`¿Está seguro de eliminar la factura #${invoiceNum} del libro fiscal?`)) {
-      setInvoices(prev => prev.filter(i => i.id !== invId));
-      appendAuditLog(
-        'ELIMINAR_DOCUMENTO_FISCAL',
-        currentUser?.email || 'founder@veneturco.com',
-        invId,
-        `Factura eliminada del libro fiscal: #${invoiceNum}`
-      );
-      setSubPayToast(`Factura #${invoiceNum} eliminada del libro.`);
-      setTimeout(() => setSubPayToast(null), 4000);
-    }
-  }
-
-  function handleDeleteEmployee(empId: string, empName: string) {
-    if (window.confirm(`¿Está seguro de eliminar a "${empName}" de la nómina LOTTT?`)) {
-      setEmployees(prev => prev.filter(e => e.id !== empId));
-      appendAuditLog(
-        'BAJA_TRABAJADOR_LOTTT',
-        currentUser?.email || 'founder@veneturco.com',
-        empId,
-        `Trabajador eliminado de nómina: ${empName}`
-      );
-      setSubPayToast(`Trabajador "${empName}" eliminado de nómina.`);
-      setTimeout(() => setSubPayToast(null), 4000);
-    }
-  }
-
   function handleOpenPayoutModal(acc: AccountantPartner) {
     setPayoutModalAccountant(acc);
     setPayoutRefInput('');
@@ -1843,7 +1737,7 @@ export default function App() {
     ref: string
   ): string {
     const amountBs = (amountUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 });
-    const msg = `Hola *${acc.name}* (${acc.cpcNumber}), le saluda el equipo de *VT Fiscal OS*.\n\n🎉 Le confirmamos que hemos liquidado su comisión mensual por *Revenue-Share (20%)*:\n\n💵 *Monto en USD:* $${amountUsd.toFixed(2)} USD\n🇻🇪 *Monto en Bolívares:* Bs. ${amountBs} (@ Tasa Oficial BCV ${bcvRate})\n💳 *Método de Pago:* ${acc.payoutMethod}\n🔢 *Nº de Referencia / Hash:* ${ref}\n🏦 *Datos:* ${acc.payoutDetails}\n\n¡Muchas gracias por ser parte de nuestra red de contadores aliados en Venezuela!`;
+    const msg = `Hola *${acc.name}* (${acc.cpcNumber}), le saluda el equipo de *VeneTurco Fiscal OS*.\n\n🎉 Le confirmamos que hemos liquidado su comisión mensual por *Revenue-Share (20%)*:\n\n💵 *Monto en USD:* $${amountUsd.toFixed(2)} USD\n🇻🇪 *Monto en Bolívares:* Bs. ${amountBs} (@ Tasa Oficial BCV ${bcvRate})\n💳 *Método de Pago:* ${acc.payoutMethod}\n🔢 *Nº de Referencia / Hash:* ${ref}\n🏦 *Datos:* ${acc.payoutDetails}\n\n¡Muchas gracias por ser parte de nuestra red de contadores aliados en Venezuela!`;
     const cleanPhone = acc.phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1857,7 +1751,7 @@ export default function App() {
       return;
     }
 
-    const validPasswords = ['*036Yasir', 'Contadora2026#', 'Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
+    const validPasswords = ['Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
     const isPasswordValid = validPasswords.includes(loginPassword.trim());
 
     if (!isPasswordValid) {
@@ -1909,49 +1803,25 @@ export default function App() {
       body: JSON.stringify({ email: loginEmail, password: loginPassword, role: loginRole })
     }).catch(() => {});
 
-    const isOwner = loginEmail.trim().toLowerCase() === 'moucharrafiepc@gmail.com';
-    const userRole = isOwner ? 'superadmin' : loginRole;
     const user = {
-      email: loginEmail.trim() || 'moucharrafiepc@gmail.com',
-      role: userRole as 'superadmin' | 'admin' | 'client',
+      email: loginEmail.trim() || 'founder@veneturco.com',
+      role: loginRole,
       name:
-        isOwner || userRole === 'superadmin'
-          ? 'Super-Admin / Director General'
-          : userRole === 'admin'
+        loginRole === 'superadmin'
+          ? 'Director General / Super-Admin SaaS'
+          : loginRole === 'admin'
             ? 'Lic. Auditor Principal (Firma)'
             : `Comercio (${activeTenant.name})`
     };
-    if (userRole === 'superadmin' && superAdmin2faSecret) {
-      setPending2faUser(user);
-      setLoginTotpInput('');
-      return;
-    }
-
     setCurrentUser(user);
     localStorage.setItem('vt_auth_user', JSON.stringify(user));
-    if (userRole === 'client') {
+    if (loginRole === 'client') {
       setActiveTab('mobile');
-    } else if (userRole === 'superadmin') {
+    } else if (loginRole === 'superadmin') {
       setActiveTab('accountants');
     } else {
       setActiveTab('clients');
     }
-  }
-
-  async function handleVerifyLoginTotp(e: React.FormEvent) {
-    e.preventDefault();
-    if (!pending2faUser || !superAdmin2faSecret) return;
-    const isValid = await verifyTotpCode(superAdmin2faSecret, loginTotpInput);
-    if (!isValid) {
-      setLoginErrorMessage('Código 2FA inválido o expirado. Verifica tu app autenticadora.');
-      return;
-    }
-    setLoginErrorMessage(null);
-    setCurrentUser(pending2faUser);
-    localStorage.setItem('vt_auth_user', JSON.stringify(pending2faUser));
-    setPending2faUser(null);
-    setLoginTotpInput('');
-    setActiveTab('accountants');
   }
 
   function handleSimulateFailedAttempt() {
@@ -2242,6 +2112,101 @@ export default function App() {
       id,
       `Factura #${target.invoiceNumber} (${target.supplierName}) sellada como APROBADA. Borrado físico bloqueado por 10 años.`
     );
+  }
+
+  function handleApproveAllPendingInvoices() {
+    const pendingList = tenantInvoices.filter(i => i.status !== 'APROBADA');
+    if (pendingList.length === 0) return;
+    const pendingIds = new Set(pendingList.map(i => i.id));
+    setInvoices(prev =>
+      prev.map(inv => (pendingIds.has(inv.id) ? { ...inv, status: 'APROBADA' } : inv))
+    );
+    appendAuditLog(
+      'SELLO_MASIVO_COT',
+      'contador:auditor_principal',
+      activeTenant.rif,
+      `Aprobación y sellado en lote de ${pendingList.length} documento(s) fiscales para ${activeTenant.name} (${activeTenant.rif}).`
+    );
+    setOcrAlertMessage(`✨ ${pendingList.length} factura(s) aprobadas y selladas en bóveda COT en 1 clic.`);
+    setTimeout(() => setOcrAlertMessage(null), 4500);
+  }
+
+  function getWhatsAppClosingSummaryUrl(): string {
+    const salesVatBs = tenantInvoices
+      .filter(i => i.bookType === 'VENTA')
+      .reduce((acc, i) => acc + toVes(i.vatOriginal, i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1), 0);
+    const purchasesVatBs = tenantInvoices
+      .filter(i => i.bookType === 'COMPRA' && isVatDeductible(i))
+      .reduce((acc, i) => acc + toVes(i.vatOriginal, i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1), 0);
+    const withheldBs = tenantInvoices.reduce(
+      (acc, i) => acc + toVes(i.vatOriginal * (i.vatRetentionRate / 100), i.currency, i.bcvRateOnDate),
+      0
+    );
+    const igtfBs = tenantInvoices.reduce(
+      (acc, i) => acc + toVes(i.igtfOriginal, i.currency, i.bcvRateOnDate),
+      0
+    );
+    const netIvaQuotaBs = Math.max(0, salesVatBs - purchasesVatBs - withheldBs);
+    const totalToPayBs = netIvaQuotaBs + igtfBs;
+    const totalToPayUsd = totalToPayBs / Math.max(1, bcvRate);
+
+    const msg =
+      `Hola equipo de *${activeTenant.name}* (${activeTenant.rif}).\n\n` +
+      `📊 *RESUMEN DE CIERRE QUINCENAL SENIAT*\n` +
+      `🗓️ *Fecha Límite (Terminal ${speCalendar.terminalDigit}):* ${speCalendar.quincena1Deadline}\n\n` +
+      `• *Débito Fiscal (Ventas):* Bs. ${salesVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
+      `• *Crédito Fiscal Deducible (Compras):* Bs. ${purchasesVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
+      `• *Retenciones IVA del Período:* Bs. ${withheldBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
+      `• *IGTF Divisas (3%):* Bs. ${igtfBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n` +
+      `🏛️ *TOTAL ESTIMADO A PAGAR SENIAT:* *Bs. ${totalToPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
+      `💵 *Ref. Bimoneda:* USD $${totalToPayUsd.toFixed(2)} (@ Tasa BCV ${bcvRate.toFixed(2)} Bs.)\n\n` +
+      `Los archivos TXT de 16 columnas y Libros Fiscales ya se encuentran auditados y listos en *VeneTurco Fiscal OS*.`;
+
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  }
+
+  function handleExportParafiscalCsv() {
+    const header = 'CEDULA;TRABAJADOR;CARGO;SALARIO_BASE_BS;IVSS_EMPLEADO_4%;FAOV_EMPLEADO_1%;RPE_EMPLEADO_0.5%;IVSS_PATRONAL_BS;FAOV_PATRONAL_2%;RPE_PATRONAL_2%;PROVISION_INCES_2%;TOTAL_APORTE_PARAFISCAL_BS';
+    const rows = tenantEmployees.map(emp => {
+      const b = calculateLotttFullBreakdown(emp.baseSalaryBs, emp.cestaticketBs, emp.riskLevel);
+      const totalParafiscal = b.ivssEmployee + b.faovEmployee + b.rpeEmployee + b.ivssEmployer + b.faovEmployer + b.rpeEmployer + b.incesQuarterlyProvision;
+      return [
+        emp.cedula,
+        `"${emp.fullName}"`,
+        `"${emp.role}"`,
+        emp.baseSalaryBs.toFixed(2),
+        b.ivssEmployee.toFixed(2),
+        b.faovEmployee.toFixed(2),
+        b.rpeEmployee.toFixed(2),
+        b.ivssEmployer.toFixed(2),
+        b.faovEmployer.toFixed(2),
+        b.rpeEmployer.toFixed(2),
+        b.incesQuarterlyProvision.toFixed(2),
+        totalParafiscal.toFixed(2)
+      ].join(';');
+    });
+    const csvContent = '\uFEFF' + [header, ...rows].join('\n');
+    handleDownloadFile(`PLANILLA_PARAFISCAL_IVSS_FAOV_${activeTenant.rif}_202611.csv`, csvContent, 'text/csv;charset=utf-8');
+  }
+
+  function handleExportArt142Csv() {
+    const header = 'CEDULA;TRABAJADOR;FECHA_INGRESO;SALARIO_BASE_BS;SALARIO_INTEGRAL_DIARIO_BS;DIAS_ABONO_MENSUAL_ART142;GARANTIA_PRESTACIONES_MENSUAL_BS;NETO_PAGADO_MES_BS';
+    const rows = tenantEmployees.map(emp => {
+      const b = calculateLotttFullBreakdown(emp.baseSalaryBs, emp.cestaticketBs, emp.riskLevel);
+      const integralDaily = (emp.baseSalaryBs / 30) * 1.1667;
+      return [
+        emp.cedula,
+        `"${emp.fullName}"`,
+        emp.hireDate,
+        emp.baseSalaryBs.toFixed(2),
+        integralDaily.toFixed(2),
+        '5',
+        b.prestacionesMonthlyProvision.toFixed(2),
+        b.netPayBs.toFixed(2)
+      ].join(';');
+    });
+    const csvContent = '\uFEFF' + [header, ...rows].join('\n');
+    handleDownloadFile(`LIBRO_PRESTACIONES_ART142_${activeTenant.rif}_202611.csv`, csvContent, 'text/csv;charset=utf-8');
   }
 
   function handleIssueAdjustmentNote() {
@@ -2754,7 +2719,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 relative">
-        <form onSubmit={pending2faUser ? handleVerifyLoginTotp : handleLogin} className="ui-card p-6 md:p-8 w-full max-w-md space-y-5 text-xs font-mono relative shadow-2xl">
+        <form onSubmit={handleLogin} className="ui-card p-6 md:p-8 w-full max-w-md space-y-5 text-xs font-mono relative shadow-2xl">
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">
@@ -2762,8 +2727,8 @@ export default function App() {
               </span>
               <span className="text-[10px] opacity-70">v3.2 COMMERCIAL</span>
             </div>
-            <h1 className="ui-heading text-2xl font-bold tracking-tight pt-1 text-white">
-              VT FISCAL OS
+            <h1 className="ui-heading text-2xl font-extrabold tracking-tight pt-1">
+              VENETURCO FISCAL OS
             </h1>
             <p className="opacity-75">Acceso Blindado Multi-Empresa · SENIAT & Contabilidad Cloud</p>
           </div>
@@ -2819,23 +2784,22 @@ export default function App() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-1.5">
             <button
               type="button"
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('superadmin');
-                setLoginEmail('moucharrafiepc@gmail.com');
-                setLoginPassword('*036Yasir');
+                setLoginEmail('founder@veneturco.com');
               }}
-              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'superadmin'
-                  ? 'bg-blue-600/20 text-blue-400 font-bold border-blue-500/50 shadow-sm'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
-              } disabled:opacity-40 transition-all`}
+                  ? 'bg-amber-500/20 text-amber-300 font-bold border-amber-400'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
+              } disabled:opacity-40`}
             >
-              <span className="text-base sm:text-lg">👑</span>
-              <span className="leading-tight font-semibold">Super-Admin</span>
+              <span>👑</span>
+              <span className="leading-tight">Super-Admin (Dueño)</span>
             </button>
             <button
               type="button"
@@ -2843,16 +2807,15 @@ export default function App() {
               onClick={() => {
                 setLoginRole('admin');
                 setLoginEmail('auditor@veneturco.com');
-                setLoginPassword('Contadora2026#');
               }}
-              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'admin'
-                  ? 'bg-blue-600/20 text-blue-400 font-bold border-blue-500/50 shadow-sm'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
-              } disabled:opacity-40 transition-all`}
+                  ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-bold border-[var(--border-highlight)]'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
+              } disabled:opacity-40`}
             >
-              <span className="text-base sm:text-lg">💼</span>
-              <span className="leading-tight font-semibold">Firma Contable</span>
+              <span>💼</span>
+              <span className="leading-tight">Firma Contable (CPC)</span>
             </button>
             <button
               type="button"
@@ -2861,100 +2824,50 @@ export default function App() {
                 setLoginRole('client');
                 setLoginEmail('gerencia@bodegajh.com');
               }}
-              className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
+              className={`p-2 rounded border text-center text-[11px] flex flex-col items-center justify-center gap-1 ${
                 loginRole === 'client'
-                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border-emerald-400/50 shadow-sm'
-                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
-              } disabled:opacity-40 transition-all`}
+                  ? 'bg-emerald-500/20 text-emerald-300 font-bold border-emerald-400'
+                  : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-75 hover:opacity-100'
+              } disabled:opacity-40`}
             >
-              <span className="text-base sm:text-lg">📱</span>
-              <span className="leading-tight font-semibold">Cliente Comercio</span>
+              <span>📱</span>
+              <span className="leading-tight">Cliente Comercio</span>
             </button>
           </div>
 
-          {pending2faUser ? (
-            <div className="space-y-4 pt-2">
-              <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 space-y-1">
-                <div className="font-bold flex items-center gap-1.5 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-blue-400" />
-                  <span>Autenticación de Dos Factores (2FA / TOTP)</span>
-                </div>
-                <p className="text-[11px] opacity-85">
-                  Ingresa el código temporal de 6 dígitos generado por tu app autenticadora para confirmar acceso como Super-Admin.
-                </p>
-              </div>
-              <div>
-                <label className="block mb-1.5 text-xs text-white/70 font-medium">Código 2FA de 6 dígitos</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  required
-                  autoFocus
-                  placeholder="000000"
-                  value={loginTotpInput}
-                  onChange={e => setLoginTotpInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-blue-500/40 text-center text-xl tracking-[0.4em] font-mono font-bold text-white focus:border-blue-400 focus:outline-none transition-all shadow-inner"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPending2faUser(null);
-                    setLoginTotpInput('');
-                    setLoginErrorMessage(null);
-                  }}
-                  className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-medium transition"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="ui-btn-primary flex-1 py-3 text-xs flex items-center justify-center gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Verificar y Entrar</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-3 pt-1">
-                <div>
-                  <label className="block mb-1.5 text-xs text-white/70 font-medium">Correo Corporativo</label>
-                  <input
-                    type="email"
-                    required
-                    disabled={isAccountLocked}
-                    value={loginEmail}
-                    onChange={e => setLoginEmail(e.target.value)}
-                    className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1.5 text-xs text-white/70 font-medium">Contraseña de Bóveda</label>
-                  <input
-                    type="password"
-                    required
-                    disabled={isAccountLocked}
-                    value={loginPassword}
-                    onChange={e => setLoginPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
+          <div className="space-y-3">
+            <div>
+              <label className="block mb-1 opacity-75">Correo Corporativo</label>
+              <input
+                type="email"
+                required
                 disabled={isAccountLocked}
-                className="ui-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Lock className="w-4 h-4" />
-                <span>{isAccountLocked ? 'Acceso Bloqueado por Seguridad' : 'Iniciar Sesión Segura'}</span>
-              </button>
-            </>
-          )}
+                value={loginEmail}
+                onChange={e => setLoginEmail(e.target.value)}
+                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <label className="block mb-1 opacity-75">Contraseña de Bóveda</label>
+              <input
+                type="password"
+                required
+                disabled={isAccountLocked}
+                value={loginPassword}
+                onChange={e => setLoginPassword(e.target.value)}
+                className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isAccountLocked}
+            className="ui-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Lock className="w-4 h-4" />
+            <span>{isAccountLocked ? 'Acceso Bloqueado por Seguridad' : 'Iniciar Sesión Segura'}</span>
+          </button>
 
           {/* Barra de Pruebas y Simulación de Ataque */}
           <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
@@ -3052,46 +2965,48 @@ export default function App() {
           
           {/* SECTOR 1 (IZQUIERDA): Identidad & Ancla de Empresa Activa */}
           <div className="flex items-center gap-3">
-            {/* Logo Minimalista */}
+            {/* Logo Apple Craft */}
             <div className="flex items-center gap-2.5">
-              <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#0A84FF]"></span>
-              </span>
+              <div className="apple-icon-jewel apple-icon-jewel-emerald w-8 h-8">
+                <ShieldCheck className="w-4 h-4 text-emerald-300" />
+              </div>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">VT</span>
-                  <span className="text-xs font-mono font-medium text-[#8E8E93]">Fiscal OS</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70">v3.2</span>
+                  <span className="font-extrabold text-sm md:text-base text-white tracking-tight">VeneTurco</span>
+                  <span className="text-xs font-semibold text-emerald-400">Fiscal OS</span>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.08] text-white/75 border border-white/10">3.2</span>
                 </div>
               </div>
             </div>
 
             <div className="hidden md:block h-6 w-[1px] bg-white/10" />
 
-            {/* Cápsula de Empresa Activa (Selector Multi-RIF Compacto & Responsive) */}
-            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-white/20 transition-all max-w-[180px] xs:max-w-[240px] sm:max-w-none shadow-inner">
-              <Building2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-              <div className="flex items-center gap-1.5 min-w-0">
+            {/* Cápsula de Empresa Activa (Tenant Anchor - Seguridad Mental) */}
+            <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-white/20 transition-all shadow-inner">
+              <div className="apple-icon-jewel apple-icon-jewel-blue w-6 h-6 rounded-lg">
+                <Building2 className="w-3.5 h-3.5 text-sky-300 shrink-0" />
+              </div>
+              <div className="flex items-center gap-2">
                 {currentUser?.role === 'client' ? (
-                  <span className="text-xs font-bold text-white font-mono truncate max-w-[120px] sm:max-w-[200px]">
-                    {activeTenant.name}
+                  <span className="text-xs font-bold text-white font-mono">
+                    {activeTenant.name} ({activeTenant.rif})
                   </span>
                 ) : (
                   <select
                     id="tenant-selector"
                     value={selectedTenantId}
                     onChange={e => setSelectedTenantId(e.target.value)}
-                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer max-w-[110px] xs:max-w-[140px] sm:max-w-[190px] md:max-w-[240px] truncate"
+                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
                     title="Cambiar Empresa / Cliente Activo"
                   >
                     {tenants.map(t => (
-                      <option key={t.id} value={t.id} className="bg-[#1C1C1E] text-white">
+                      <option key={t.id} value={t.id} className="bg-slate-900 text-white">
                         {t.name} ({t.rif})
                       </option>
                     ))}
                   </select>
                 )}
-                <span className={`hidden sm:inline-block text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
                   activeTenant.regime === 'SPE'
                     ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                     : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
@@ -3103,7 +3018,7 @@ export default function App() {
                 <button
                   onClick={() => setNewTenantModalOpen(true)}
                   title="Registrar Nueva Empresa (RIF)"
-                  className="ml-0.5 p-1 rounded-lg bg-white/10 hover:bg-blue-500/20 hover:text-blue-300 text-white/70 text-[10px] font-mono flex items-center shrink-0 transition"
+                  className="ml-1 p-1 rounded-lg bg-white/10 hover:bg-emerald-500/20 hover:text-emerald-300 text-white/70 text-[10px] font-mono flex items-center transition"
                 >
                   <Plus className="w-3 h-3" />
                 </button>
@@ -3112,9 +3027,9 @@ export default function App() {
           </div>
 
           {/* SECTOR 2 (CENTRO): Termómetro Macroeconómico BCV en Vivo */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs font-mono shadow-inner">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono shadow-inner">
             <span className="text-white/60 font-semibold flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-[#8E8E93]" />
+              <span>💵</span>
               <span className="hidden sm:inline">BCV:</span>
             </span>
             <input
@@ -3123,14 +3038,14 @@ export default function App() {
               step="0.01"
               value={bcvRate}
               onChange={e => setBcvRate(Number(e.target.value) || 914.02)}
-              className="w-20 bg-transparent text-xs font-mono font-medium tabular-nums text-white focus:outline-none"
+              className="w-20 bg-transparent text-xs font-mono font-bold tabular-nums text-emerald-400 focus:outline-none"
               title="Tasa Oficial BCV editable"
             />
-            <span className="text-white/40">Bs./USD</span>
+            <span className="text-white/60">Bs./USD</span>
             <button
               onClick={handleSyncBcvOracle}
               title="Sincronizar Tasa Oficial BCV con el Oráculo"
-              className="p-1 rounded hover:bg-white/10 text-[#8E8E93] hover:text-white transition"
+              className="p-1 rounded hover:bg-white/10 text-cyan-400 transition"
             >
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -3141,21 +3056,21 @@ export default function App() {
             {/* Control de Rol / Candado RBAC */}
             {currentUser?.role === 'client' ? (
               <div
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.06] border border-white/10 text-white/90 text-xs font-medium shadow-inner"
-                title="Espacio Protegido: Portal Comercio"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold shadow-inner"
+                title="Espacio Protegido: Portal Comercio (Aislamiento Total Anti-IDOR)"
               >
-                <Lock className="w-3.5 h-3.5 text-[#8E8E93]" />
+                <Lock className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="hidden sm:inline">Portal Comercio</span>
-                <span className="text-[10px] font-mono text-[#8E8E93]">SEGURO</span>
+                <span className="text-[10px] font-mono opacity-75">PROTEGIDO</span>
               </div>
             ) : currentUser?.role === 'admin' ? (
-              <div className="flex items-center p-1 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] font-medium">
+              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
                 <button
                   onClick={() => setActiveTab('clients')}
-                  className="px-2.5 py-1 rounded-lg bg-white/15 text-white font-semibold border border-white/20 shadow-sm flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30 shadow-sm flex items-center gap-1"
                   title="Espacio de Trabajo: Contador Aliado (CPC)"
                 >
-                  <Briefcase className="w-3.5 h-3.5 text-blue-400" />
+                  <span>💼</span>
                   <span className="hidden lg:inline">Contador</span>
                 </button>
                 <button
@@ -3165,15 +3080,15 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('mobile');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
                   title="Previsualizar cómo ve el portal tu cliente comercio"
                 >
-                  <Smartphone className="w-3.5 h-3.5 text-[#8E8E93]" />
+                  <span>📱</span>
                   <span className="hidden lg:inline">Ver como Cliente</span>
                 </button>
               </div>
             ) : (
-              <div className="flex items-center p-1 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] font-medium">
+              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
                 <button
                   onClick={() => {
                     const updated = { ...currentUser, role: 'admin' as const, name: 'Lic. Auditor Principal (Firma)' };
@@ -3181,20 +3096,20 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('clients');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
                   title="Espacio de Trabajo: Contador Aliado (CPC)"
                 >
-                  <Briefcase className="w-3.5 h-3.5 text-[#8E8E93]" />
+                  <span>💼</span>
                   <span className="hidden lg:inline">Contador</span>
                 </button>
                 <button
                   onClick={() => {
                     setActiveTab('accountants');
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-white/15 text-white font-semibold border border-white/20 shadow-sm flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shadow-sm flex items-center gap-1"
                   title="Espacio de Trabajo: Super-Admin (Torre de Control)"
                 >
-                  <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                  <span>👑</span>
                   <span className="hidden lg:inline">Super-Admin</span>
                 </button>
                 <button
@@ -3204,10 +3119,10 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('mobile');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
+                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
                   title="Espacio de Trabajo: Comercio (Portal Móvil)"
                 >
-                  <Smartphone className="w-3.5 h-3.5 text-[#8E8E93]" />
+                  <span>📱</span>
                   <span className="hidden lg:inline">Cliente</span>
                 </button>
               </div>
@@ -3270,43 +3185,43 @@ export default function App() {
         </div>
       )}
 
-      {/* Impersonation / Shadow Support Banner · Apple Pro */}
+      {/* Impersonation / Shadow Support Banner */}
       {impersonatedAccountant && (
-        <div className="mb-5 p-4 rounded-2xl bg-[#1C1C1E] border border-blue-500/30 text-white text-xs font-mono flex flex-wrap items-center justify-between gap-4 shadow-lg">
+        <div className="mb-5 p-4 rounded-xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-2 border-amber-400 text-amber-200 text-xs font-mono flex flex-wrap items-center justify-between gap-4 shadow-2xl">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-500/15 border border-blue-500/25 text-blue-400 flex-shrink-0">
-              <Eye className="w-4 h-4" />
-            </div>
+            <span className="p-2 rounded-lg bg-amber-400 text-slate-950 font-black text-base animate-pulse">
+              👁️
+            </span>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-white uppercase tracking-wider text-sm">
-                  Modo Asistencia Remota Activa: {impersonatedAccountant.name}
+                <span className="font-extrabold text-amber-100 uppercase tracking-wider text-sm">
+                  MODO ASISTENCIA REMOTA ACTIVA: {impersonatedAccountant.name}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 text-[10px] font-mono font-medium">
+                <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 text-[10px] font-bold">
                   {impersonatedAccountant.cpcNumber}
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/70 text-[10px]">
+                <span className="px-2 py-0.5 rounded bg-white/10 text-slate-300 text-[10px]">
                   {impersonatedAccountant.city}
                 </span>
               </div>
-              <p className="text-[11px] text-[#8E8E93] mt-0.5">
+              <p className="text-[11px] opacity-80 mt-0.5">
                 Visualizando el despacho como este contador. Las acciones quedan registradas en el log criptográfico con su firma.
               </p>
             </div>
           </div>
           <button
             onClick={handleExitImpersonation}
-            className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/10 text-xs font-medium flex items-center gap-2 transition active:scale-[0.98]"
+            className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg transition-all"
           >
-            <LogOut className="w-3.5 h-3.5 text-zinc-300" />
+            <LogOut className="w-4 h-4" />
             <span>Salir de Asistencia</span>
           </button>
         </div>
       )}
 
-      {/* Navigation Tabs · Apple macOS / iOS Segmented Pill Track */}
-      <nav className="apple-segmented-track flex items-center justify-between gap-2 mb-6 p-1.5 overflow-hidden">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 w-full lg:w-auto -mx-1 px-1 sm:mx-0 sm:px-0">
+      {/* Navigation Tabs · Apple macOS / OpenDesign Segmented Navigation Pill Track */}
+      <nav className="apple-segmented-track flex flex-wrap items-center justify-between gap-2 mb-6 p-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {navTabs.map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id || (tab.id === 'operations' && ['ocr', 'books', 'reconciliation'].includes(activeTab));
@@ -3315,7 +3230,7 @@ export default function App() {
                 key={tab.id}
                 id={`nav-tab-${tab.id}`}
                 onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`apple-tab-pill whitespace-nowrap px-3.5 py-2 text-xs font-semibold tracking-tight flex items-center gap-2 flex-shrink-0 ${
+                className={`apple-tab-pill px-4 py-2 text-xs font-semibold tracking-tight flex items-center gap-2 ${
                   active ? 'apple-tab-pill-active' : 'apple-tab-pill-inactive'
                 }`}
               >
@@ -3327,8 +3242,8 @@ export default function App() {
         </div>
 
         {/* Badge Contextual del Espacio Activo */}
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-white/[0.04] text-[11px] text-[#8E8E93] font-mono border border-white/5">
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-white/[0.04] text-[11px] text-[#9898A0] font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
           <span>
             {currentUser?.role === 'superadmin' ? 'MODO: SUPER-ADMIN SAAS' : currentUser?.role === 'client' ? 'MODO: CLIENTE COMERCIO' : 'MODO: CONTADOR ALIADO (CPC)'}
           </span>
@@ -3340,22 +3255,22 @@ export default function App() {
          ===================================================================== */}
       {activeTab === 'accountants' && (
         <div className="space-y-6">
-          {/* Header de la Torre de Control · Apple Pro Standard */}
-          <div className="p-5 rounded-2xl bg-[#1C1C1E] border border-white/10 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          {/* Header de la Torre de Control */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-[var(--bg-elevated)] to-slate-900 border border-amber-500/30 flex flex-wrap items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3.5">
-              <div className="p-3 rounded-xl bg-white/[0.06] text-white border border-white/10 flex-shrink-0">
-                <Users className="w-6 h-6 text-white" />
+              <div className="p-3 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex-shrink-0">
+                <Users className="w-6 h-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg md:text-xl font-bold text-white tracking-tight">
+                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
                     Torre de Control Super-Admin · Red de Contadores Aliados
                   </h2>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/10 font-medium uppercase">
-                    Director General
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
+                    SaaS Founder Portal
                   </span>
                 </div>
-                <p className="text-xs text-[#8E8E93] mt-0.5">
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                   Monitoreo de suscripciones de firmas contables, liquidación de comisiones Rev-Share (20%) y asistencia remota directa.
                 </p>
               </div>
@@ -3364,99 +3279,168 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleOpenAccountantModal()}
-                className="px-4 py-2.5 rounded-xl bg-white hover:bg-white/90 text-black text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-[0.98]"
+                className="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold font-mono flex items-center gap-2 shadow-md transition-all"
               >
-                <Plus className="w-4 h-4 text-black" />
-                <span>Registrar Contador Partner</span>
+                <Plus className="w-4 h-4" />
+                <span>+ Registrar Contador Partner</span>
               </button>
               <button
                 onClick={() => {
                   const dataStr = JSON.stringify(accountants, null, 2);
                   handleDownloadFile(`DIRECTORIO_CONTADORES_VT_${new Date().toISOString().slice(0, 10)}.json`, dataStr, 'application/json');
                 }}
-                className="px-3.5 py-2.5 rounded-xl border border-white/10 bg-white/[0.05] hover:bg-white/10 text-xs font-medium text-white flex items-center gap-2 transition-all active:scale-[0.98]"
+                className="px-3.5 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/5 text-xs font-mono flex items-center gap-2 transition-all"
                 title="Descargar Directorio en JSON"
               >
-                <Download className="w-3.5 h-3.5 text-zinc-300" />
+                <Download className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
                 <span>Exportar</span>
               </button>
             </div>
           </div>
 
-          {/* 4 Bento KPI Cards · Minimalist Apple Pro */}
+          {/* 4 Bento KPI Cards Interactivos (Actionable Metrics) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Contadores Aliados */}
-            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
-              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
+            <div
+              onClick={() => {
+                setAccFilterStatus('TODOS');
+                setAccSearchQuery('');
+              }}
+              role="button"
+              tabIndex={0}
+              className={`ui-card p-4 space-y-2 border-l-4 border-l-amber-400 text-left cursor-pointer transition-all hover:scale-[1.01] hover:border-amber-400/50 ${
+                accFilterStatus === 'TODOS' ? 'ring-1 ring-amber-400/40 bg-amber-500/[0.04]' : ''
+              }`}
+              title="Tocar para ver todas las firmas contables"
+            >
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
                 <span>RED DE CONTADORES</span>
-                <Users className="w-4 h-4 text-[#8E8E93]" />
+                <Users className="w-4 h-4 text-amber-400" />
               </div>
-              <div className="text-2xl font-bold font-mono tracking-tight text-white">
-                {superAdminStats.totalAccountants} <span className="text-sm font-normal text-[#8E8E93]">Firmas</span>
+              <div className="text-2xl font-black font-mono tracking-tight text-white">
+                {superAdminStats.totalAccountants} <span className="text-sm font-normal opacity-70">Firmas</span>
               </div>
               <div className="flex flex-wrap gap-1.5 pt-1 text-[10px] font-mono">
-                <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 font-medium">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAccFilterStatus('ACTIVA');
+                  }}
+                  className={`px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold hover:bg-emerald-500/30 transition ${
+                    accFilterStatus === 'ACTIVA' ? 'ring-1 ring-emerald-400' : ''
+                  }`}
+                >
                   {superAdminStats.activeAccountants} Activas
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/80 border border-white/10 font-medium">
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAccFilterStatus('EN_PRUEBA');
+                  }}
+                  className={`px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold hover:bg-amber-500/30 transition ${
+                    accFilterStatus === 'EN_PRUEBA' ? 'ring-1 ring-amber-300' : ''
+                  }`}
+                >
                   {superAdminStats.trialAccountants} En Prueba
-                </span>
+                </button>
                 {superAdminStats.suspendedAccountants > 0 && (
-                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-medium">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAccFilterStatus('SUSPENDIDA');
+                    }}
+                    className={`px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold hover:bg-rose-500/30 transition ${
+                      accFilterStatus === 'SUSPENDIDA' ? 'ring-1 ring-rose-400' : ''
+                    }`}
+                  >
                     {superAdminStats.suspendedAccountants} Suspendidas
-                  </span>
+                  </button>
                 )}
               </div>
             </div>
 
             {/* Card 2: Empresas en Red */}
-            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
-              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
+            <button
+              type="button"
+              onClick={() => setActiveTab('clients')}
+              className="ui-card p-4 space-y-2 border-l-4 border-l-cyan-400 text-left cursor-pointer transition-all hover:scale-[1.01] hover:border-cyan-400/50 group"
+              title="Tocar para abrir la Cartera Global de Empresas"
+            >
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
                 <span>EMPRESAS GESTIONADAS</span>
-                <Building2 className="w-4 h-4 text-[#8E8E93]" />
+                <Building2 className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition-transform" />
               </div>
-              <div className="text-2xl font-bold font-mono tracking-tight text-white">
-                {superAdminStats.totalCompaniesInNetwork} <span className="text-sm font-normal text-[#8E8E93]">Multi-RIF</span>
+              <div className="text-2xl font-black font-mono tracking-tight text-white">
+                {superAdminStats.totalCompaniesInNetwork} <span className="text-sm font-normal opacity-70">Multi-RIF</span>
               </div>
-              <p className="text-[10px] text-[#8E8E93] font-mono">
-                Promedio: {(superAdminStats.totalCompaniesInNetwork / Math.max(1, superAdminStats.totalAccountants)).toFixed(1)} empresas por firma
-              </p>
-            </div>
+              <div className="flex items-center justify-between text-[10px] font-mono pt-0.5">
+                <span className="opacity-75">
+                  Prom: {(superAdminStats.totalCompaniesInNetwork / Math.max(1, superAdminStats.totalAccountants)).toFixed(1)} emp/firma
+                </span>
+                <span className="text-cyan-400 font-bold group-hover:underline">Ver cartera →</span>
+              </div>
+            </button>
 
             {/* Card 3: MRR Consolidado */}
-            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
-              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
+            <button
+              type="button"
+              onClick={() => setAccFilterStatus('ACTIVA')}
+              className={`ui-card p-4 space-y-2 border-l-4 border-l-emerald-400 text-left cursor-pointer transition-all hover:scale-[1.01] hover:border-emerald-400/50 group ${
+                accFilterStatus === 'ACTIVA' ? 'ring-1 ring-emerald-400/40 bg-emerald-500/[0.04]' : ''
+              }`}
+              title="Tocar para filtrar firmas activas con facturación recurrente"
+            >
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
                 <span>MRR CONSOLIDADO</span>
-                <CreditCard className="w-4 h-4 text-[#8E8E93]" />
+                <CreditCard className="w-4 h-4 text-emerald-400" />
               </div>
-              <div className="text-2xl font-bold font-mono tracking-tight text-white tabular-nums">
-                ${superAdminStats.consolidatedMrrUsd.toFixed(2)} <span className="text-xs font-normal text-[#8E8E93]">USD/mes</span>
+              <div className="text-2xl font-black font-mono tracking-tight text-emerald-400 tabular-nums">
+                ${superAdminStats.consolidatedMrrUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD/mes</span>
               </div>
               <div className="text-[11px] font-mono text-white/90 tabular-nums">
                 Bs. {superAdminStats.consolidatedMrrBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                <span className="text-[10px] text-[#8E8E93] ml-1">@ BCV {bcvRate}</span>
+                <span className="text-[10px] opacity-60 ml-1">@ BCV {bcvRate}</span>
               </div>
-              <div className="text-[9px] text-[#8E8E93] font-mono">
-                Firmas: ${superAdminStats.mrrAccountantsUsd.toFixed(2)} · Sub-cuentas: ${superAdminStats.mrrSubAccountsUsd.toFixed(2)}
+              <div className="flex items-center justify-between text-[9px] font-mono">
+                <span className="opacity-65">Firmas: ${superAdminStats.mrrAccountantsUsd.toFixed(0)} · Sub: ${superAdminStats.mrrSubAccountsUsd.toFixed(0)}</span>
+                <span className="text-emerald-400 font-bold group-hover:underline">Ver activas →</span>
               </div>
-            </div>
+            </button>
 
             {/* Card 4: Comisiones por Liquidar */}
-            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
-              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
+            <button
+              type="button"
+              onClick={() => {
+                const pendingAcc = accountants.find(a => a.pendingCommissionUsd > 0);
+                if (pendingAcc) {
+                  handleOpenPayoutModal(pendingAcc);
+                } else {
+                  setAccFilterStatus('ACTIVA');
+                }
+              }}
+              className="ui-card p-4 space-y-2 border-l-4 border-l-purple-400 text-left cursor-pointer transition-all hover:scale-[1.01] hover:border-purple-400/50 group"
+              title="Tocar para liquidar comisiones Rev-Share pendientes"
+            >
+              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
                 <span>REV-SHARE PENDIENTE</span>
-                <Scale className="w-4 h-4 text-[#8E8E93]" />
+                <Scale className="w-4 h-4 text-purple-400" />
               </div>
-              <div className="text-2xl font-bold font-mono tracking-tight text-white tabular-nums">
-                ${superAdminStats.pendingCommissionsUsd.toFixed(2)} <span className="text-xs font-normal text-[#8E8E93]">USD</span>
+              <div className="text-2xl font-black font-mono tracking-tight text-purple-300 tabular-nums">
+                ${superAdminStats.pendingCommissionsUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD</span>
               </div>
-              <div className="text-[11px] font-mono text-white/90 tabular-nums">
+              <div className="text-[11px] font-mono text-purple-200/90 tabular-nums">
                 Bs. {superAdminStats.pendingCommissionsBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <div className="text-[9px] text-[#8E8E93] font-mono">
-                Liquidado acumulado: ${superAdminStats.totalPaidCommissionsUsd.toFixed(2)} USD
+              <div className="flex items-center justify-between text-[9px] font-mono">
+                <span className="opacity-65">Pagado: ${superAdminStats.totalPaidCommissionsUsd.toFixed(0)} USD</span>
+                <span className="text-purple-300 font-bold group-hover:underline">
+                  {superAdminStats.pendingCommissionsUsd > 0 ? 'Liquidar ahora →' : 'Al día ✓'}
+                </span>
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Filtros y Buscador */}
@@ -3490,13 +3474,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* Tabla de Contadores Partners · Apple Table Standard */}
-          <div className="ui-card overflow-hidden bg-[#1C1C1E] border border-white/[0.08] rounded-2xl">
-            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+          {/* Tabla de Contadores Partners */}
+          <div className="ui-card overflow-hidden">
+            <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-blue-400" />
-                <h3 className="font-semibold text-sm text-white">Directorio Oficial de Firmas & Contadores</h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 font-mono text-zinc-300">
+                <Users className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold font-mono text-sm text-white">Directorio Oficial de Firmas & Contadores</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 font-mono text-[var(--accent-primary)]">
                   {filteredAccountants.length} registros
                 </span>
               </div>
@@ -3505,7 +3489,7 @@ export default function App() {
             <div className="overflow-x-auto">
               <table className="w-full text-left font-mono text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-white/10 bg-white/[0.02] text-[#8E8E93] text-[10px] uppercase tracking-wider">
+                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] opacity-75 text-[10px] uppercase tracking-wider">
                     <th className="p-3">Contador & Colegio (CPC)</th>
                     <th className="p-3">Plan & Cuota</th>
                     <th className="p-3">Cartera Asignada</th>
@@ -3514,10 +3498,10 @@ export default function App() {
                     <th className="p-3 text-right">Acciones de Gestión</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/[0.06]">
+                <tbody className="divide-y divide-[var(--border-subtle)]">
                   {filteredAccountants.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-[#8E8E93]">
+                      <td colSpan={6} className="p-8 text-center opacity-60">
                         No se encontraron contadores con los filtros seleccionados.
                       </td>
                     </tr>
@@ -3530,37 +3514,31 @@ export default function App() {
                         <tr key={acc.id} className="hover:bg-white/[0.02] transition-colors">
                           {/* Contador & CPC */}
                           <td className="p-3">
-                            <div className="font-semibold text-white text-sm flex items-center gap-2">
+                            <div className="font-bold text-white text-sm flex items-center gap-2">
                               <span>{acc.name}</span>
-                              <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/90 border border-white/10 text-[10px] font-mono">
+                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
                                 {acc.cpcNumber}
                               </span>
                             </div>
-                            <div className="text-[11px] text-[#8E8E93] mt-0.5">
+                            <div className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
                               {acc.firmLogoText || 'Firma Independiente'} · {acc.rif}
                             </div>
-                            <div className="text-[10px] text-[#8E8E93] flex items-center gap-2 mt-1">
-                              <span className="flex items-center gap-1">
-                                <MapPin className="w-3 h-3 text-[#8E8E93]" />
-                                {acc.city}
-                              </span>
+                            <div className="text-[10px] opacity-60 flex items-center gap-2 mt-0.5">
+                              <span>📍 {acc.city}</span>
                               <span>·</span>
-                              <span className="flex items-center gap-1">
-                                <Mail className="w-3 h-3 text-[#8E8E93]" />
-                                {acc.email}
-                              </span>
+                              <span>✉️ {acc.email}</span>
                             </div>
                           </td>
 
                           {/* Plan & Cuota */}
                           <td className="p-3">
-                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-white font-mono text-[10px] uppercase">
+                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] uppercase">
                               {planInfo.name}
                             </span>
-                            <div className="font-semibold text-white mt-1 tabular-nums">
+                            <div className="font-bold text-white mt-1 tabular-nums">
                               ${acc.monthlyFeeUsd.toFixed(2)} USD/mes
                             </div>
-                            <div className="text-[10px] text-[#8E8E93]">
+                            <div className="text-[10px] opacity-65">
                               Capacidad: {acc.assignedTenantIds.length} / {acc.maxCompaniesLimit === 999 ? '∞' : acc.maxCompaniesLimit} empresas
                             </div>
                           </td>
@@ -3572,7 +3550,7 @@ export default function App() {
                                 {assignedTenants.map(t => (
                                   <span
                                     key={t.id}
-                                    className="px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/10 text-[10px] text-white/90 truncate max-w-[140px]"
+                                    className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px] text-white/90 truncate max-w-[140px]"
                                     title={`${t.name} (${t.rif})`}
                                   >
                                     {t.name}
@@ -3580,19 +3558,19 @@ export default function App() {
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-[10px] text-[#8E8E93] italic">Sin empresas vinculadas</span>
+                              <span className="text-[10px] opacity-50 italic">Sin empresas vinculadas</span>
                             )}
                           </td>
 
                           {/* Rev-Share Pendiente */}
                           <td className="p-3">
-                            <div className="font-semibold text-white tabular-nums">
+                            <div className="font-bold text-purple-300 tabular-nums">
                               ${acc.pendingCommissionUsd.toFixed(2)} USD
                             </div>
-                            <div className="text-[10px] text-[#8E8E93] tabular-nums">
+                            <div className="text-[10px] text-purple-200/80 tabular-nums">
                               Bs. {(acc.pendingCommissionUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                             </div>
-                            <div className="text-[9px] text-[#8E8E93] mt-0.5">
+                            <div className="text-[9px] opacity-60 mt-0.5">
                               Pagado histórico: ${acc.paidCommissionsTotalUsd.toFixed(2)}
                             </div>
                           </td>
@@ -3601,12 +3579,12 @@ export default function App() {
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono uppercase ${
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                                   acc.subscriptionStatus === 'ACTIVA'
-                                    ? 'bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/25'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                                     : acc.subscriptionStatus === 'EN_PRUEBA'
-                                      ? 'bg-white/10 text-white/80 border border-white/10'
-                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/25'
+                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                                 }`}
                               >
                                 {acc.subscriptionStatus}
@@ -3614,12 +3592,12 @@ export default function App() {
                               <button
                                 onClick={() => handleToggleAccountantStatus(acc.id)}
                                 title="Cambiar Estado de Suscripción"
-                                className="p-1 rounded-md hover:bg-white/10 text-[#8E8E93] hover:text-white transition"
+                                className="p-1 rounded hover:bg-white/10 opacity-70 hover:opacity-100 text-[10px]"
                               >
-                                <RefreshCw className="w-3 h-3" />
+                                🔄
                               </button>
                             </div>
-                            <div className="text-[9px] text-[#8E8E93] mt-1">
+                            <div className="text-[9px] opacity-60 mt-1">
                               Próx. Cobro: {acc.nextBillingDate}
                             </div>
                           </td>
@@ -3630,10 +3608,10 @@ export default function App() {
                               {/* Botón Impersonar / Shadow Support */}
                               <button
                                 onClick={() => handleImpersonateAccountant(acc)}
-                                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium text-[11px] flex items-center gap-1.5 border border-white/10 shadow-sm transition-all active:scale-[0.98]"
+                                className="px-2.5 py-1.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
                                 title="Ingresar en Modo Asistencia (Ver la plataforma como este contador)"
                               >
-                                <Eye className="w-3.5 h-3.5 text-zinc-300" />
+                                <span>👁️</span>
                                 <span>Asistir</span>
                               </button>
 
@@ -3641,10 +3619,10 @@ export default function App() {
                               {acc.pendingCommissionUsd > 0 && (
                                 <button
                                   onClick={() => handleOpenPayoutModal(acc)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-medium text-[11px] flex items-center gap-1.5 border border-blue-500/30 shadow-sm transition-all active:scale-[0.98]"
+                                  className="px-2.5 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
                                   title="Liquidar Comisión Rev-Share vía Pago Móvil / Binance"
                                 >
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                                  <span>💵</span>
                                   <span>Liquidar</span>
                                 </button>
                               )}
@@ -3652,31 +3630,21 @@ export default function App() {
                               {/* Botón Editar */}
                               <button
                                 onClick={() => handleOpenAccountantModal(acc)}
-                                className="p-1.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/10 text-zinc-300 hover:text-white transition-all active:scale-[0.98]"
+                                className="px-2 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/10 text-[10px] text-white flex items-center gap-1"
                                 title="Editar Datos y Plan"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>✏️</span>
                               </button>
 
-                              {/* Botón Eliminar */}
-                              <button
-                                onClick={() => handleDeleteAccountant(acc.id, acc.name)}
-                                className="p-1.5 rounded-lg border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-all active:scale-[0.98]"
-                                title="Eliminar Contador del Directorio"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-
-                              {/* Invitación WhatsApp Oficial */}
+                              {/* WhatsApp Directo */}
                               <a
-                                href={getWhatsAppAccountantInviteUrl(acc)}
+                                href={`https://wa.me/${acc.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hola Lic. ${acc.name}, le saludamos de la Dirección de VeneTurco Fiscal OS.`)}`}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium text-[11px] flex items-center gap-1.5 border border-white/10 shadow-sm transition-all active:scale-[0.98]"
-                                title="Enviar Carta de Invitación y Credenciales por WhatsApp"
+                                className="px-2 py-1.5 rounded bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 text-[10px] flex items-center"
+                                title="Contactar por WhatsApp"
                               >
-                                <MessageSquare className="w-3.5 h-3.5 text-[#25D366]" />
-                                <span>Invitar WhatsApp</span>
+                                <MessageSquare className="w-3.5 h-3.5" />
                               </a>
                             </div>
                           </td>
@@ -3898,22 +3866,22 @@ export default function App() {
          ===================================================================== */}
       {activeTab === 'clients' && (
         <div className="space-y-6">
-          {/* Header del Radar y Acceso Rápido · Apple Pro Standard */}
-          <div className="p-5 rounded-2xl bg-[#1C1C1E] border border-white/10 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          {/* Header del Radar y Acceso Rápido */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-[var(--bg-elevated)] to-slate-900 border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3.5">
-              <div className="p-3 rounded-xl bg-white/[0.06] text-white border border-white/10 flex-shrink-0">
-                <Building2 className="w-6 h-6 text-white" />
+              <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex-shrink-0">
+                <Building2 className="w-6 h-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg md:text-xl font-bold text-white tracking-tight">
+                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
                     Cartera de Clientes & Radar Fiscal SENIAT
                   </h2>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/10 font-medium uppercase">
-                    Despacho Contable
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold uppercase">
+                    Modo Despacho Contable
                   </span>
                 </div>
-                <p className="text-xs text-[#8E8E93] mt-0.5">
+                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                   Monitoreo simultáneo de empresas por terminal de RIF, alertas de quincena y acciones directas en 1 clic.
                 </p>
               </div>
@@ -3921,10 +3889,10 @@ export default function App() {
 
             <button
               onClick={() => setNewTenantModalOpen(true)}
-              className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-white hover:bg-white/90 text-black shadow-sm flex items-center gap-2 transition active:scale-[0.98]"
+              className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-2 transition"
             >
-              <Plus className="w-4 h-4 text-black" />
-              <span>Registrar Nueva Empresa (RIF)</span>
+              <Plus className="w-4 h-4" />
+              Registrar Nueva Empresa (RIF)
             </button>
           </div>
 
@@ -4050,65 +4018,138 @@ export default function App() {
             );
           })()}
 
-          {/* 4 Bento KPI Cards de la Cartera Global */}
+          {/* 4 Bento KPI Cards Interactivos de la Cartera Global */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="ui-card p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-[var(--muted-foreground)] uppercase">
-                <span>Empresas a Cargo</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                setClientPortfolioFilter('ALL');
+                setClientSearchQuery('');
+                document.getElementById('client-cards-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group ${
+                clientPortfolioFilter === 'ALL' ? 'ring-1 ring-sky-400/40 bg-sky-500/[0.04]' : ''
+              }`}
+              title="Tocar para mostrar todas las empresas a cargo"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-blue w-7 h-7">
+                    <Building2 className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-white/80">Empresas a Cargo</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white/10 text-white/90">
                   GESTIÓN
                 </span>
               </div>
-              <div className="text-2xl font-extrabold font-mono text-white">
+              <div className="text-2xl font-extrabold text-white tabular-nums tracking-tight">
                 {portfolioStats.totalTenants}
               </div>
-              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
-                Bóveda inmutable COT 10 años activa
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Bóveda COT 10 años</span>
+                <span className="text-sky-400 font-semibold group-hover:translate-x-0.5 transition-transform">Ver todas →</span>
               </div>
-            </div>
+            </button>
 
-            <div className="ui-card p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-amber-300 uppercase">
-                <span>Vencimiento Próximo (&lt;72h)</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                setClientPortfolioFilter(clientPortfolioFilter === 'URGENTES' ? 'ALL' : 'URGENTES');
+                document.getElementById('client-cards-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group ${
+                clientPortfolioFilter === 'URGENTES' ? 'ring-2 ring-amber-400/60 bg-amber-500/[0.06]' : ''
+              }`}
+              title="Tocar para filtrar las empresas con vencimiento próximo (<72h)"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-amber w-7 h-7">
+                    <Clock className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-amber-200">Vencimiento (&lt;72h)</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300">
                   RADAR
                 </span>
               </div>
-              <div className="text-2xl font-extrabold font-mono text-amber-400">
+              <div className="text-2xl font-extrabold text-amber-400 tabular-nums tracking-tight">
                 {portfolioStats.totalUrgentCount}
               </div>
-              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
-                Terminales RIF prioritarios de quincena
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Terminales prioritarios</span>
+                <span className="text-amber-300 font-semibold group-hover:translate-x-0.5 transition-transform">
+                  {clientPortfolioFilter === 'URGENTES' ? 'Mostrando urgentes ✓' : 'Filtrar urgentes →'}
+                </span>
               </div>
-            </div>
+            </button>
 
-            <div className="ui-card p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs text-rose-300 uppercase">
-                <span>Borradores por Aprobar</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                const pendingCard = portfolioStats.clientCards.find(c => c.pendienteCount > 0);
+                if (pendingCard) {
+                  setSelectedTenantId(pendingCard.tenant.id);
+                  setOperationStep('scanner');
+                  setActiveTab('operations');
+                } else {
+                  setClientPortfolioFilter('PENDIENTES');
+                }
+              }}
+              className={`ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group ${
+                clientPortfolioFilter === 'PENDIENTES' ? 'ring-2 ring-rose-400/60 bg-rose-500/[0.06]' : ''
+              }`}
+              title="Tocar para ir directo a revisar y firmar las facturas pendientes"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-rose w-7 h-7">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-rose-200">Por Aprobar</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300">
                   POR FIRMAR
                 </span>
               </div>
-              <div className="text-2xl font-extrabold font-mono text-rose-400">
+              <div className="text-2xl font-extrabold text-rose-400 tabular-nums tracking-tight">
                 {portfolioStats.totalPendingDrafts}
               </div>
-              <div className="text-[11px] text-[var(--muted-foreground)] font-mono">
-                Facturas IA y Telegram pendientes de firma
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Facturas IA / Telegram</span>
+                <span className="text-rose-300 font-semibold group-hover:translate-x-0.5 transition-transform">
+                  {portfolioStats.totalPendingDrafts > 0 ? 'Firmar ahora →' : 'Todo firmado ✓'}
+                </span>
               </div>
-            </div>
+            </button>
 
-            <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2">
-              <div className="flex items-center justify-between text-xs text-emerald-300 font-bold uppercase">
-                <span>Cuota Global SENIAT</span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px]">ESTIMADA</span>
+            <button
+              type="button"
+              onClick={() => {
+                setOperationStep('books');
+                setActiveTab('operations');
+              }}
+              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all border-emerald-500/35 bg-emerald-950/25 group"
+              title="Tocar para abrir Libros SENIAT 16 Columnas y generar TXT/XML"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-emerald w-7 h-7">
+                    <Scale className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-emerald-200">Cuota Global SENIAT</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-semibold">ESTIMADA</span>
               </div>
-              <div className="text-xl font-extrabold font-mono text-emerald-400">
+              <div className="text-xl font-extrabold text-emerald-400 tabular-nums tracking-tight">
                 Bs. {portfolioStats.totalEstimatedQuotaBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <div className="text-[11px] text-emerald-200 font-mono">
-                Ref: USD {(portfolioStats.totalEstimatedQuotaBs / bcvRate).toFixed(2)} @ Tasa BCV ({bcvRate} Bs.)
+              <div className="flex items-center justify-between text-[11px] text-emerald-200/80">
+                <span>USD {(portfolioStats.totalEstimatedQuotaBs / bcvRate).toFixed(2)} @ BCV</span>
+                <span className="text-emerald-300 font-semibold group-hover:translate-x-0.5 transition-transform">Ir a Libros →</span>
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Filtros Rápidos y Buscador en Tiempo Real */}
@@ -4158,7 +4199,7 @@ export default function App() {
           )}
 
           {/* Grid de Fichas Bento Inteligentes de Clientes */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div id="client-cards-grid" className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             {filteredClientCards.map(card => {
               const { tenant, invoices: cInvoices, spe, conformeCount, advertenciaCount, pendienteCount, totalCount, debitBs, creditBs, netQuotaBs } = card;
               const isSelected = tenant.id === selectedTenantId;
@@ -4217,13 +4258,31 @@ export default function App() {
 
                     <div className="text-right space-y-1">
                       {pendienteCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
-                          <AlertTriangle className="w-3 h-3" /> {pendienteCount} Por Firmar
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTenantId(tenant.id);
+                            setOperationStep('scanner');
+                            setActiveTab('operations');
+                          }}
+                          title="Tocar para abrir el Escáner IA y firmar borradores pendientes de esta empresa"
+                          className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 animate-pulse cursor-pointer transition"
+                        >
+                          <AlertTriangle className="w-3 h-3" /> {pendienteCount} Por Firmar →
+                        </button>
                       ) : totalCount > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                          <CheckCircle2 className="w-3 h-3" /> Al Día
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTenantId(tenant.id);
+                            setOperationStep('books');
+                            setActiveTab('operations');
+                          }}
+                          title="Tocar para ver los Libros Fiscales de esta empresa"
+                          className="inline-flex items-center gap-1 text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 cursor-pointer transition"
+                        >
+                          <CheckCircle2 className="w-3 h-3" /> Al Día →
+                        </button>
                       ) : (
                         <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/10 text-[var(--muted-foreground)]">
                           Sin Movimientos
@@ -4246,8 +4305,17 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Balanza Fiscal Express del Cliente */}
-                  <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs font-mono">
+                  {/* Balanza Fiscal Express del Cliente (Interactiva -> Abre Libros SENIAT) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTenantId(tenant.id);
+                      setOperationStep('books');
+                      setActiveTab('operations');
+                    }}
+                    title="Tocar para abrir el desglose en Libros SENIAT (16 Columnas)"
+                    className="w-full text-left grid grid-cols-3 gap-3 p-3 rounded-xl bg-[var(--bg-surface)] hover:bg-white/[0.04] border border-[var(--border-subtle)] hover:border-emerald-500/40 text-xs font-mono transition cursor-pointer group"
+                  >
                     <div>
                       <span className="text-[10px] text-[var(--muted-foreground)] uppercase block">Ventas (Débito)</span>
                       <strong className="text-sm text-white block">Bs. {debitBs.toFixed(2)}</strong>
@@ -4257,22 +4325,31 @@ export default function App() {
                       <strong className="text-sm text-sky-400 block">Bs. {creditBs.toFixed(2)}</strong>
                     </div>
                     <div>
-                      <span className="text-[10px] text-emerald-400 uppercase font-bold block">Cuota SENIAT</span>
+                      <span className="text-[10px] text-emerald-400 uppercase font-bold block group-hover:underline">Cuota SENIAT →</span>
                       <strong className="text-sm text-emerald-400 block">Bs. {netQuotaBs.toFixed(2)}</strong>
                     </div>
-                  </div>
+                  </button>
 
-                  {/* Barra de Semáforo de Facturas */}
-                  <div className="space-y-1.5 text-xs font-mono">
+                  {/* Barra de Semáforo de Facturas (Interactiva -> Abre Escáner IA) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTenantId(tenant.id);
+                      setOperationStep('scanner');
+                      setActiveTab('operations');
+                    }}
+                    title="Tocar para auditar documentos de esta empresa en el Escáner IA"
+                    className="w-full text-left space-y-1.5 text-xs font-mono cursor-pointer group"
+                  >
                     <div className="flex justify-between text-[11px] text-[var(--muted-foreground)]">
-                      <span>Documentos: {totalCount} en quincena</span>
+                      <span className="group-hover:text-white transition">Documentos: {totalCount} en quincena →</span>
                       <span className="flex items-center gap-2">
                         <span className="text-emerald-400 font-bold">{conformeCount} Conformes</span>
                         {advertenciaCount > 0 && <span className="text-amber-400 font-bold">· {advertenciaCount} Advertencias</span>}
                         {pendienteCount > 0 && <span className="text-rose-400 font-bold">· {pendienteCount} Borradores</span>}
                       </span>
                     </div>
-                    <div className="w-full h-2 rounded bg-slate-800 overflow-hidden flex">
+                    <div className="w-full h-2 rounded bg-slate-800 overflow-hidden flex group-hover:ring-1 group-hover:ring-white/20 transition">
                       <div
                         style={{ width: `${totalCount > 0 ? (conformeCount / totalCount) * 100 : 0}%` }}
                         className="h-full bg-emerald-500"
@@ -4289,7 +4366,7 @@ export default function App() {
                         title="Borradores Pendientes"
                       />
                     </div>
-                  </div>
+                  </button>
 
                   {/* Sub-Cuenta Empresarial (Monetización B2B2B) */}
                   <div className="p-3 rounded-xl bg-slate-950/60 border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
@@ -4347,12 +4424,13 @@ export default function App() {
                       <button
                         onClick={() => {
                           setSelectedTenantId(tenant.id);
-                          setActiveTab('simplified');
+                          setOperationStep(pendienteCount > 0 ? 'scanner' : 'books');
+                          setActiveTab('operations');
                         }}
                         className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 shadow transition"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Abrir Asistente
+                        Abrir Operaciones
                       </button>
 
                       <button
@@ -4408,15 +4486,6 @@ export default function App() {
                         className="p-2 rounded-lg bg-[var(--bg-surface)] hover:bg-white/10 text-[var(--muted-foreground)] hover:text-white border border-[var(--border-subtle)] transition"
                       >
                         <Copy className="w-3.5 h-3.5" />
-                      </button>
-
-                      {/* Botón Eliminar Empresa */}
-                      <button
-                        onClick={() => handleDeleteTenant(tenant.id, tenant.name)}
-                        title="Eliminar Empresa de la Cartera"
-                        className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 transition active:scale-[0.98]"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -5225,17 +5294,35 @@ export default function App() {
           <div className="col-span-12 lg:col-span-8 space-y-5">
             <div className="ui-card p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="ui-heading text-lg font-bold">Mesa de Extracción Multimodal Gemini 2.5 Flash OCR</h2>
-                  <p className="text-xs font-mono opacity-75">
-                    Clasificación automática SNAT/2026/00093 · Validación Módulo 11 · Bloqueo de Facturas Duplicadas
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div className="apple-icon-jewel apple-icon-jewel-blue w-10 h-10 shrink-0">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="ui-heading text-lg font-bold">Mesa de Extracción Multimodal Gemini 2.5 Flash OCR</h2>
+                    <p className="text-xs opacity-75">
+                      Clasificación automática SNAT/2026/00093 · Validación Módulo 11 · Bloqueo de Facturas Duplicadas
+                    </p>
+                  </div>
                 </div>
-                <label className="ui-btn-primary px-3 py-2 text-xs cursor-pointer flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5" />
-                  Subir Foto / PDF Factura
-                  <input type="file" accept="image/*,application/pdf" onChange={handleFileUploadSimulation} className="hidden" />
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {tenantInvoices.filter(i => i.status !== 'APROBADA').length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleApproveAllPendingInvoices}
+                      className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                      title="Aprobar y sellar en lote todas las facturas pendientes de este cliente"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>✨ Aprobar {tenantInvoices.filter(i => i.status !== 'APROBADA').length} en Lote</span>
+                    </button>
+                  )}
+                  <label className="ui-btn-primary px-3.5 py-2 text-xs cursor-pointer flex items-center gap-1.5">
+                    <Upload className="w-3.5 h-3.5" />
+                    Subir Foto / PDF Factura
+                    <input type="file" accept="image/*,application/pdf" onChange={handleFileUploadSimulation} className="hidden" />
+                  </label>
+                </div>
               </div>
 
               {/* Preset Scenarios Bar */}
@@ -5543,13 +5630,38 @@ export default function App() {
         <div className="space-y-5">
           <div className="ui-card p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="ui-heading text-lg font-bold">Libros Fiscales de Compras y Ventas (SNAT/2026/00093)</h2>
-                <p className="text-xs font-mono opacity-75">
-                  Inalterabilidad COT 10 años · Prohibido el borrado físico · Ajuste de facturas aprobadas vía Nota de Crédito (03) o Débito (02)
-                </p>
+              <div className="flex items-center gap-3">
+                <div className="apple-icon-jewel apple-icon-jewel-emerald w-10 h-10 shrink-0">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="ui-heading text-lg font-bold">Libros Fiscales de Compras y Ventas (SNAT/2026/00093)</h2>
+                  <p className="text-xs opacity-75">
+                    Inalterabilidad COT 10 años · Prohibido el borrado físico · Ajuste vía Nota de Crédito (03) o Débito (02)
+                  </p>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {tenantInvoices.filter(i => i.status !== 'APROBADA').length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleApproveAllPendingInvoices}
+                    className="px-3 py-2 text-xs font-bold rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>✨ Firmar {tenantInvoices.filter(i => i.status !== 'APROBADA').length} en Lote</span>
+                  </button>
+                )}
+                <a
+                  href={getWhatsAppClosingSummaryUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 transition"
+                  title="Enviar resumen de pago de quincena SENIAT al cliente por WhatsApp"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>📲 Enviar Cierre WhatsApp</span>
+                </a>
                 <button
                   onClick={() =>
                     handleDownloadFile(
@@ -5564,7 +5676,7 @@ export default function App() {
                       'text/csv;charset=utf-8'
                     )
                   }
-                  className="px-3 py-2 text-xs font-mono border border-emerald-500/50 text-emerald-300 rounded bg-emerald-500/10 hover:bg-emerald-500/20 font-bold"
+                  className="px-3 py-2 text-xs border border-emerald-500/50 text-emerald-300 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 font-bold"
                 >
                   Exportar Libro Excel (CSV)
                 </button>
@@ -5588,7 +5700,7 @@ export default function App() {
                       'application/xml'
                     )
                   }
-                  className="px-3 py-2 text-xs font-mono border border-[var(--border-subtle)] rounded bg-[var(--bg-elevated)]"
+                  className="px-3 py-2 text-xs border border-[var(--border-subtle)] rounded-xl bg-[var(--bg-elevated)] hover:bg-white/5"
                 >
                   Descargar XML ISLR (Dec. 1808)
                 </button>
@@ -5774,30 +5886,14 @@ export default function App() {
                                   + Nota C/D
                                 </button>
                               )}
-                              <button
-                                onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNumber)}
-                                className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
-                                title="Eliminar Documento Fiscal"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
                             </div>
                           ) : (
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => handleApproveInvoice(inv.id)}
-                                className="px-2 py-1 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-medium"
-                              >
-                                Aprobar
-                              </button>
-                              <button
-                                onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNumber)}
-                                className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
-                                title="Eliminar Borrador"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
+                            <button
+                              onClick={() => handleApproveInvoice(inv.id)}
+                              className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                            >
+                              Aprobar Borrador
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -5831,9 +5927,113 @@ export default function App() {
           TAB 04: NÓMINA VENEZOLANA LOTTT + APORTES PATRONALES + ART. 142
          ===================================================================== */}
       {activeTab === 'payroll' && (
-        <div className="grid grid-cols-12 gap-5">
+        <div className="space-y-5">
+          {/* 4 Bento KPI Cards Interactivos de Nómina LOTTT */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <button
+              type="button"
+              onClick={() => document.getElementById('payroll-roster-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
+              title="Tocar para ir a la nómina activa de trabajadores"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-blue w-7 h-7">
+                    <Users className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-white/85">Nómina Activa</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white/10 text-white/90">LOTTT</span>
+              </div>
+              <div className="text-2xl font-extrabold text-white tabular-nums tracking-tight">
+                {tenantEmployees.length} <span className="text-sm font-normal opacity-70">Trabajadores</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>{activeTenant.name}</span>
+                <span className="text-sky-400 font-semibold group-hover:translate-x-0.5 transition-transform">Gestionar →</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (tenantEmployees[0]) {
+                  downloadPdfPaystub(activeTenant.name, activeTenant.rif, tenantEmployees[0]);
+                }
+              }}
+              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
+              title="Tocar para descargar el Recibo Oficial de Pago LOTTT en PDF con QR"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-emerald w-7 h-7">
+                    <CreditCard className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-emerald-200">Neto + Cestaticket</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300">RECIBO PDF</span>
+              </div>
+              <div className="text-xl font-extrabold text-emerald-400 tabular-nums tracking-tight">
+                Bs. {payrollBreakdown.netPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Deducción 5.5%: -Bs. {payrollBreakdown.totalDeductions.toFixed(2)}</span>
+                <span className="text-emerald-300 font-semibold group-hover:translate-x-0.5 transition-transform">Emitir PDF →</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportParafiscalCsv}
+              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
+              title="Tocar para descargar la Planilla Parafiscal (IVSS, FAOV, RPE, INCES) en Excel CSV"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-amber w-7 h-7">
+                    <Scale className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-amber-200">Aportes Parafiscales</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300">IVSS / FAOV</span>
+              </div>
+              <div className="text-xl font-extrabold text-amber-400 tabular-nums tracking-tight">
+                Bs. {(payrollBreakdown.ivssEmployer + payrollBreakdown.faovEmployer + payrollBreakdown.rpeEmployer + payrollBreakdown.incesQuarterlyProvision).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>IVSS + Banavih + INCES</span>
+                <span className="text-amber-300 font-semibold group-hover:translate-x-0.5 transition-transform">Descargar CSV →</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportArt142Csv}
+              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
+              title="Tocar para descargar el Libro de Garantía de Prestaciones Sociales (Art. 142 LOTTT)"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="apple-icon-jewel apple-icon-jewel-purple w-7 h-7">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-xs font-semibold text-purple-200">Prestaciones Art. 142</span>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300">5 DÍAS/MES</span>
+              </div>
+              <div className="text-xl font-extrabold text-purple-300 tabular-nums tracking-tight">
+                Bs. {payrollBreakdown.prestacionesMonthlyProvision.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
+                <span>Garantía Salario Integral</span>
+                <span className="text-purple-300 font-semibold group-hover:translate-x-0.5 transition-transform">Exportar Libro →</span>
+              </div>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-12 gap-5">
           <div className="col-span-12 lg:col-span-8 ui-card p-5 space-y-4">
-            <h2 className="ui-heading text-lg font-bold">Motor de Nómina Venezolana (LOTTT + Parafiscales + Art. 142)</h2>
+            <h2 className="ui-heading text-lg font-bold">Simulador y Motor de Nómina Venezolana (LOTTT + Parafiscales + Art. 142)</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
               <div>
                 <label className="block mb-1 opacity-75">Salario Base Mensual (Bs.)</label>
@@ -5920,7 +6120,7 @@ export default function App() {
           </div>
 
           {/* Multi-Employee LOTTT Roster & Printable Paystubs */}
-          <div className="col-span-12 ui-card p-5 space-y-4 text-xs font-mono">
+          <div id="payroll-roster-table" className="col-span-12 ui-card p-5 space-y-4 text-xs font-mono">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="ui-heading text-base font-bold">Nómina Activa de Trabajadores ({activeTenant.name})</h3>
@@ -6012,13 +6212,6 @@ export default function App() {
                             >
                               <Download className="w-3 h-3" /> PDF QR
                             </button>
-                            <button
-                              onClick={() => handleDeleteEmployee(emp.id, emp.fullName)}
-                              title="Eliminar Trabajador de la Nómina"
-                              className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
                           </div>
                         </td>
                       </tr>
@@ -6034,6 +6227,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
           </div>
         </div>
       )}
@@ -7068,122 +7262,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* 4-Column 2FA / AES-256-GCM Interactive Vault & Firestore Rules Matrix */}
+          {/* 4-Column AES-256-GCM Interactive Vault & Firestore Rules Matrix */}
           <div className="col-span-12 lg:col-span-4 space-y-5">
-            {/* Super-Admin 2FA / TOTP Configurator */}
-            <div className="ui-card p-5 space-y-3 text-xs font-mono">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-400" />
-                  <h3 className="ui-heading text-base font-bold">2FA Super-Admin (TOTP)</h3>
-                </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  superAdmin2faSecret
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-white/10 text-zinc-400 border border-white/10'
-                }`}>
-                  {superAdmin2faSecret ? 'ACTIVO' : 'INACTIVO'}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#8E8E93]">
-                Protege el acceso Super-Admin con códigos temporales de 6 dígitos (Google Authenticator / Apple Passwords).
-              </p>
-
-              {superAdmin2faSecret ? (
-                <div className="space-y-3 pt-1">
-                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px]">
-                    Doble Factor activado. El inicio de sesión Super-Admin exige código TOTP cada 30 segundos.
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin?')) {
-                        localStorage.removeItem('vt_superadmin_2fa_secret');
-                        setSuperAdmin2faSecret('');
-                        setSubPayToast('2FA desactivado para Super-Admin.');
-                        setTimeout(() => setSubPayToast(null), 4000);
-                      }
-                    }}
-                    className="w-full py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-semibold transition"
-                  >
-                    Desactivar 2FA
-                  </button>
-                </div>
-              ) : setupTotpSecret ? (
-                <div className="space-y-3 pt-1">
-                  <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-1.5">
-                    <span className="text-[10px] text-[#8E8E93] uppercase block">1. Llave Secreta Base32 (Copia en tu App):</span>
-                    <div className="flex items-center justify-between gap-2">
-                      <code className="text-xs font-bold text-white tracking-wider break-all">{setupTotpSecret}</code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(setupTotpSecret);
-                          setSubPayToast('Llave secreta 2FA copiada.');
-                          setTimeout(() => setSubPayToast(null), 3000);
-                        }}
-                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white"
-                        title="Copiar llave secreta"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <a
-                      href={getTotpUri(setupTotpSecret, currentUser?.email || 'moucharrafiepc@gmail.com')}
-                      className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline pt-1"
-                    >
-                      <ArrowUpRight className="w-3 h-3" /> Abrir en App Autenticadora (otpauth://)
-                    </a>
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-[10px] text-[#8E8E93] uppercase">2. Verifica el código de 6 dígitos:</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={6}
-                        placeholder="000000"
-                        value={setupTotpCode}
-                        onChange={e => setSetupTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        className="flex-1 p-2 rounded-lg bg-[var(--bg-elevated)] border border-white/15 text-center font-mono font-bold tracking-widest text-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const ok = await verifyTotpCode(setupTotpSecret, setupTotpCode);
-                          if (!ok) {
-                            alert('Código inválido. Asegúrate de ingresar los 6 dígitos actuales de tu app autenticadora.');
-                            return;
-                          }
-                          localStorage.setItem('vt_superadmin_2fa_secret', setupTotpSecret);
-                          setSuperAdmin2faSecret(setupTotpSecret);
-                          setSetupTotpSecret('');
-                          setSetupTotpCode('');
-                          setSubPayToast('¡2FA (TOTP) activado correctamente para Super-Admin!');
-                          setTimeout(() => setSubPayToast(null), 5000);
-                        }}
-                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
-                      >
-                        Activar
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSetupTotpSecret(generateTotpSecret(20));
-                    setSetupTotpCode('');
-                  }}
-                  className="ui-btn-primary w-full py-2.5 text-xs flex items-center justify-center gap-1.5"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  Configurar 2FA Ahora
-                </button>
-              )}
-            </div>
-
             <div className="ui-card p-5 space-y-3 text-xs font-mono">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-4 h-4 text-[var(--accent-primary)]" />
