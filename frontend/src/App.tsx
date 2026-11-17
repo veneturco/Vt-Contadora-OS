@@ -5,7 +5,8 @@ import {
   Lock, Download, CheckCircle2, AlertTriangle, RefreshCw, Plus,
   Building2, Scale, Hash, Eye, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
-  Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock
+  Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock,
+  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers
 } from 'lucide-react';
 import {
   FiscalInvoice,
@@ -837,23 +838,23 @@ export default function App() {
     const role = currentUser?.role || 'admin';
     if (role === 'superadmin') {
       return [
-        { id: 'accountants', label: '👑 Red Contadores & SaaS', icon: Users },
-        { id: 'security', label: '🛡️ Ciberseguridad & WAF', icon: ShieldCheck },
-        { id: 'clients', label: '👥 Cartera (Vista Auditor)', icon: Building2 },
-        { id: 'operations', label: '⚡ Operaciones Fiscales', icon: Cpu }
+        { id: 'accountants', label: 'Red Contadores & SaaS', icon: Users },
+        { id: 'security', label: 'Ciberseguridad & Bóveda', icon: ShieldCheck },
+        { id: 'clients', label: 'Cartera (Vista Auditor)', icon: Building2 },
+        { id: 'operations', label: 'Operaciones Fiscales', icon: Layers }
       ];
     }
     if (role === 'client') {
       return [
-        { id: 'mobile', label: '📱 Mi Comercio (Portal Móvil)', icon: Smartphone },
-        { id: 'saas', label: '💳 Mi Suscripción & Pagos', icon: CreditCard }
+        { id: 'mobile', label: 'Mi Comercio (Portal Móvil)', icon: Smartphone },
+        { id: 'saas', label: 'Mi Suscripción & Pagos', icon: CreditCard }
       ];
     }
     // Rol Contador (Auditor CPC) - La tríada dorada limpia
     return [
-      { id: 'clients', label: '👥 Cartera & Radar Fiscal', icon: Building2 },
-      { id: 'operations', label: '⚡ Operaciones SENIAT & Banco', icon: Cpu },
-      { id: 'payroll', label: '💼 Nómina LOTTT', icon: Users }
+      { id: 'clients', label: 'Cartera & Radar Fiscal', icon: Building2 },
+      { id: 'operations', label: 'Operaciones SENIAT & Banco', icon: Layers },
+      { id: 'payroll', label: 'Nómina LOTTT', icon: Users }
     ];
   }, [currentUser?.role]);
   const [clientPortfolioFilter, setClientPortfolioFilter] = useState<'ALL' | 'URGENTES' | 'SPE' | 'ORDINARIO' | 'PENDIENTES' | 'AL_DIA'>('ALL');
@@ -2883,45 +2884,44 @@ export default function App() {
           <div className="flex items-center gap-3">
             {/* Logo Minimalista */}
             <div className="flex items-center gap-2.5">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              <span className="relative flex h-2 w-2">
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#0A84FF]"></span>
               </span>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-extrabold text-sm md:text-base text-white tracking-tight">VENETURCO</span>
-                  <span className="text-xs font-mono font-medium text-emerald-400">Fiscal OS</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-white/70">v3.2</span>
+                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">VENETURCO</span>
+                  <span className="text-xs font-mono font-medium text-[#8E8E93]">Fiscal OS</span>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70">v3.2</span>
                 </div>
               </div>
             </div>
 
             <div className="hidden md:block h-6 w-[1px] bg-white/10" />
 
-            {/* Cápsula de Empresa Activa (Tenant Anchor - Seguridad Mental) */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-white/20 transition-all shadow-inner">
-              <Building2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-              <div className="flex items-center gap-2">
+            {/* Cápsula de Empresa Activa (Selector Multi-RIF Compacto & Responsive) */}
+            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 hover:border-white/20 transition-all max-w-[180px] xs:max-w-[240px] sm:max-w-none shadow-inner">
+              <Building2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <div className="flex items-center gap-1.5 min-w-0">
                 {currentUser?.role === 'client' ? (
-                  <span className="text-xs font-bold text-white font-mono">
-                    {activeTenant.name} ({activeTenant.rif})
+                  <span className="text-xs font-bold text-white font-mono truncate max-w-[120px] sm:max-w-[200px]">
+                    {activeTenant.name}
                   </span>
                 ) : (
                   <select
                     id="tenant-selector"
                     value={selectedTenantId}
                     onChange={e => setSelectedTenantId(e.target.value)}
-                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer max-w-[110px] xs:max-w-[140px] sm:max-w-[190px] md:max-w-[240px] truncate"
                     title="Cambiar Empresa / Cliente Activo"
                   >
                     {tenants.map(t => (
-                      <option key={t.id} value={t.id} className="bg-slate-900 text-white">
+                      <option key={t.id} value={t.id} className="bg-[#1C1C1E] text-white">
                         {t.name} ({t.rif})
                       </option>
                     ))}
                   </select>
                 )}
-                <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                <span className={`hidden sm:inline-block text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 ${
                   activeTenant.regime === 'SPE'
                     ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                     : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
@@ -2933,7 +2933,7 @@ export default function App() {
                 <button
                   onClick={() => setNewTenantModalOpen(true)}
                   title="Registrar Nueva Empresa (RIF)"
-                  className="ml-1 p-1 rounded-lg bg-white/10 hover:bg-emerald-500/20 hover:text-emerald-300 text-white/70 text-[10px] font-mono flex items-center transition"
+                  className="ml-0.5 p-1 rounded-lg bg-white/10 hover:bg-blue-500/20 hover:text-blue-300 text-white/70 text-[10px] font-mono flex items-center shrink-0 transition"
                 >
                   <Plus className="w-3 h-3" />
                 </button>
@@ -2942,9 +2942,9 @@ export default function App() {
           </div>
 
           {/* SECTOR 2 (CENTRO): Termómetro Macroeconómico BCV en Vivo */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono shadow-inner">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs font-mono shadow-inner">
             <span className="text-white/60 font-semibold flex items-center gap-1.5">
-              <span>💵</span>
+              <DollarSign className="w-3.5 h-3.5 text-[#8E8E93]" />
               <span className="hidden sm:inline">BCV:</span>
             </span>
             <input
@@ -2953,14 +2953,14 @@ export default function App() {
               step="0.01"
               value={bcvRate}
               onChange={e => setBcvRate(Number(e.target.value) || 914.02)}
-              className="w-20 bg-transparent text-xs font-mono font-bold tabular-nums text-emerald-400 focus:outline-none"
+              className="w-20 bg-transparent text-xs font-mono font-medium tabular-nums text-white focus:outline-none"
               title="Tasa Oficial BCV editable"
             />
-            <span className="text-white/60">Bs./USD</span>
+            <span className="text-white/40">Bs./USD</span>
             <button
               onClick={handleSyncBcvOracle}
               title="Sincronizar Tasa Oficial BCV con el Oráculo"
-              className="p-1 rounded hover:bg-white/10 text-cyan-400 transition"
+              className="p-1 rounded hover:bg-white/10 text-[#8E8E93] hover:text-white transition"
             >
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -2971,21 +2971,21 @@ export default function App() {
             {/* Control de Rol / Candado RBAC */}
             {currentUser?.role === 'client' ? (
               <div
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold shadow-inner"
-                title="Espacio Protegido: Portal Comercio (Aislamiento Total Anti-IDOR)"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.06] border border-white/10 text-white/90 text-xs font-medium shadow-inner"
+                title="Espacio Protegido: Portal Comercio"
               >
-                <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                <Lock className="w-3.5 h-3.5 text-[#8E8E93]" />
                 <span className="hidden sm:inline">Portal Comercio</span>
-                <span className="text-[10px] font-mono opacity-75">PROTEGIDO</span>
+                <span className="text-[10px] font-mono text-[#8E8E93]">SEGURO</span>
               </div>
             ) : currentUser?.role === 'admin' ? (
-              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
+              <div className="flex items-center p-1 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] font-medium">
                 <button
                   onClick={() => setActiveTab('clients')}
-                  className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30 shadow-sm flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-lg bg-white/15 text-white font-semibold border border-white/20 shadow-sm flex items-center gap-1.5"
                   title="Espacio de Trabajo: Contador Aliado (CPC)"
                 >
-                  <span>💼</span>
+                  <Briefcase className="w-3.5 h-3.5 text-blue-400" />
                   <span className="hidden lg:inline">Contador</span>
                 </button>
                 <button
@@ -2995,15 +2995,15 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('mobile');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
                   title="Previsualizar cómo ve el portal tu cliente comercio"
                 >
-                  <span>📱</span>
+                  <Smartphone className="w-3.5 h-3.5 text-[#8E8E93]" />
                   <span className="hidden lg:inline">Ver como Cliente</span>
                 </button>
               </div>
             ) : (
-              <div className="flex items-center p-1 rounded-xl bg-black/40 border border-white/10 text-[11px] font-medium">
+              <div className="flex items-center p-1 rounded-xl bg-white/[0.04] border border-white/10 text-[11px] font-medium">
                 <button
                   onClick={() => {
                     const updated = { ...currentUser, role: 'admin' as const, name: 'Lic. Auditor Principal (Firma)' };
@@ -3011,20 +3011,20 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('clients');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
                   title="Espacio de Trabajo: Contador Aliado (CPC)"
                 >
-                  <span>💼</span>
+                  <Briefcase className="w-3.5 h-3.5 text-[#8E8E93]" />
                   <span className="hidden lg:inline">Contador</span>
                 </button>
                 <button
                   onClick={() => {
                     setActiveTab('accountants');
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shadow-sm flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-lg bg-white/15 text-white font-semibold border border-white/20 shadow-sm flex items-center gap-1.5"
                   title="Espacio de Trabajo: Super-Admin (Torre de Control)"
                 >
-                  <span>👑</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
                   <span className="hidden lg:inline">Super-Admin</span>
                 </button>
                 <button
@@ -3034,10 +3034,10 @@ export default function App() {
                     localStorage.setItem('vt_auth_user', JSON.stringify(updated));
                     setActiveTab('mobile');
                   }}
-                  className="px-2.5 py-1 rounded-lg text-[#9898A0] hover:text-white transition-all flex items-center gap-1"
+                  className="px-2.5 py-1 rounded-lg text-[#8E8E93] hover:text-white transition-all flex items-center gap-1.5"
                   title="Espacio de Trabajo: Comercio (Portal Móvil)"
                 >
-                  <span>📱</span>
+                  <Smartphone className="w-3.5 h-3.5 text-[#8E8E93]" />
                   <span className="hidden lg:inline">Cliente</span>
                 </button>
               </div>
@@ -3100,35 +3100,35 @@ export default function App() {
         </div>
       )}
 
-      {/* Impersonation / Shadow Support Banner */}
+      {/* Impersonation / Shadow Support Banner · Apple Pro */}
       {impersonatedAccountant && (
-        <div className="mb-5 p-4 rounded-xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-2 border-amber-400 text-amber-200 text-xs font-mono flex flex-wrap items-center justify-between gap-4 shadow-2xl">
+        <div className="mb-5 p-4 rounded-2xl bg-[#1C1C1E] border border-blue-500/30 text-white text-xs font-mono flex flex-wrap items-center justify-between gap-4 shadow-lg">
           <div className="flex items-center gap-3">
-            <span className="p-2 rounded-lg bg-amber-400 text-slate-950 font-black text-base animate-pulse">
-              👁️
-            </span>
+            <div className="p-2.5 rounded-xl bg-blue-500/15 border border-blue-500/25 text-blue-400 flex-shrink-0">
+              <Eye className="w-4 h-4" />
+            </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-amber-100 uppercase tracking-wider text-sm">
-                  MODO ASISTENCIA REMOTA ACTIVA: {impersonatedAccountant.name}
+                <span className="font-semibold text-white uppercase tracking-wider text-sm">
+                  Modo Asistencia Remota Activa: {impersonatedAccountant.name}
                 </span>
-                <span className="px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 text-[10px] font-mono font-medium">
                   {impersonatedAccountant.cpcNumber}
                 </span>
-                <span className="px-2 py-0.5 rounded bg-white/10 text-slate-300 text-[10px]">
+                <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/70 text-[10px]">
                   {impersonatedAccountant.city}
                 </span>
               </div>
-              <p className="text-[11px] opacity-80 mt-0.5">
+              <p className="text-[11px] text-[#8E8E93] mt-0.5">
                 Visualizando el despacho como este contador. Las acciones quedan registradas en el log criptográfico con su firma.
               </p>
             </div>
           </div>
           <button
             onClick={handleExitImpersonation}
-            className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg transition-all"
+            className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white border border-white/10 text-xs font-medium flex items-center gap-2 transition active:scale-[0.98]"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5 text-zinc-300" />
             <span>Salir de Asistencia</span>
           </button>
         </div>
@@ -3157,8 +3157,8 @@ export default function App() {
         </div>
 
         {/* Badge Contextual del Espacio Activo */}
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-white/[0.04] text-[11px] text-[#9898A0] font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-xl bg-white/[0.04] text-[11px] text-[#8E8E93] font-mono border border-white/5">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
           <span>
             {currentUser?.role === 'superadmin' ? 'MODO: SUPER-ADMIN SAAS' : currentUser?.role === 'client' ? 'MODO: CLIENTE COMERCIO' : 'MODO: CONTADOR ALIADO (CPC)'}
           </span>
@@ -3170,22 +3170,22 @@ export default function App() {
          ===================================================================== */}
       {activeTab === 'accountants' && (
         <div className="space-y-6">
-          {/* Header de la Torre de Control */}
-          <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-[var(--bg-elevated)] to-slate-900 border border-amber-500/30 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          {/* Header de la Torre de Control · Apple Pro Standard */}
+          <div className="p-5 rounded-2xl bg-[#1C1C1E] border border-white/10 flex flex-wrap items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3.5">
-              <div className="p-3 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex-shrink-0">
-                <Users className="w-6 h-6" />
+              <div className="p-3 rounded-xl bg-white/[0.06] text-white border border-white/10 flex-shrink-0">
+                <Users className="w-6 h-6 text-white" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
+                  <h2 className="text-lg md:text-xl font-bold text-white tracking-tight">
                     Torre de Control Super-Admin · Red de Contadores Aliados
                   </h2>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
-                    SaaS Founder Portal
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/10 font-medium uppercase">
+                    Director General
                   </span>
                 </div>
-                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                <p className="text-xs text-[#8E8E93] mt-0.5">
                   Monitoreo de suscripciones de firmas contables, liquidación de comisiones Rev-Share (20%) y asistencia remota directa.
                 </p>
               </div>
@@ -3194,45 +3194,45 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleOpenAccountantModal()}
-                className="px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold font-mono flex items-center gap-2 shadow-md transition-all"
+                className="px-4 py-2.5 rounded-xl bg-white hover:bg-white/90 text-black text-xs font-semibold flex items-center gap-2 shadow-sm transition-all active:scale-[0.98]"
               >
-                <Plus className="w-4 h-4" />
-                <span>+ Registrar Contador Partner</span>
+                <Plus className="w-4 h-4 text-black" />
+                <span>Registrar Contador Partner</span>
               </button>
               <button
                 onClick={() => {
                   const dataStr = JSON.stringify(accountants, null, 2);
                   handleDownloadFile(`DIRECTORIO_CONTADORES_VT_${new Date().toISOString().slice(0, 10)}.json`, dataStr, 'application/json');
                 }}
-                className="px-3.5 py-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/5 text-xs font-mono flex items-center gap-2 transition-all"
+                className="px-3.5 py-2.5 rounded-xl border border-white/10 bg-white/[0.05] hover:bg-white/10 text-xs font-medium text-white flex items-center gap-2 transition-all active:scale-[0.98]"
                 title="Descargar Directorio en JSON"
               >
-                <Download className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+                <Download className="w-3.5 h-3.5 text-zinc-300" />
                 <span>Exportar</span>
               </button>
             </div>
           </div>
 
-          {/* 4 Bento KPI Cards */}
+          {/* 4 Bento KPI Cards · Minimalist Apple Pro */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Card 1: Contadores Aliados */}
-            <div className="ui-card p-4 space-y-2 border-l-4 border-l-amber-400">
-              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
+              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
                 <span>RED DE CONTADORES</span>
-                <Users className="w-4 h-4 text-amber-400" />
+                <Users className="w-4 h-4 text-[#8E8E93]" />
               </div>
-              <div className="text-2xl font-black font-mono tracking-tight text-white">
-                {superAdminStats.totalAccountants} <span className="text-sm font-normal opacity-70">Firmas</span>
+              <div className="text-2xl font-bold font-mono tracking-tight text-white">
+                {superAdminStats.totalAccountants} <span className="text-sm font-normal text-[#8E8E93]">Firmas</span>
               </div>
               <div className="flex flex-wrap gap-1.5 pt-1 text-[10px] font-mono">
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25 font-medium">
                   {superAdminStats.activeAccountants} Activas
                 </span>
-                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/80 border border-white/10 font-medium">
                   {superAdminStats.trialAccountants} En Prueba
                 </span>
                 {superAdminStats.suspendedAccountants > 0 && (
-                  <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold">
+                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-medium">
                     {superAdminStats.suspendedAccountants} Suspendidas
                   </span>
                 )}
@@ -3240,50 +3240,50 @@ export default function App() {
             </div>
 
             {/* Card 2: Empresas en Red */}
-            <div className="ui-card p-4 space-y-2 border-l-4 border-l-cyan-400">
-              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
+              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
                 <span>EMPRESAS GESTIONADAS</span>
-                <Building2 className="w-4 h-4 text-cyan-400" />
+                <Building2 className="w-4 h-4 text-[#8E8E93]" />
               </div>
-              <div className="text-2xl font-black font-mono tracking-tight text-white">
-                {superAdminStats.totalCompaniesInNetwork} <span className="text-sm font-normal opacity-70">Multi-RIF</span>
+              <div className="text-2xl font-bold font-mono tracking-tight text-white">
+                {superAdminStats.totalCompaniesInNetwork} <span className="text-sm font-normal text-[#8E8E93]">Multi-RIF</span>
               </div>
-              <p className="text-[10px] opacity-75 font-mono">
-                Promedio: {(superAdminStats.totalCompaniesInNetwork / Math.max(1, superAdminStats.totalAccountants)).toFixed(1)} empresas por firma contable
+              <p className="text-[10px] text-[#8E8E93] font-mono">
+                Promedio: {(superAdminStats.totalCompaniesInNetwork / Math.max(1, superAdminStats.totalAccountants)).toFixed(1)} empresas por firma
               </p>
             </div>
 
             {/* Card 3: MRR Consolidado */}
-            <div className="ui-card p-4 space-y-2 border-l-4 border-l-emerald-400">
-              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
+              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
                 <span>MRR CONSOLIDADO</span>
-                <CreditCard className="w-4 h-4 text-emerald-400" />
+                <CreditCard className="w-4 h-4 text-[#8E8E93]" />
               </div>
-              <div className="text-2xl font-black font-mono tracking-tight text-emerald-400 tabular-nums">
-                ${superAdminStats.consolidatedMrrUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD/mes</span>
+              <div className="text-2xl font-bold font-mono tracking-tight text-white tabular-nums">
+                ${superAdminStats.consolidatedMrrUsd.toFixed(2)} <span className="text-xs font-normal text-[#8E8E93]">USD/mes</span>
               </div>
               <div className="text-[11px] font-mono text-white/90 tabular-nums">
                 Bs. {superAdminStats.consolidatedMrrBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                <span className="text-[10px] opacity-60 ml-1">@ BCV {bcvRate}</span>
+                <span className="text-[10px] text-[#8E8E93] ml-1">@ BCV {bcvRate}</span>
               </div>
-              <div className="text-[9px] opacity-65 font-mono">
+              <div className="text-[9px] text-[#8E8E93] font-mono">
                 Firmas: ${superAdminStats.mrrAccountantsUsd.toFixed(2)} · Sub-cuentas: ${superAdminStats.mrrSubAccountsUsd.toFixed(2)}
               </div>
             </div>
 
             {/* Card 4: Comisiones por Liquidar */}
-            <div className="ui-card p-4 space-y-2 border-l-4 border-l-purple-400">
-              <div className="flex items-center justify-between text-[11px] opacity-75 font-mono">
+            <div className="ui-card p-4 space-y-2 bg-[#1C1C1E] border border-white/[0.08] hover:border-white/20 rounded-2xl transition-all">
+              <div className="flex items-center justify-between text-[11px] text-[#8E8E93] font-mono">
                 <span>REV-SHARE PENDIENTE</span>
-                <Scale className="w-4 h-4 text-purple-400" />
+                <Scale className="w-4 h-4 text-[#8E8E93]" />
               </div>
-              <div className="text-2xl font-black font-mono tracking-tight text-purple-300 tabular-nums">
-                ${superAdminStats.pendingCommissionsUsd.toFixed(2)} <span className="text-xs font-normal opacity-75">USD</span>
+              <div className="text-2xl font-bold font-mono tracking-tight text-white tabular-nums">
+                ${superAdminStats.pendingCommissionsUsd.toFixed(2)} <span className="text-xs font-normal text-[#8E8E93]">USD</span>
               </div>
-              <div className="text-[11px] font-mono text-purple-200/90 tabular-nums">
+              <div className="text-[11px] font-mono text-white/90 tabular-nums">
                 Bs. {superAdminStats.pendingCommissionsBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <div className="text-[9px] opacity-65 font-mono">
+              <div className="text-[9px] text-[#8E8E93] font-mono">
                 Liquidado acumulado: ${superAdminStats.totalPaidCommissionsUsd.toFixed(2)} USD
               </div>
             </div>
@@ -3320,13 +3320,13 @@ export default function App() {
             </div>
           </div>
 
-          {/* Tabla de Contadores Partners */}
-          <div className="ui-card overflow-hidden">
-            <div className="p-4 border-b border-[var(--border-subtle)] flex items-center justify-between">
+          {/* Tabla de Contadores Partners · Apple Table Standard */}
+          <div className="ui-card overflow-hidden bg-[#1C1C1E] border border-white/[0.08] rounded-2xl">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-amber-400" />
-                <h3 className="font-bold font-mono text-sm text-white">Directorio Oficial de Firmas & Contadores</h3>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 font-mono text-[var(--accent-primary)]">
+                <Users className="w-4 h-4 text-blue-400" />
+                <h3 className="font-semibold text-sm text-white">Directorio Oficial de Firmas & Contadores</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 font-mono text-zinc-300">
                   {filteredAccountants.length} registros
                 </span>
               </div>
@@ -3335,7 +3335,7 @@ export default function App() {
             <div className="overflow-x-auto">
               <table className="w-full text-left font-mono text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-[var(--border-subtle)] bg-[var(--bg-elevated)] opacity-75 text-[10px] uppercase tracking-wider">
+                  <tr className="border-b border-white/10 bg-white/[0.02] text-[#8E8E93] text-[10px] uppercase tracking-wider">
                     <th className="p-3">Contador & Colegio (CPC)</th>
                     <th className="p-3">Plan & Cuota</th>
                     <th className="p-3">Cartera Asignada</th>
@@ -3344,10 +3344,10 @@ export default function App() {
                     <th className="p-3 text-right">Acciones de Gestión</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--border-subtle)]">
+                <tbody className="divide-y divide-white/[0.06]">
                   {filteredAccountants.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center opacity-60">
+                      <td colSpan={6} className="p-8 text-center text-[#8E8E93]">
                         No se encontraron contadores con los filtros seleccionados.
                       </td>
                     </tr>
@@ -3360,31 +3360,37 @@ export default function App() {
                         <tr key={acc.id} className="hover:bg-white/[0.02] transition-colors">
                           {/* Contador & CPC */}
                           <td className="p-3">
-                            <div className="font-bold text-white text-sm flex items-center gap-2">
+                            <div className="font-semibold text-white text-sm flex items-center gap-2">
                               <span>{acc.name}</span>
-                              <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                              <span className="px-2 py-0.5 rounded-full bg-white/10 text-white/90 border border-white/10 text-[10px] font-mono">
                                 {acc.cpcNumber}
                               </span>
                             </div>
-                            <div className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
+                            <div className="text-[11px] text-[#8E8E93] mt-0.5">
                               {acc.firmLogoText || 'Firma Independiente'} · {acc.rif}
                             </div>
-                            <div className="text-[10px] opacity-60 flex items-center gap-2 mt-0.5">
-                              <span>📍 {acc.city}</span>
+                            <div className="text-[10px] text-[#8E8E93] flex items-center gap-2 mt-1">
+                              <span className="flex items-center gap-1">
+                                <MapPin className="w-3 h-3 text-[#8E8E93]" />
+                                {acc.city}
+                              </span>
                               <span>·</span>
-                              <span>✉️ {acc.email}</span>
+                              <span className="flex items-center gap-1">
+                                <Mail className="w-3 h-3 text-[#8E8E93]" />
+                                {acc.email}
+                              </span>
                             </div>
                           </td>
 
                           {/* Plan & Cuota */}
                           <td className="p-3">
-                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] uppercase">
+                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-white font-mono text-[10px] uppercase">
                               {planInfo.name}
                             </span>
-                            <div className="font-bold text-white mt-1 tabular-nums">
+                            <div className="font-semibold text-white mt-1 tabular-nums">
                               ${acc.monthlyFeeUsd.toFixed(2)} USD/mes
                             </div>
-                            <div className="text-[10px] opacity-65">
+                            <div className="text-[10px] text-[#8E8E93]">
                               Capacidad: {acc.assignedTenantIds.length} / {acc.maxCompaniesLimit === 999 ? '∞' : acc.maxCompaniesLimit} empresas
                             </div>
                           </td>
@@ -3396,7 +3402,7 @@ export default function App() {
                                 {assignedTenants.map(t => (
                                   <span
                                     key={t.id}
-                                    className="px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-[10px] text-white/90 truncate max-w-[140px]"
+                                    className="px-2 py-0.5 rounded-md bg-white/[0.05] border border-white/10 text-[10px] text-white/90 truncate max-w-[140px]"
                                     title={`${t.name} (${t.rif})`}
                                   >
                                     {t.name}
@@ -3404,19 +3410,19 @@ export default function App() {
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-[10px] opacity-50 italic">Sin empresas vinculadas</span>
+                              <span className="text-[10px] text-[#8E8E93] italic">Sin empresas vinculadas</span>
                             )}
                           </td>
 
                           {/* Rev-Share Pendiente */}
                           <td className="p-3">
-                            <div className="font-bold text-purple-300 tabular-nums">
+                            <div className="font-semibold text-white tabular-nums">
                               ${acc.pendingCommissionUsd.toFixed(2)} USD
                             </div>
-                            <div className="text-[10px] text-purple-200/80 tabular-nums">
+                            <div className="text-[10px] text-[#8E8E93] tabular-nums">
                               Bs. {(acc.pendingCommissionUsd * bcvRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
                             </div>
-                            <div className="text-[9px] opacity-60 mt-0.5">
+                            <div className="text-[9px] text-[#8E8E93] mt-0.5">
                               Pagado histórico: ${acc.paidCommissionsTotalUsd.toFixed(2)}
                             </div>
                           </td>
@@ -3425,12 +3431,12 @@ export default function App() {
                           <td className="p-3">
                             <div className="flex items-center gap-2">
                               <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-mono uppercase ${
                                   acc.subscriptionStatus === 'ACTIVA'
-                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                    ? 'bg-[#30D158]/15 text-[#30D158] border border-[#30D158]/25'
                                     : acc.subscriptionStatus === 'EN_PRUEBA'
-                                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                                      ? 'bg-white/10 text-white/80 border border-white/10'
+                                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/25'
                                 }`}
                               >
                                 {acc.subscriptionStatus}
@@ -3438,12 +3444,12 @@ export default function App() {
                               <button
                                 onClick={() => handleToggleAccountantStatus(acc.id)}
                                 title="Cambiar Estado de Suscripción"
-                                className="p-1 rounded hover:bg-white/10 opacity-70 hover:opacity-100 text-[10px]"
+                                className="p-1 rounded-md hover:bg-white/10 text-[#8E8E93] hover:text-white transition"
                               >
-                                🔄
+                                <RefreshCw className="w-3 h-3" />
                               </button>
                             </div>
-                            <div className="text-[9px] opacity-60 mt-1">
+                            <div className="text-[9px] text-[#8E8E93] mt-1">
                               Próx. Cobro: {acc.nextBillingDate}
                             </div>
                           </td>
@@ -3454,10 +3460,10 @@ export default function App() {
                               {/* Botón Impersonar / Shadow Support */}
                               <button
                                 onClick={() => handleImpersonateAccountant(acc)}
-                                className="px-2.5 py-1.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium text-[11px] flex items-center gap-1.5 border border-white/10 shadow-sm transition-all active:scale-[0.98]"
                                 title="Ingresar en Modo Asistencia (Ver la plataforma como este contador)"
                               >
-                                <span>👁️</span>
+                                <Eye className="w-3.5 h-3.5 text-zinc-300" />
                                 <span>Asistir</span>
                               </button>
 
@@ -3465,10 +3471,10 @@ export default function App() {
                               {acc.pendingCommissionUsd > 0 && (
                                 <button
                                   onClick={() => handleOpenPayoutModal(acc)}
-                                  className="px-2.5 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                  className="px-2.5 py-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 font-medium text-[11px] flex items-center gap-1.5 border border-blue-500/30 shadow-sm transition-all active:scale-[0.98]"
                                   title="Liquidar Comisión Rev-Share vía Pago Móvil / Binance"
                                 >
-                                  <span>💵</span>
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
                                   <span>Liquidar</span>
                                 </button>
                               )}
@@ -3476,10 +3482,10 @@ export default function App() {
                               {/* Botón Editar */}
                               <button
                                 onClick={() => handleOpenAccountantModal(acc)}
-                                className="px-2 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:bg-white/10 text-[10px] text-white flex items-center gap-1"
+                                className="p-1.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/10 text-zinc-300 hover:text-white transition-all active:scale-[0.98]"
                                 title="Editar Datos y Plan"
                               >
-                                <span>✏️</span>
+                                <Edit3 className="w-3.5 h-3.5" />
                               </button>
 
                               {/* Invitación WhatsApp Oficial */}
@@ -3487,10 +3493,10 @@ export default function App() {
                                 href={getWhatsAppAccountantInviteUrl(acc)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="px-2.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium text-[11px] flex items-center gap-1.5 border border-white/10 shadow-sm transition-all active:scale-[0.98]"
                                 title="Enviar Carta de Invitación y Credenciales por WhatsApp"
                               >
-                                <MessageSquare className="w-3.5 h-3.5" />
+                                <MessageSquare className="w-3.5 h-3.5 text-[#25D366]" />
                                 <span>Invitar WhatsApp</span>
                               </a>
                             </div>
@@ -3713,22 +3719,22 @@ export default function App() {
          ===================================================================== */}
       {activeTab === 'clients' && (
         <div className="space-y-6">
-          {/* Header del Radar y Acceso Rápido */}
-          <div className="p-5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-[var(--bg-elevated)] to-slate-900 border border-[var(--border-subtle)] flex flex-wrap items-center justify-between gap-4 shadow-sm">
+          {/* Header del Radar y Acceso Rápido · Apple Pro Standard */}
+          <div className="p-5 rounded-2xl bg-[#1C1C1E] border border-white/10 flex flex-wrap items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3.5">
-              <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex-shrink-0">
-                <Building2 className="w-6 h-6" />
+              <div className="p-3 rounded-xl bg-white/[0.06] text-white border border-white/10 flex-shrink-0">
+                <Building2 className="w-6 h-6 text-white" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg md:text-xl font-extrabold text-white tracking-tight">
+                  <h2 className="text-lg md:text-xl font-bold text-white tracking-tight">
                     Cartera de Clientes & Radar Fiscal SENIAT
                   </h2>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold uppercase">
-                    Modo Despacho Contable
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/10 font-medium uppercase">
+                    Despacho Contable
                   </span>
                 </div>
-                <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                <p className="text-xs text-[#8E8E93] mt-0.5">
                   Monitoreo simultáneo de empresas por terminal de RIF, alertas de quincena y acciones directas en 1 clic.
                 </p>
               </div>
@@ -3736,10 +3742,10 @@ export default function App() {
 
             <button
               onClick={() => setNewTenantModalOpen(true)}
-              className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow flex items-center gap-2 transition"
+              className="px-4 py-2.5 text-xs font-semibold rounded-xl bg-white hover:bg-white/90 text-black shadow-sm flex items-center gap-2 transition active:scale-[0.98]"
             >
-              <Plus className="w-4 h-4" />
-              Registrar Nueva Empresa (RIF)
+              <Plus className="w-4 h-4 text-black" />
+              <span>Registrar Nueva Empresa (RIF)</span>
             </button>
           </div>
 
