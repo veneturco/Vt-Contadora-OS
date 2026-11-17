@@ -334,6 +334,51 @@ function parseSeniatRawText(rawText) {
 }
 
 /**
+ * Detecta el MIME type real por magic bytes Base64 o extensión (PDF, PNG, WebP, JPEG)
+ */
+function detectMimeTypeFromBase64(base64Str, fileName = '') {
+  const b64 = (base64Str || '').trim();
+  if (b64.startsWith('JVBERi0') || fileName.toLowerCase().endsWith('.pdf')) return 'application/pdf';
+  if (b64.startsWith('iVBORw0') || fileName.toLowerCase().endsWith('.png')) return 'image/png';
+  if (b64.startsWith('UklGR') || fileName.toLowerCase().endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
+/**
+ * Auditoría Matemática y Validación RIF Post-IA (Evita aprobaciones con errores de lectura OCR)
+ */
+function validateAndNormalizeAiExtraction(extracted) {
+  const rifCheck = validateVenezuelanRIF(extracted.supplierRif);
+  const tBase = Number(extracted.taxableBaseOriginal ?? extracted.taxableBase ?? 0) || 0;
+  const exVal = Number(extracted.exemptOriginal ?? extracted.exemptAmount ?? 0) || 0;
+  const vVal = Number(extracted.vatOriginal ?? extracted.vatAmount ?? 0) || 0;
+  const igVal = Number(extracted.igtfOriginal ?? extracted.igtfAmount ?? 0) || 0;
+  const totVal = Number(extracted.totalOriginal ?? extracted.totalAmount ?? (tBase + exVal + vVal + igVal)) || 0;
+
+  const expectedSum = tBase + exVal + vVal + igVal;
+  const tolerance = Math.max(1.0, totVal * 0.015);
+  const mathValid = totVal > 0 && Math.abs(expectedSum - totVal) <= tolerance;
+
+  return {
+    ...extracted,
+    taxableBase: tBase,
+    taxableBaseOriginal: tBase,
+    exemptAmount: exVal,
+    exemptOriginal: exVal,
+    vatAmount: vVal,
+    vatOriginal: vVal,
+    igtfAmount: igVal,
+    igtfOriginal: igVal,
+    totalAmount: totVal,
+    totalOriginal: totVal,
+    supplierRif: rifCheck.valid ? rifCheck.formatted : extracted.supplierRif,
+    rifValid: rifCheck.valid,
+    mathValid,
+    status: mathValid && rifCheck.valid ? 'APROBADA' : 'BORRADOR_IA'
+  };
+}
+
+/**
  * CAPA 6: Micro-Prompting LLM (Solo Texto - Ahorro 95% de Tokens)
  */
 async function repairFiscalDataWithMicroPrompt(dirtyText, geminiApiKey) {
@@ -341,7 +386,10 @@ async function repairFiscalDataWithMicroPrompt(dirtyText, geminiApiKey) {
 
   try {
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+    });
 
     const prompt = `Extrae datos fiscales venezolanos (SNAT/2026/00093) de este texto en JSON exacto:
     {"supplierRif":"J-00000000-0","supplierName":"","invoiceNumber":"","controlNumber":"","emissionDate":"YYYY-MM-DD","emissionTime":"HH:MM:SS","channel":"DIGITAL|MAQUINA_FISCAL|CONTINGENCIA","currency":"VES|USD","taxableBaseOriginal":0,"exemptOriginal":0,"vatRate":16,"vatOriginal":0,"igtfOriginal":0,"totalOriginal":0,"confidence":0.99}
@@ -351,34 +399,13 @@ async function repairFiscalDataWithMicroPrompt(dirtyText, geminiApiKey) {
     const result = await model.generateContent(prompt);
     const textResp = result.response.text().replace(/```json|```/g, '').trim();
     const extracted = JSON.parse(textResp);
-
-    const rifCheck = validateVenezuelanRIF(extracted.supplierRif);
-    const tBase = extracted.taxableBaseOriginal ?? extracted.taxableBase ?? 0;
-    const exVal = extracted.exemptOriginal ?? extracted.exemptAmount ?? 0;
-    const vVal = extracted.vatOriginal ?? extracted.vatAmount ?? 0;
-    const igVal = extracted.igtfOriginal ?? extracted.igtfAmount ?? 0;
-    const totVal = extracted.totalOriginal ?? extracted.totalAmount ?? (tBase + exVal + vVal + igVal);
+    const normalized = validateAndNormalizeAiExtraction(extracted);
 
     return {
-      mode: 'VNDE_TIER_2_MICRO_PROMPT (Tokens ~100)',
+      mode: 'VNDE_TIER_2_MICRO_PROMPT (JSON Estricto + Audit Matemático)',
       tokensUsed: 110,
-      confidence: 0.98,
-      extracted: {
-        ...extracted,
-        taxableBase: tBase,
-        taxableBaseOriginal: tBase,
-        exemptAmount: exVal,
-        exemptOriginal: exVal,
-        vatAmount: vVal,
-        vatOriginal: vVal,
-        igtfAmount: igVal,
-        igtfOriginal: igVal,
-        totalAmount: totVal,
-        totalOriginal: totVal,
-        supplierRif: rifCheck.valid ? rifCheck.formatted : extracted.supplierRif,
-        rifValid: rifCheck.valid,
-        status: 'APROBADA'
-      }
+      confidence: normalized.mathValid ? 0.98 : 0.78,
+      extracted: normalized
     };
   } catch (err) {
     console.error('Error en Micro-Prompt LLM:', err.message);
@@ -418,41 +445,26 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
   if (geminiApiKey && base64Data) {
     try {
       const genAI = new GoogleGenerativeAI(geminiApiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+      });
+      const mimeType = detectMimeTypeFromBase64(base64Data, fileName);
       const prompt = `Analiza esta factura fiscal venezolana bajo la Providencia SNAT/2026/00093 y extrae en JSON puro:
       { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
 
       const aiResult = await model.generateContent([
         prompt,
-        { inlineData: { data: base64Data, mimeType: 'image/jpeg' } }
+        { inlineData: { data: base64Data, mimeType } }
       ]);
       const extracted = JSON.parse(aiResult.response.text().replace(/```json|```/g, '').trim());
-      const rifCheck = validateVenezuelanRIF(extracted.supplierRif);
-      const tBase = extracted.taxableBaseOriginal ?? extracted.taxableBase ?? 0;
-      const exVal = extracted.exemptOriginal ?? extracted.exemptAmount ?? 0;
-      const vVal = extracted.vatOriginal ?? extracted.vatAmount ?? 0;
-      const igVal = extracted.igtfOriginal ?? extracted.igtfAmount ?? 0;
-      const totVal = extracted.totalOriginal ?? extracted.totalAmount ?? (tBase + exVal + vVal + igVal);
+      const normalized = validateAndNormalizeAiExtraction(extracted);
 
       return {
-        mode: 'VNDE_TIER_3_GEMINI_VISION_FALLBACK',
+        mode: `VNDE_TIER_3_GEMINI_VISION (${mimeType})`,
         tokensUsed: 1950,
-        extracted: {
-          ...extracted,
-          taxableBase: tBase,
-          taxableBaseOriginal: tBase,
-          exemptAmount: exVal,
-          exemptOriginal: exVal,
-          vatAmount: vVal,
-          vatOriginal: vVal,
-          igtfAmount: igVal,
-          igtfOriginal: igVal,
-          totalAmount: totVal,
-          totalOriginal: totVal,
-          supplierRif: rifCheck.valid ? rifCheck.formatted : extracted.supplierRif,
-          rifValid: rifCheck.valid,
-          status: 'APROBADA'
-        }
+        confidence: normalized.mathValid ? 0.99 : 0.78,
+        extracted: normalized
       };
     } catch (visErr) {
       console.warn('Fallo visión multimodal, aplicando simulación determinista:', visErr.message);
