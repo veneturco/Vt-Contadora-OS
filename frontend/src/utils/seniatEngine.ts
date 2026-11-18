@@ -687,7 +687,7 @@ export function downloadPdfRetentionVoucher(agentName: string, agentRif: string,
 
   doc.setFontSize(7.5);
   doc.setTextColor(148, 163, 184);
-  doc.text('Documento generado por VT Fiscal OS v3.2 · Sistema Homologado Providencia SNAT/2026/00093', 105, 282, { align: 'center' });
+  doc.text('Comprobante de Retención de IVA · Providencia Administrativa SNAT/2026/00093', 105, 282, { align: 'center' });
 
   doc.save(`Comprobante_Retencion_IVA_${voucher14}.pdf`);
 }
@@ -880,7 +880,7 @@ export function downloadPdfIslrRetentionVoucher(
 
   doc.setFontSize(7.5);
   doc.setTextColor(148, 163, 184);
-  doc.text('Documento oficial generado por VT Fiscal OS v3.2 · Homologado Decreto 1.808 / SENIAT', 105, 282, { align: 'center' });
+  doc.text('Comprobante de Retención de ISLR · Decreto 1.808 / SENIAT', 105, 282, { align: 'center' });
 
   doc.save(`Comprobante_Retencion_ISLR_${voucherNum}.pdf`);
 }
@@ -971,7 +971,7 @@ export function downloadPdfPaystub(companyName: string, companyRif: string, emp:
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(71, 85, 105);
-  doc.text('Comprobante digital inmutable sellado por VT Fiscal OS', 48, curY + 34);
+  doc.text('Recibo de Pago · Ley Orgánica del Trabajo (LOTTT)', 48, curY + 34);
   doc.text('Cumplimiento estricto Ley Orgánica del Trabajo, los Trabajadores y las Trabajadoras', 48, curY + 39);
 
   const sigY = 225;
@@ -1378,7 +1378,7 @@ export function downloadPdfBankReconciliationAudit(
   drawVectorQr(doc, 16, 165, 20, `CONCIL_${tenantRif}_${period}_${reconciledMoves.length}`);
   doc.setFontSize(7.5);
   doc.setTextColor(71, 85, 105);
-  doc.text('Documento generado inmutablemente con sello SHA-256 por VT Fiscal OS v3.2', 40, 172);
+  doc.text('Auditoría de Conciliación Bancaria · Registro inmutable con sello SHA-256', 40, 172);
   doc.text('Validez probatoria de medios de pago para sustentar deducciones y créditos fiscales de IVA ante el SENIAT.', 40, 177);
 
   doc.save(`Conciliacion_Bancaria_${tenantRif}_${period}.pdf`);
