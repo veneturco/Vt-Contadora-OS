@@ -1340,7 +1340,7 @@ export default function App() {
     feeUsd: number
   ): string {
     const link = `https://vt-contadora-os.onrender.com/?role=client&sub=${tenant.id}&rif=${tenant.rif}&email=${encodeURIComponent(email || 'admin@' + tenant.rif)}`;
-    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1354,7 +1354,7 @@ export default function App() {
     const passwordLine = tempPassword
       ? `🔑 *Clave temporal única:* ${tempPassword}\n*(Al iniciar sesión por primera vez, el sistema le pedirá crear su contraseña personal).*`
       : `🔑 *Clave de acceso:* Use la clave temporal asignada (si requiere una nueva, solicítela al administrador).`;
-    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el equipo de *VeneTurco Fiscal OS*.\n\nLe hemos activado su perfil real en la nube como *Contador Aliado / Firma Contable*:\n\n🌐 *Acceso Directo:* ${link}\n📧 *Correo:* ${acc.email}\n${passwordLine}\n\nAl tocar el enlace, solo ingrese su clave temporal y pulse «Iniciar Sesión Segura» para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedamos a su disposición para cualquier consulta.`;
+    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el equipo de *VT Fiscal OS*.\n\nLe hemos activado su perfil real en la nube como *Contador Aliado / Firma Contable*:\n\n🌐 *Acceso Directo:* ${link}\n📧 *Correo:* ${acc.email}\n${passwordLine}\n\nAl tocar el enlace, solo ingrese su clave temporal y pulse «Iniciar Sesión Segura» para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedamos a su disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -2122,7 +2122,7 @@ export default function App() {
       setCurrentUser(res.data.user);
       setNewPasswordInput('');
       setConfirmPasswordInput('');
-      setSubPayToast('¡Contraseña personal guardada en la nube! Bienvenido a VeneTurco Fiscal OS.');
+      setSubPayToast('¡Contraseña personal guardada en la nube! Bienvenido a VT Fiscal OS.');
       setTimeout(() => setSubPayToast(null), 5000);
     } finally {
       setChangePasswordSaving(false);
@@ -2483,7 +2483,7 @@ export default function App() {
       `• *IGTF Divisas (3%):* Bs. ${igtfBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n` +
       `🏛️ *TOTAL ESTIMADO A PAGAR SENIAT:* *Bs. ${totalToPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
       `💵 *Ref. Bimoneda:* USD $${totalToPayUsd.toFixed(2)} (@ Tasa BCV ${bcvRate.toFixed(2)} Bs.)\n\n` +
-      `Los archivos TXT de 16 columnas y Libros Fiscales ya se encuentran auditados y listos en *VeneTurco Fiscal OS*.`;
+      `Los archivos TXT de 16 columnas y Libros Fiscales ya se encuentran auditados y listos en *VT Fiscal OS*.`;
 
     return `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -8469,7 +8469,7 @@ export default function App() {
                     {editAccId ? 'Editar Firma / Contador Partner' : 'Registrar Nuevo Contador Partner'}
                   </h3>
                   <p className="text-[11px] opacity-75">
-                    Afiliación al Programa Nacional de Contadores Aliados VeneTurco OS
+                    Afiliación al Programa Nacional de Contadores Aliados VT Fiscal OS
                   </p>
                 </div>
               </div>
