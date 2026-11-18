@@ -882,22 +882,27 @@ export default function App() {
     }
   }, []);
 
+  const [workspaceCloudHydrated, setWorkspaceCloudHydrated] = useState<boolean>(false);
+
   // Sincronización en la nube de la red de Contadores (Cloud Firestore) cuando Super-Admin inicia sesión
   useEffect(() => {
-    if (currentUser?.role !== 'superadmin') return;
+    if (!currentUser) {
+      setWorkspaceCloudHydrated(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
-      const res = await safeApiRequest<{ ok: boolean; accountants: AccountantPartner[] }>('/api/accountants');
-      if (!cancelled && (res.status === 401 || res.status === 403)) {
-        setCurrentUser(null);
-        localStorage.removeItem('vt_auth_user');
-        localStorage.removeItem('vt_auth_token');
-        setLoginEmail(currentUser.email || '');
-        setLoginErrorMessage('Sesión expirada. Inicia sesión nuevamente para conectar con la nube.');
-        return;
-      }
-      if (!cancelled && res.ok && res.data && Array.isArray(res.data.accountants)) {
-        if (res.data.accountants.length > 0) {
+      if (currentUser.role === 'superadmin') {
+        const res = await safeApiRequest<{ ok: boolean; accountants: AccountantPartner[] }>('/api/accountants');
+        if (!cancelled && (res.status === 401 || res.status === 403)) {
+          setCurrentUser(null);
+          localStorage.removeItem('vt_auth_user');
+          localStorage.removeItem('vt_auth_token');
+          setLoginEmail(currentUser.email || '');
+          setLoginErrorMessage('Sesión expirada. Inicia sesión nuevamente para conectar con la nube.');
+          return;
+        }
+        if (!cancelled && res.ok && res.data && Array.isArray(res.data.accountants) && res.data.accountants.length > 0) {
           setAccountants(prev => {
             const byId = new Map<string, AccountantPartner>();
             for (const a of res.data!.accountants) byId.set(a.id, a);
@@ -910,6 +915,30 @@ export default function App() {
           });
         }
       }
+
+      // Cargar estado operativo (empresas, facturas, nómina, pagos) desde Cloud Firestore
+      const wsRes = await safeApiRequest<{
+        ok: boolean;
+        empty: boolean;
+        state: {
+          tenants?: Tenant[];
+          invoices?: FiscalInvoice[];
+          employees?: PayrollEmployee[];
+          payments?: SaasPaymentRecord[];
+        } | null;
+      }>('/api/workspace/state');
+
+      if (!cancelled && wsRes.ok && wsRes.data && !wsRes.data.empty && wsRes.data.state) {
+        const st = wsRes.data.state;
+        if (Array.isArray(st.tenants) && st.tenants.length > 0) {
+          setTenants(st.tenants);
+          setSelectedTenantId(prev => (st.tenants!.some(t => t.id === prev) ? prev : st.tenants![0].id));
+        }
+        if (Array.isArray(st.invoices) && st.invoices.length > 0) setInvoices(st.invoices);
+        if (Array.isArray(st.employees) && st.employees.length > 0) setEmployees(st.employees);
+        if (Array.isArray(st.payments) && st.payments.length > 0) setPayments(st.payments);
+      }
+      if (!cancelled) setWorkspaceCloudHydrated(true);
     })();
     return () => {
       cancelled = true;
@@ -979,6 +1008,19 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
+
+  // Guardar automáticamente cambios operativos (empresas, facturas, nómina, pagos) en Cloud Firestore
+  useEffect(() => {
+    if (!currentUser || !workspaceCloudHydrated) return;
+    if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin') return;
+    const timer = setTimeout(() => {
+      safeApiRequest('/api/workspace/state', {
+        method: 'PUT',
+        body: JSON.stringify({ tenants, invoices, employees, payments })
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [tenants, invoices, employees, payments, currentUser, workspaceCloudHydrated]);
 
   // Super-Admin & Accountants Management States
   const [accountants, setAccountants] = useState<AccountantPartner[]>(() => safeGetStorage('vt_accountants_v32', INITIAL_ACCOUNTANTS));
@@ -8213,7 +8255,7 @@ export default function App() {
                     {subPayMethod === 'BINANCE_PAY' && (
                       <>
                         <div className="font-bold text-amber-400">Datos para Binance Pay:</div>
-                        <div>· Binance Pay ID: <strong>284910284</strong> (VeneTurco OS)</div>
+                        <div>· Binance Pay ID: <strong>284910284</strong> (VT Fiscal OS)</div>
                         <div>· Moneda: <strong>USDT (Tether)</strong></div>
                         <div>
                           · Monto Exacto: <strong className="text-emerald-400">${feeUsd.toFixed(2)} USDT</strong>
@@ -8223,8 +8265,8 @@ export default function App() {
                     {subPayMethod === 'ZELLE' && (
                       <>
                         <div className="font-bold text-purple-400">Datos para Transferencia Zelle:</div>
-                        <div>· Correo Zelle: <strong>pagos@veneturco.com</strong></div>
-                        <div>· Titular: <strong>VeneTurco Software LLC</strong></div>
+                        <div>· Correo Zelle: <strong>pagos@vtfiscal.com</strong></div>
+                        <div>· Titular: <strong>VT Fiscal Software LLC</strong></div>
                         <div>
                           · Monto Exacto: <strong className="text-emerald-400">${feeUsd.toFixed(2)} USD</strong>
                         </div>

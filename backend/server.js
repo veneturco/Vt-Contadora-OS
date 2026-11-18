@@ -281,7 +281,7 @@ app.use(cors({
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
-    return callback(new Error('Origen no autorizado por política CORS de VeneTurco Fiscal OS'));
+    return callback(new Error('Origen no autorizado por política CORS de VT Fiscal OS'));
   }
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -379,7 +379,7 @@ function requireTenantAccess(req, res, next) {
 app.get('/health', (_req, res) => {
   res.json({
     status: 'OK',
-    engine: 'VeneTurco Fiscal OS v3.2 (VNDE 0 Tokens)',
+    engine: 'VT Fiscal OS v3.2 (VNDE 0 Tokens)',
     norm: 'SNAT/2026/00093 & SNAT/2026/00099',
     storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE',
     timestamp: new Date().toISOString()
@@ -800,6 +800,91 @@ app.delete('/api/accountants/:id', verifyFirebaseToken, requireSuperAdmin, async
       return res.status(result.status || 400).json({ error: result.error });
     }
     return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =========================================================================
+// SINCRONIZACIÓN CLOUD FIRESTORE MULTI-DISPOSITIVO (Tenants, Facturas, Nómina)
+// =========================================================================
+
+app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    const docSnap = await db.collection('vt_workspace').doc('shared_state').get();
+    if (!docSnap.exists) {
+      return res.json({ ok: true, empty: true, state: null });
+    }
+    const raw = docSnap.data() || {};
+    if (req.user.role === 'superadmin') {
+      return res.json({ ok: true, empty: false, state: raw });
+    }
+    const allowedIds = new Set(Array.isArray(req.user.tenantIds) ? req.user.tenantIds : []);
+    const tenants = Array.isArray(raw.tenants)
+      ? raw.tenants.filter(t => allowedIds.has(t.id) || t.ownerEmail === req.user.email)
+      : [];
+    const effectiveIds = new Set(tenants.map(t => t.id));
+    return res.json({
+      ok: true,
+      empty: false,
+      state: {
+        tenants,
+        invoices: Array.isArray(raw.invoices) ? raw.invoices.filter(i => effectiveIds.has(i.tenantId)) : [],
+        employees: Array.isArray(raw.employees) ? raw.employees.filter(e => effectiveIds.has(e.tenantId)) : [],
+        payments: Array.isArray(raw.payments) ? raw.payments.filter(p => effectiveIds.has(p.tenantId)) : [],
+        updatedAt: raw.updatedAt || null
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    const { tenants, invoices, employees, payments } = req.body || {};
+    const nowIso = new Date().toISOString();
+
+    if (req.user.role === 'superadmin') {
+      const payload = {
+        tenants: Array.isArray(tenants) ? tenants : [],
+        invoices: Array.isArray(invoices) ? invoices : [],
+        employees: Array.isArray(employees) ? employees : [],
+        payments: Array.isArray(payments) ? payments : [],
+        updatedAt: nowIso,
+        updatedBy: req.user.email
+      };
+      await db.collection('vt_workspace').doc('shared_state').set(payload, { merge: true });
+      return res.json({ ok: true, updatedAt: nowIso });
+    }
+
+    // Para contadores / clientes: fusiona solo las empresas permitidas sin sobrescribir las de otros
+    const docRef = db.collection('vt_workspace').doc('shared_state');
+    const snap = await docRef.get();
+    const existing = snap.exists ? (snap.data() || {}) : {};
+    const allowedIds = new Set(Array.isArray(req.user.tenantIds) ? req.user.tenantIds : []);
+
+    const incomingTenants = Array.isArray(tenants) ? tenants : [];
+    const ownTenantIds = new Set(
+      incomingTenants.filter(t => allowedIds.has(t.id) || t.ownerEmail === req.user.email).map(t => t.id)
+    );
+
+    const mergeByTenant = (prevArr = [], nextArr = [], idField = 'id') => {
+      const preserved = (Array.isArray(prevArr) ? prevArr : []).filter(item => !ownTenantIds.has(item.tenantId || item[idField]));
+      const own = (Array.isArray(nextArr) ? nextArr : []).filter(item => ownTenantIds.has(item.tenantId || item[idField]));
+      return [...own, ...preserved];
+    };
+
+    const merged = {
+      tenants: mergeByTenant(existing.tenants, incomingTenants, 'id'),
+      invoices: mergeByTenant(existing.invoices, invoices, 'tenantId'),
+      employees: mergeByTenant(existing.employees, employees, 'tenantId'),
+      payments: mergeByTenant(existing.payments, payments, 'tenantId'),
+      updatedAt: nowIso,
+      updatedBy: req.user.email
+    };
+    await docRef.set(merged, { merge: true });
+    return res.json({ ok: true, updatedAt: nowIso });
   } catch (err) {
     next(err);
   }
