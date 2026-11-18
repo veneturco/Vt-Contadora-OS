@@ -3043,17 +3043,26 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 relative">
         <form onSubmit={pending2faUser ? handleVerifyLoginTotp : handleLogin} className="ui-card p-6 md:p-8 w-full max-w-md space-y-5 text-xs font-mono relative shadow-2xl">
-          <div className="space-y-1">
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">
                 SNAT/2026/00093 · COT 10Y
               </span>
               <span className="text-[10px] opacity-70">v3.2 COMMERCIAL</span>
             </div>
-            <h1 className="ui-heading text-2xl font-bold tracking-tight pt-1 text-white">
-              VT FISCAL OS
-            </h1>
-            <p className="opacity-75">Acceso Blindado Multi-Empresa · SENIAT & Contabilidad Cloud</p>
+            <div className="flex items-center gap-3.5 pt-1">
+              <img
+                src="/favicon.svg"
+                alt="VT Fiscal OS"
+                className="w-12 h-12 rounded-xl border border-white/15 shadow-lg shrink-0"
+              />
+              <div>
+                <h1 className="ui-heading text-2xl font-bold tracking-tight text-white leading-none">
+                  VT FISCAL OS
+                </h1>
+                <p className="opacity-75 mt-1">Acceso Blindado Multi-Empresa · SENIAT &amp; Contabilidad Cloud</p>
+              </div>
+            </div>
           </div>
 
           {/* Banner de Blindaje Activo */}
@@ -3371,11 +3380,13 @@ export default function App() {
           
           {/* SECTOR 1 (IZQUIERDA): Identidad & Ancla de Empresa Activa */}
           <div className="flex items-center gap-3">
-            {/* Logo Minimalista */}
+            {/* Logo Pulido Pro VT */}
             <div className="flex items-center gap-2.5">
-              <span className="relative flex h-2 w-2">
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#0A84FF]"></span>
-              </span>
+              <img
+                src="/favicon.svg"
+                alt="VT Fiscal OS"
+                className="w-8 h-8 rounded-lg border border-white/15 shadow-sm shrink-0"
+              />
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-sm md:text-base text-white tracking-tight">VT</span>
