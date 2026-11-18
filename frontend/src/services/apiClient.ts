@@ -29,7 +29,13 @@ export async function safeApiRequest<T>(
   try {
     const finalHeaders = new Headers(headers);
     if (!finalHeaders.has('Authorization')) {
-      finalHeaders.set('Authorization', 'Bearer DEV_LOCAL_BYPASS');
+      const storedToken =
+        typeof window !== 'undefined' ? window.localStorage.getItem('vt_auth_token') : null;
+      if (storedToken) {
+        finalHeaders.set('Authorization', `Bearer ${storedToken}`);
+      } else if (import.meta.env.DEV) {
+        finalHeaders.set('Authorization', 'Bearer DEV_LOCAL_BYPASS');
+      }
     }
     if (!finalHeaders.has('Content-Type') && restOptions.method && restOptions.method !== 'GET') {
       finalHeaders.set('Content-Type', 'application/json');

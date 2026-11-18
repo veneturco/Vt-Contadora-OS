@@ -1,7 +1,8 @@
-require('dotenv').config();
-const express = require('express');
 const path = require('path');
 const fs = require('fs');
+require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -10,6 +11,16 @@ const admin = require('firebase-admin');
 const { processTelegramReceiptUpdate } = require('./services/telegramBot');
 const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
 const { syncOfficialBcvRate, DEFAULT_CURRENT_BCV_USD } = require('./services/bcvSyncCron');
+const {
+  verifySessionToken,
+  authenticateUser,
+  changeUserPassword,
+  upsertAccountantAccount,
+  resetAccountantPassword,
+  listAccountants,
+  disableAccountant,
+  upsertClientSubAccount
+} = require('./services/authService');
 const {
   SAAS_PLANS,
   generateTelegramLinkCode,
@@ -77,6 +88,15 @@ function createInMemoryFirestore() {
         await ref.set(payload);
         return ref;
       },
+      async get() {
+        const docs = [];
+        for (const [k, v] of store.entries()) {
+          if (k.startsWith(`${colPath}/`) && k.slice(colPath.length + 1).indexOf('/') === -1) {
+            docs.push({ id: k.slice(colPath.length + 1), data: () => v });
+          }
+        }
+        return { empty: docs.length === 0, docs };
+      },
       where(field, op, val) {
         return {
           limit() {
@@ -136,11 +156,22 @@ try {
       });
     }
     db = admin.firestore();
-  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    if (!admin.apps.length) {
-      admin.initializeApp();
+  } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS || fs.existsSync(path.resolve(__dirname, 'service-account-firebase.json'))) {
+    const rawCredPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.resolve(__dirname, 'service-account-firebase.json');
+    const resolvedCredPath = fs.existsSync(rawCredPath)
+      ? rawCredPath
+      : path.resolve(__dirname, rawCredPath);
+    if (fs.existsSync(resolvedCredPath)) {
+      const serviceAccount = JSON.parse(fs.readFileSync(resolvedCredPath, 'utf8'));
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+      }
+      db = admin.firestore();
+    } else {
+      db = createInMemoryFirestore();
     }
-    db = admin.firestore();
   } else {
     db = createInMemoryFirestore();
   }
@@ -224,30 +255,50 @@ const ocrLimiter = rateLimit({
   message: { error: 'Límite de escaneos OCR alcanzado temporalmente. Espera unos minutos.' }
 });
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos de autenticación. Espere unos minutos.' }
+});
+
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
     const isProduction = process.env.NODE_ENV === 'production';
     if (!isProduction && authHeader === 'Bearer DEV_LOCAL_BYPASS') {
-      req.user = { uid: 'contador_auditor_local', role: 'admin' };
+      req.user = { uid: 'contador_auditor_local', role: 'superadmin', email: 'moucharrafiepc@gmail.com' };
       return next();
     }
     if (!authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'Token Bearer requerido' });
     }
-    const idToken = authHeader.split('Bearer ')[1];
-    req.user = await admin.auth().verifyIdToken(idToken);
+    const token = authHeader.split('Bearer ')[1].trim();
+    const sessionUser = verifySessionToken(token);
+    if (sessionUser) {
+      req.user = sessionUser;
+      return next();
+    }
+    req.user = await admin.auth().verifyIdToken(token);
     next();
-  } catch (err) {
+  } catch (_err) {
     return res.status(403).json({ error: 'Token invalido o expirado' });
   }
+}
+
+function requireSuperAdmin(req, res, next) {
+  const user = req.user;
+  if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
+  if (user.role === 'superadmin') return next();
+  return res.status(403).json({ error: 'Acceso denegado: operación reservada para Super-Admin.' });
 }
 
 // Middleware de Control de Acceso y Prevención de IDOR (Insecure Direct Object References)
 function requireTenantAccess(req, res, next) {
   const user = req.user;
   if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
-  if (user.role === 'admin') return next();
+  if (user.role === 'admin' || user.role === 'superadmin') return next();
   const tenantId = req.body?.tenantId || req.params?.tenantId || req.query?.tenantId;
   if (!tenantId) {
     return res.status(400).json({ error: 'Identificador tenantId requerido para esta operación' });
@@ -553,11 +604,144 @@ app.post('/api/Voucher14', verifyFirebaseToken, requireTenantAccess, (req, res, 
   }
 });
 
-// Servir archivos estáticos del frontend de producción (React 19 + Vite)
+// =========================================================================
+// AUTENTICACIÓN REAL CLOUD (Firestore + Scrypt + JWT HS256 + Firebase Sync)
+// =========================================================================
+
+app.post('/api/auth/login', authLimiter, async (req, res, next) => {
+  try {
+    const { email, password } = req.body || {};
+    const result = await authenticateUser(db, admin, { email, password });
+    if (!result.ok) {
+      return res.status(result.status || 401).json({
+        error: result.error,
+        code: result.code,
+        failedAttempts: result.failedAttempts,
+        remainingAttempts: result.remainingAttempts,
+        lockRemainingSeconds: result.lockRemainingSeconds
+      });
+    }
+    return res.json({
+      ok: true,
+      token: result.token,
+      user: result.user,
+      storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE'
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/auth/me', verifyFirebaseToken, async (req, res) => {
+  return res.json({
+    ok: true,
+    user: req.user,
+    storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE'
+  });
+});
+
+app.post('/api/auth/change-password', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const result = await changeUserPassword(db, admin, {
+      email: req.user.email,
+      currentPassword,
+      newPassword
+    });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json({ ok: true, token: result.token, user: result.user });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/verify-attempt', authLimiter, async (req, res) => {
+  // Registro de telemetría de intentos de acceso (evita 404 en consola)
+  return res.json({ recorded: true, timestamp: new Date().toISOString() });
+});
+
+app.post('/api/auth/subaccount-invite', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({ error: 'Solo administradores o contadores pueden activar sub-cuentas.' });
+    }
+    const result = await upsertClientSubAccount(db, admin, req.body || {});
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =========================================================================
+// GESTIÓN CLOUD DE CONTADORES ALIADOS (Super-Admin -> Firestore vt_accountants)
+// =========================================================================
+
+app.get('/api/accountants', verifyFirebaseToken, requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const accountants = await listAccountants(db);
+    return res.json({ ok: true, accountants, storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/accountants', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await upsertAccountantAccount(db, admin, req.body || {});
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.status(result.status).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/accountants/:id', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await upsertAccountantAccount(db, admin, { ...(req.body || {}), id: req.params.id });
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/accountants/:id/reset-password', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await resetAccountantPassword(db, admin, req.params.id, req.body?.tempPassword);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/accountants/:id', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await disableAccountant(db, admin, req.params.id);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Servir archivos estáticos del frontend de producción (React 19 + Vite -> outDir '../dist')
 const possibleDistPaths = [
   path.resolve(__dirname, '../dist'),
-  path.resolve(__dirname, '../frontend/dist'),
-  path.resolve(__dirname, '../Vt_Contadora_OS_v3_2_production/dist')
+  path.resolve(__dirname, '../frontend/dist')
 ];
 const distPath = possibleDistPaths.find(p => fs.existsSync(p));
 if (distPath) {

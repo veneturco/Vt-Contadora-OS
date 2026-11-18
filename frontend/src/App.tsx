@@ -3,7 +3,7 @@ import jsQR from 'jsqr';
 import {
   ShieldCheck, FileText, Cpu, Send, Users, CreditCard, Smartphone,
   Lock, Download, CheckCircle2, AlertTriangle, RefreshCw, Plus,
-  Building2, Scale, Hash, Eye, Camera, Upload, KeyRound,
+  Building2, Scale, Hash, Eye, EyeOff, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
   Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock,
   DollarSign, Briefcase, Edit3, MapPin, Mail, Layers, Trash2
@@ -709,20 +709,35 @@ const INITIAL_ACCOUNTANTS: AccountantPartner[] = [
 ];
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<{ email: string; role: 'superadmin' | 'admin' | 'client'; name: string } | null>(() =>
-    safeGetStorage('vt_auth_user', null)
-  );
+  const [currentUser, setCurrentUser] = useState<{
+    uid?: string;
+    email: string;
+    role: 'superadmin' | 'admin' | 'client';
+    name: string;
+    cpcNumber?: string | null;
+    accountantId?: string | null;
+    tenantIds?: string[];
+    mustChangePassword?: boolean;
+  } | null>(() => safeGetStorage('vt_auth_user', null));
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [loginEmail, setLoginEmail] = useState<string>(() =>
-    safeGetStorage('vt_last_login_email', 'moucharrafiepc@gmail.com')
-  );
-  const [loginPassword, setLoginPassword] = useState<string>(() =>
-    safeGetStorage('vt_last_login_password', '*036Yasir')
-  );
-  const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('superadmin');
+  const [loginEmail, setLoginEmail] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
+  const [loginSubmitting, setLoginSubmitting] = useState<boolean>(false);
+  const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('admin');
   const [inviteGreeting, setInviteGreeting] = useState<{ role: string; name?: string; email?: string } | null>(null);
+  const [issuedInviteModal, setIssuedInviteModal] = useState<{
+    accountant: AccountantPartner;
+    tempPassword: string;
+    firebaseAuthSynced?: boolean;
+  } | null>(null);
+  const [copiedInvitePass, setCopiedInvitePass] = useState<boolean>(false);
+  const [newPasswordInput, setNewPasswordInput] = useState<string>('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState<string>('');
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changePasswordSaving, setChangePasswordSaving] = useState<boolean>(false);
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   // Blindaje Ciberseguridad & Login Guard Anti-Fuerza Bruta
@@ -834,7 +849,7 @@ export default function App() {
       if (roleParam === 'admin' || cpcParam) {
         setLoginRole('admin');
         if (emailParam) setLoginEmail(emailParam);
-        setLoginPassword('Contadora2026#');
+        setLoginPassword('');
         setInviteGreeting({
           role: 'admin',
           name: cpcParam ? `Colegiado ${cpcParam}` : undefined,
@@ -843,7 +858,7 @@ export default function App() {
       } else if (subParam || roleParam === 'client') {
         setLoginRole('client');
         if (emailParam) setLoginEmail(emailParam);
-        setLoginPassword('VT-2026');
+        setLoginPassword('');
         setInviteGreeting({
           role: 'client',
           name: rifParam ? `Empresa RIF ${rifParam}` : undefined,
@@ -854,6 +869,32 @@ export default function App() {
       // ignore
     }
   }, []);
+
+  // Sincronización en la nube de la red de Contadores (Cloud Firestore) cuando Super-Admin inicia sesión
+  useEffect(() => {
+    if (currentUser?.role !== 'superadmin') return;
+    let cancelled = false;
+    (async () => {
+      const res = await safeApiRequest<{ ok: boolean; accountants: AccountantPartner[] }>('/api/accountants');
+      if (!cancelled && res.ok && res.data && Array.isArray(res.data.accountants)) {
+        if (res.data.accountants.length > 0) {
+          setAccountants(prev => {
+            const byId = new Map<string, AccountantPartner>();
+            for (const a of res.data!.accountants) byId.set(a.id, a);
+            for (const localAcc of prev) {
+              if (!byId.has(localAcc.id) && !INITIAL_ACCOUNTANTS.some(init => init.id === localAcc.id)) {
+                byId.set(localAcc.id, localAcc);
+              }
+            }
+            return Array.from(byId.values());
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.role, currentUser?.email]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1284,9 +1325,16 @@ export default function App() {
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
-  function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
-    const link = `https://vt-contadora-os.onrender.com/?role=admin&email=${encodeURIComponent(acc.email)}&cpc=${encodeURIComponent(acc.cpcNumber)}`;
-    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso Directo (1 Clic):* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nAl tocar el enlace, su sesión quedará configurada automáticamente en el panel de Firma Contable para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedo a su disposición para cualquier consulta.`;
+  function getWhatsAppAccountantInviteUrl(acc: AccountantPartner, tempPassword?: string): string {
+    const baseUrl =
+      typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost')
+        ? window.location.origin
+        : 'https://vt-contadora-os.onrender.com';
+    const link = `${baseUrl}/?role=admin&email=${encodeURIComponent(acc.email)}&cpc=${encodeURIComponent(acc.cpcNumber)}`;
+    const passwordLine = tempPassword
+      ? `🔑 *Clave temporal única:* ${tempPassword}\n*(Al iniciar sesión por primera vez, el sistema le pedirá crear su contraseña personal).*`
+      : `🔑 *Clave de acceso:* Use la clave temporal asignada (si requiere una nueva, solicítela al administrador).`;
+    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil real en la nube como *Contador Aliado / Firma Contable*:\n\n🌐 *Acceso Directo:* ${link}\n📧 *Correo:* ${acc.email}\n${passwordLine}\n\nAl tocar el enlace, solo ingrese su clave temporal y pulse «Iniciar Sesión Segura» para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedo a su disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1658,90 +1706,141 @@ export default function App() {
     setAccountantModalOpen(true);
   }
 
-  function handleSaveAccountant(e: React.FormEvent) {
+  async function handleSaveAccountant(e: React.FormEvent) {
     e.preventDefault();
-    if (!accFormName.trim() || !accFormCpc.trim()) return;
+    if (!accFormName.trim() || !accFormCpc.trim() || !accFormEmail.trim()) return;
 
     const planCatalog = ACCOUNTANT_PLANS_CATALOG.find(p => p.id === accFormPlan) || ACCOUNTANT_PLANS_CATALOG[1];
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + 30);
 
+    const payloadBase = {
+      id: editAccId || `acc_${Date.now()}`,
+      name: accFormName.trim(),
+      cpcNumber: accFormCpc.trim(),
+      rif: accFormRif.trim(),
+      email: accFormEmail.trim().toLowerCase(),
+      phone: accFormPhone.trim(),
+      city: accFormCity.trim(),
+      planId: accFormPlan,
+      monthlyFeeUsd: planCatalog.priceUsdMonthly,
+      maxCompaniesLimit: planCatalog.maxCompanies,
+      payoutDetails: accFormPayout.trim(),
+      nextBillingDate: nextDate.toISOString().slice(0, 10),
+      firmLogoText: `${accFormName.trim()} & Asociados`
+    };
+
+    const endpoint = editAccId ? `/api/accountants/${encodeURIComponent(editAccId)}` : '/api/accountants';
+    const method = editAccId ? 'PUT' : 'POST';
+    const apiRes = await safeApiRequest<{
+      ok: boolean;
+      accountant: AccountantPartner;
+      tempPassword: string | null;
+      firebaseAuthSynced?: boolean;
+    }>(endpoint, {
+      method,
+      body: JSON.stringify(payloadBase)
+    });
+
+    if (!apiRes.ok || !apiRes.data?.accountant) {
+      setSubPayToast(`Error guardando contador en la nube: ${apiRes.error || 'Verifique su sesión Super-Admin.'}`);
+      setTimeout(() => setSubPayToast(null), 6000);
+      return;
+    }
+
+    const savedAcc = apiRes.data.accountant;
     if (editAccId) {
-      setAccountants(prev =>
-        prev.map(a =>
-          a.id === editAccId
-            ? {
-                ...a,
-                name: accFormName.trim(),
-                cpcNumber: accFormCpc.trim(),
-                rif: accFormRif.trim(),
-                email: accFormEmail.trim(),
-                phone: accFormPhone.trim(),
-                city: accFormCity.trim(),
-                planId: accFormPlan,
-                monthlyFeeUsd: planCatalog.priceUsdMonthly,
-                maxCompaniesLimit: planCatalog.maxCompanies,
-                payoutDetails: accFormPayout.trim()
-              }
-            : a
-        )
-      );
+      setAccountants(prev => prev.map(a => (a.id === editAccId ? savedAcc : a)));
       appendAuditLog(
         'CONTADOR_PARTNER_ACTUALIZADO',
         currentUser?.email || 'founder@veneturco.com',
         editAccId,
-        `Contador ${accFormName} (${accFormCpc}) actualizado · Plan: ${planCatalog.name}`
+        `Contador ${savedAcc.name} (${savedAcc.cpcNumber}) actualizado en Cloud Firestore · Plan: ${planCatalog.name}`
       );
-      setSubPayToast(`Contador ${accFormName} actualizado correctamente.`);
+      setSubPayToast(`Contador ${savedAcc.name} actualizado en la nube.`);
     } else {
-      const newAcc: AccountantPartner = {
-        id: `acc_${Date.now()}`,
-        name: accFormName.trim(),
-        cpcNumber: accFormCpc.trim(),
-        rif: accFormRif.trim(),
-        email: accFormEmail.trim(),
-        phone: accFormPhone.trim(),
-        city: accFormCity.trim(),
-        planId: accFormPlan,
-        monthlyFeeUsd: planCatalog.priceUsdMonthly,
-        maxCompaniesLimit: planCatalog.maxCompanies,
-        assignedTenantIds: [],
-        subscriptionStatus: 'ACTIVA',
-        nextBillingDate: nextDate.toISOString().slice(0, 10),
-        payoutMethod: 'PAGO_MOVIL',
-        payoutDetails: accFormPayout.trim(),
-        pendingCommissionUsd: 0,
-        paidCommissionsTotalUsd: 0,
-        firmLogoText: `${accFormName.trim()} & Asociados`,
-        createdAt: new Date().toISOString().slice(0, 10)
-      };
-      setAccountants(prev => [newAcc, ...prev]);
+      setAccountants(prev => [savedAcc, ...prev.filter(a => a.id !== savedAcc.id)]);
       appendAuditLog(
         'ALTA_CONTADOR_PARTNER',
         currentUser?.email || 'founder@veneturco.com',
-        newAcc.id,
-        `Nuevo Contador Partner registrado: ${newAcc.name} (${newAcc.cpcNumber}) · Plan ${planCatalog.name} ($${planCatalog.priceUsdMonthly}/mes)`
+        savedAcc.id,
+        `Nuevo Contador Partner activado en Cloud Firestore: ${savedAcc.name} (${savedAcc.cpcNumber}) · Plan ${planCatalog.name}`
       );
-      setSubPayToast(`¡Nuevo Contador Partner registrado con éxito! Código ${newAcc.cpcNumber}`);
+      setSubPayToast(`¡Contador ${savedAcc.name} activado en la nube con éxito!`);
+    }
+
+    if (apiRes.data.tempPassword) {
+      setCopiedInvitePass(false);
+      setIssuedInviteModal({
+        accountant: savedAcc,
+        tempPassword: apiRes.data.tempPassword,
+        firebaseAuthSynced: apiRes.data.firebaseAuthSynced
+      });
     }
 
     setAccountantModalOpen(false);
     setTimeout(() => setSubPayToast(null), 5000);
   }
 
-  function handleToggleAccountantStatus(accId: string) {
-    setAccountants(prev =>
-      prev.map(a => {
-        if (a.id !== accId) return a;
-        const newStatus = a.subscriptionStatus === 'ACTIVA' ? 'SUSPENDIDA' : 'ACTIVA';
-        appendAuditLog(
-          'ESTADO_CONTADOR_MODIFICADO',
-          currentUser?.email || 'founder@veneturco.com',
-          accId,
-          `Estado de suscripción de ${a.name} cambiado a: ${newStatus}`
-        );
-        return { ...a, subscriptionStatus: newStatus };
-      })
+  async function handleResetAccountantPassword(acc: AccountantPartner) {
+    // Asegura que el contador exista en Cloud Firestore antes de emitir nueva clave temporal
+    let apiRes = await safeApiRequest<{
+      ok: boolean;
+      accountant: AccountantPartner;
+      tempPassword: string;
+      firebaseAuthSynced?: boolean;
+    }>(`/api/accountants/${encodeURIComponent(acc.id)}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+
+    if (!apiRes.ok && apiRes.status === 404) {
+      apiRes = await safeApiRequest<{
+        ok: boolean;
+        accountant: AccountantPartner;
+        tempPassword: string;
+        firebaseAuthSynced?: boolean;
+      }>('/api/accountants', {
+        method: 'POST',
+        body: JSON.stringify({ ...acc, resetPassword: true })
+      });
+    }
+
+    if (!apiRes.ok || !apiRes.data?.tempPassword) {
+      setSubPayToast(`No se pudo generar la clave en la nube: ${apiRes.error || 'Error de servidor'}`);
+      setTimeout(() => setSubPayToast(null), 6000);
+      return;
+    }
+
+    setCopiedInvitePass(false);
+    setIssuedInviteModal({
+      accountant: apiRes.data.accountant || acc,
+      tempPassword: apiRes.data.tempPassword,
+      firebaseAuthSynced: apiRes.data.firebaseAuthSynced
+    });
+    appendAuditLog(
+      'CLAVE_TEMPORAL_CONTADOR_EMITIDA',
+      currentUser?.email || 'founder@veneturco.com',
+      acc.id,
+      `Nueva clave temporal emitida en Cloud Firestore para ${acc.name} (${acc.email})`
+    );
+  }
+
+  async function handleToggleAccountantStatus(accId: string) {
+    const target = accountants.find(a => a.id === accId);
+    if (!target) return;
+    const newStatus = target.subscriptionStatus === 'ACTIVA' ? 'SUSPENDIDA' : 'ACTIVA';
+    const updated = { ...target, subscriptionStatus: newStatus as AccountantPartner['subscriptionStatus'] };
+    setAccountants(prev => prev.map(a => (a.id === accId ? updated : a)));
+    await safeApiRequest(`/api/accountants/${encodeURIComponent(accId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(updated)
+    });
+    appendAuditLog(
+      'ESTADO_CONTADOR_MODIFICADO',
+      currentUser?.email || 'founder@veneturco.com',
+      accId,
+      `Estado de suscripción de ${target.name} cambiado a: ${newStatus}`
     );
   }
 
@@ -1776,16 +1875,17 @@ export default function App() {
     setTimeout(() => setSubPayToast(null), 4000);
   }
 
-  function handleDeleteAccountant(accId: string, accName: string) {
-    if (window.confirm(`¿Está seguro de eliminar definitivamente al contador "${accName}" del directorio? Esta acción no se puede deshacer.`)) {
+  async function handleDeleteAccountant(accId: string, accName: string) {
+    if (window.confirm(`¿Está seguro de desactivar y retirar al contador "${accName}" del directorio? Su acceso quedará revocado inmediatamente.`)) {
+      await safeApiRequest(`/api/accountants/${encodeURIComponent(accId)}`, { method: 'DELETE' });
       setAccountants(prev => prev.filter(a => a.id !== accId));
       appendAuditLog(
         'BAJA_CONTADOR_PARTNER',
         currentUser?.email || 'founder@veneturco.com',
         accId,
-        `Contador Partner eliminado del directorio: ${accName}`
+        `Contador Partner desactivado y retirado del directorio: ${accName}`
       );
-      setSubPayToast(`Contador "${accName}" eliminado correctamente del directorio.`);
+      setSubPayToast(`Contador "${accName}" revocado correctamente.`);
       setTimeout(() => setSubPayToast(null), 4000);
     }
   }
@@ -1890,102 +1990,115 @@ export default function App() {
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (loginSubmitting) return;
     if (isAccountLocked) {
       const min = Math.floor(lockCountdownSeconds / 60);
       const sec = lockCountdownSeconds % 60;
-      setLoginErrorMessage(`🚨 Acceso denegado: Cuenta bloqueada por seguridad. Reintentar en ${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')} o ingrese la Clave Maestra Super-Admin.`);
+      setLoginErrorMessage(`Acceso denegado: Cuenta bloqueada por seguridad. Reintentar en ${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}.`);
       return;
     }
 
-    const validPasswords = ['*036Yasir', 'Contadora2026#', 'VT-2026', 'Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
-    const isPasswordValid = validPasswords.includes(loginPassword.trim());
+    const cleanEmail = loginEmail.trim().toLowerCase();
+    const cleanPass = loginPassword.trim();
+    if (!cleanEmail || !cleanPass) {
+      setLoginErrorMessage('Ingrese su correo corporativo y su contraseña.');
+      return;
+    }
 
-    if (!isPasswordValid) {
-      const nextCount = failedLoginAttempts + 1;
-      setFailedLoginAttempts(nextCount);
+    setLoginSubmitting(true);
+    setLoginErrorMessage(null);
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password: cleanPass })
+      });
+      const data = await resp.json().catch(() => ({}));
 
-      if (nextCount >= 5) {
-        setIsAccountLocked(true);
-        setLockCountdownSeconds(30 * 60); // 30 minutos de enfriamiento
-        setLoginErrorMessage('🚨 CUENTA BLOQUEADA POR 30 MINUTOS: Se alcanzaron 5 intentos fallidos consecutivos. Protocolo de Defensa en Profundidad activado.');
-        const newInc = {
-          id: `inc_${Date.now()}`,
-          identifier: loginEmail.trim() || 'usuario_no_autenticado',
-          attempts: 5,
-          lockedUntil: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-          ip: '190.202.84.11 (Caracas CANTV)',
-          timestamp: new Date().toISOString(),
-          hash: 'SHA256_' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join('')
-        };
-        setSecurityIncidents(prev => [newInc, ...prev]);
-
-        // Registrar intento fallido en el backend (dispara alerta Telegram si está configurado)
-        fetch('/api/auth/verify-attempt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: loginEmail, password: loginPassword, role: loginRole })
-        }).catch(() => {});
-        return;
-      } else {
-        const remaining = 5 - nextCount;
-        setLoginErrorMessage(`❌ Contraseña incorrecta. Intento fallido ${nextCount}/5. Le quedan ${remaining} intento(s) antes del bloqueo preventivo de 30 minutos.`);
-        fetch('/api/auth/verify-attempt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: loginEmail, password: loginPassword, role: loginRole })
-        }).catch(() => {});
+      if (!resp.ok || !data.ok || !data.token || !data.user) {
+        if (typeof data.failedAttempts === 'number') {
+          setFailedLoginAttempts(data.failedAttempts);
+        }
+        if (resp.status === 423 || data.code === 'ACCOUNT_LOCKED') {
+          setIsAccountLocked(true);
+          setLockCountdownSeconds(data.lockRemainingSeconds || 30 * 60);
+        }
+        setLoginErrorMessage(data.error || 'No se pudo iniciar sesión. Verifique su correo y contraseña.');
         return;
       }
+
+      // Acceso legítimo validado por el servidor (Cloud Firestore + Scrypt)
+      setFailedLoginAttempts(0);
+      setIsAccountLocked(false);
+      setLoginErrorMessage(null);
+
+      const authenticatedUser = {
+        uid: data.user.uid,
+        email: data.user.email,
+        role: data.user.role as 'superadmin' | 'admin' | 'client',
+        name: data.user.name,
+        cpcNumber: data.user.cpcNumber,
+        accountantId: data.user.accountantId,
+        tenantIds: data.user.tenantIds || [],
+        mustChangePassword: Boolean(data.user.mustChangePassword)
+      };
+
+      localStorage.setItem('vt_auth_token', data.token);
+
+      if (authenticatedUser.role === 'superadmin' && superAdmin2faSecret) {
+        setPending2faUser(authenticatedUser);
+        setLoginTotpInput('');
+        return;
+      }
+
+      setCurrentUser(authenticatedUser);
+      localStorage.setItem('vt_auth_user', JSON.stringify(authenticatedUser));
+      setLoginPassword('');
+
+      if (authenticatedUser.role === 'client') {
+        setActiveTab('mobile');
+      } else if (authenticatedUser.role === 'superadmin') {
+        setActiveTab('accountants');
+      } else {
+        setActiveTab('clients');
+      }
+    } catch {
+      setLoginErrorMessage('No se pudo conectar con el servidor de autenticación. Verifique su conexión e intente de nuevo.');
+    } finally {
+      setLoginSubmitting(false);
     }
+  }
 
-    // Acceso legítimo: resetear contadores
-    setFailedLoginAttempts(0);
-    setIsAccountLocked(false);
-    setLoginErrorMessage(null);
-
-    fetch('/api/auth/verify-attempt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail, password: loginPassword, role: loginRole })
-    }).catch(() => {});
-
-    const isOwner = loginEmail.trim().toLowerCase() === 'moucharrafiepc@gmail.com';
-    const userRole = isOwner ? 'superadmin' : loginRole;
-
-    const matchedAccountant = accountants.find(
-      a => a.email.toLowerCase() === loginEmail.trim().toLowerCase()
-    );
-
-    const user = {
-      email: loginEmail.trim() || (isOwner ? 'moucharrafiepc@gmail.com' : 'auditor@veneturco.com'),
-      role: userRole as 'superadmin' | 'admin' | 'client',
-      name:
-        isOwner
-          ? 'Dr. Samir Moucharrafie / Super-Admin & Creador'
-          : matchedAccountant
-            ? `${matchedAccountant.name} (${matchedAccountant.cpcNumber})`
-            : userRole === 'admin'
-              ? `Lic. Contador Aliado (${loginEmail.trim() || 'Firma'})`
-              : `Comercio (${activeTenant.name})`
-    };
-    if (userRole === 'superadmin' && superAdmin2faSecret) {
-      setPending2faUser(user);
-      setLoginTotpInput('');
+  async function handleChangeMandatoryPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setChangePasswordError(null);
+    if (newPasswordInput.trim().length < 8) {
+      setChangePasswordError('La contraseña personal debe tener al menos 8 caracteres.');
       return;
     }
-
-    setCurrentUser(user);
-    localStorage.setItem('vt_auth_user', JSON.stringify(user));
-    if (isOwner) {
-      safeSetStorage('vt_last_login_email', loginEmail.trim());
-      safeSetStorage('vt_last_login_password', loginPassword.trim());
+    if (newPasswordInput.trim() !== confirmPasswordInput.trim()) {
+      setChangePasswordError('Las contraseñas no coinciden. Verifíquelas e intente de nuevo.');
+      return;
     }
-    if (userRole === 'client') {
-      setActiveTab('mobile');
-    } else if (userRole === 'superadmin') {
-      setActiveTab('accountants');
-    } else {
-      setActiveTab('clients');
+    setChangePasswordSaving(true);
+    try {
+      const res = await safeApiRequest<{ ok: boolean; token: string; user: typeof currentUser }>('/api/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify({ newPassword: newPasswordInput.trim() })
+      });
+      if (!res.ok || !res.data?.token || !res.data?.user) {
+        setChangePasswordError(res.error || 'No se pudo actualizar la contraseña.');
+        return;
+      }
+      localStorage.setItem('vt_auth_token', res.data.token);
+      localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
+      setCurrentUser(res.data.user);
+      setNewPasswordInput('');
+      setConfirmPasswordInput('');
+      setSubPayToast('¡Contraseña personal guardada en la nube! Bienvenido a VeneTurco Fiscal OS.');
+      setTimeout(() => setSubPayToast(null), 5000);
+    } finally {
+      setChangePasswordSaving(false);
     }
   }
 
@@ -2053,6 +2166,8 @@ export default function App() {
   function handleLogout() {
     setCurrentUser(null);
     localStorage.removeItem('vt_auth_user');
+    localStorage.removeItem('vt_auth_token');
+    localStorage.removeItem('vt_last_login_password');
   }
 
   function handleCreateTenant(e: React.FormEvent) {
@@ -2975,7 +3090,7 @@ export default function App() {
                 </p>
                 <p className="text-[11px] text-emerald-200/90 leading-relaxed">
                   {inviteGreeting.name ? `${inviteGreeting.name}: ` : ''}
-                  Sus credenciales temporales autorizadas han sido completadas automáticamente. Presione <strong>«Iniciar Sesión Segura»</strong> abajo para ingresar a su panel contable.
+                  Su correo ha sido pre-cargado automáticamente. Ingrese la <strong>clave temporal</strong> recibida por WhatsApp y pulse <strong>«Iniciar Sesión Segura»</strong> para activar su cuenta.
                 </p>
               </div>
             </div>
@@ -2987,10 +3102,6 @@ export default function App() {
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('superadmin');
-                const saved = safeGetStorage('vt_last_login_email', '');
-                const savedPass = safeGetStorage('vt_last_login_password', '');
-                setLoginEmail(saved);
-                setLoginPassword(savedPass);
               }}
               className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'superadmin'
@@ -2998,7 +3109,7 @@ export default function App() {
                   : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
               } disabled:opacity-40 transition-all`}
             >
-              <span className="text-base sm:text-lg">👑</span>
+              <ShieldCheck className="w-4 h-4" />
               <span className="leading-tight font-semibold">Super-Admin</span>
             </button>
             <button
@@ -3006,8 +3117,6 @@ export default function App() {
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('admin');
-                setLoginEmail('auditor@veneturco.com');
-                setLoginPassword('Contadora2026#');
               }}
               className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'admin'
@@ -3015,7 +3124,7 @@ export default function App() {
                   : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
               } disabled:opacity-40 transition-all`}
             >
-              <span className="text-base sm:text-lg">💼</span>
+              <Briefcase className="w-4 h-4" />
               <span className="leading-tight font-semibold">Firma Contable</span>
             </button>
             <button
@@ -3023,7 +3132,6 @@ export default function App() {
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('client');
-                setLoginEmail('gerencia@bodegajh.com');
               }}
               className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'client'
@@ -3031,7 +3139,7 @@ export default function App() {
                   : 'bg-[var(--bg-elevated)] border-[var(--border-subtle)] opacity-80 hover:opacity-100'
               } disabled:opacity-40 transition-all`}
             >
-              <span className="text-base sm:text-lg">📱</span>
+              <Smartphone className="w-4 h-4" />
               <span className="leading-tight font-semibold">Cliente Comercio</span>
             </button>
           </div>
@@ -3090,7 +3198,9 @@ export default function App() {
                   <input
                     type="email"
                     required
-                    disabled={isAccountLocked}
+                    autoComplete="email"
+                    placeholder="correo@firma.com"
+                    disabled={isAccountLocked || loginSubmitting}
                     value={loginEmail}
                     onChange={e => setLoginEmail(e.target.value)}
                     className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
@@ -3098,24 +3208,42 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block mb-1.5 text-xs text-white/70 font-medium">Contraseña de Bóveda</label>
-                  <input
-                    type="password"
-                    required
-                    disabled={isAccountLocked}
-                    value={loginPassword}
-                    onChange={e => setLoginPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showLoginPassword ? 'text' : 'password'}
+                      required
+                      autoComplete="current-password"
+                      placeholder="Ingrese su contraseña o clave temporal"
+                      disabled={isAccountLocked || loginSubmitting}
+                      value={loginPassword}
+                      onChange={e => setLoginPassword(e.target.value)}
+                      className="w-full p-3 pr-10 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-subtle)] text-base md:text-xs text-white disabled:opacity-50 focus:border-blue-500 focus:outline-none transition-all shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(v => !v)}
+                      title={showLoginPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white transition"
+                    >
+                      {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={isAccountLocked}
+                disabled={isAccountLocked || loginSubmitting}
                 className="ui-btn-primary w-full py-3 text-xs flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Lock className="w-4 h-4" />
-                <span>{isAccountLocked ? 'Acceso Bloqueado por Seguridad' : 'Iniciar Sesión Segura'}</span>
+                <span>
+                  {isAccountLocked
+                    ? 'Acceso Bloqueado por Seguridad'
+                    : loginSubmitting
+                      ? 'Verificando en la nube...'
+                      : 'Iniciar Sesión Segura'}
+                </span>
               </button>
             </>
           )}
@@ -3831,17 +3959,16 @@ export default function App() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
 
-                              {/* Invitación WhatsApp Oficial */}
-                              <a
-                                href={getWhatsAppAccountantInviteUrl(acc)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium text-[11px] flex items-center gap-1.5 border border-white/10 shadow-sm transition-all active:scale-[0.98]"
-                                title="Enviar Carta de Invitación y Credenciales por WhatsApp"
+                              {/* Generar Clave Real en la Nube & Invitar WhatsApp */}
+                              <button
+                                type="button"
+                                onClick={() => handleResetAccountantPassword(acc)}
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-medium text-[11px] flex items-center gap-1.5 border border-emerald-500/30 shadow-sm transition-all active:scale-[0.98]"
+                                title="Activar en la nube, generar clave temporal real y enviar por WhatsApp"
                               >
-                                <MessageSquare className="w-3.5 h-3.5 text-[#25D366]" />
-                                <span>Invitar WhatsApp</span>
-                              </a>
+                                <KeyRound className="w-3.5 h-3.5 text-[#25D366]" />
+                                <span>Clave &amp; WhatsApp</span>
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -8449,6 +8576,159 @@ export default function App() {
                 <span>{editAccId ? 'Actualizar Contador' : 'Guardar y Activar'}</span>
               </button>
             </div>
+          </form>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL CREDENCIALES ACTIVADAS EN LA NUBE (INVITACIÓN CONTADOR REAL)
+         ===================================================================== */}
+      {issuedInviteModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setIssuedInviteModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-[#1C1C1E] border border-white/15 p-6 space-y-4 text-xs shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Cuenta Activada en la Nube</h3>
+                  <p className="text-[11px] text-[#8E8E93]">
+                    {issuedInviteModal.accountant.name} ({issuedInviteModal.accountant.cpcNumber})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIssuedInviteModal(null)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-white/60 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2.5 font-mono">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-[#8E8E93]">Correo de Acceso</div>
+                <div className="text-xs font-semibold text-white mt-0.5">{issuedInviteModal.accountant.email}</div>
+              </div>
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-[#8E8E93]">Clave Temporal Única</div>
+                  <div className="text-base font-bold text-emerald-400 tracking-wider mt-0.5 select-all">
+                    {issuedInviteModal.tempPassword}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(issuedInviteModal.tempPassword);
+                    setCopiedInvitePass(true);
+                    setTimeout(() => setCopiedInvitePass(false), 2500);
+                  }}
+                  className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-[11px] font-medium flex items-center gap-1.5 border border-white/10"
+                >
+                  {copiedInvitePass ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedInvitePass ? 'Copiada' : 'Copiar'}</span>
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-white/70 leading-relaxed">
+              Esta cuenta ya quedó guardada en <strong>Cloud Firestore</strong>. En el primer ingreso del contador, el sistema le pedirá crear su contraseña personal definitiva.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIssuedInviteModal(null)}
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-medium"
+              >
+                Cerrar
+              </button>
+              <a
+                href={getWhatsAppAccountantInviteUrl(issuedInviteModal.accountant, issuedInviteModal.tempPassword)}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 rounded-xl bg-[#25D366] hover:bg-[#20bd5a] text-slate-950 font-bold text-xs flex items-center gap-2 shadow-sm transition"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Enviar Invitación por WhatsApp</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL CAMBIO OBLIGATORIO DE CONTRASEÑA TEMPORAL (PRIMER INGRESO)
+         ===================================================================== */}
+      {currentUser?.mustChangePassword && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-lg flex items-center justify-center p-4">
+          <form
+            onSubmit={handleChangeMandatoryPassword}
+            className="w-full max-w-md rounded-2xl bg-[#1C1C1E] border border-white/15 p-6 space-y-4 text-xs shadow-2xl"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Crea tu Contraseña Personal</h3>
+                <p className="text-[11px] text-[#8E8E93]">
+                  Por seguridad, reemplaza tu clave temporal antes de operar ({currentUser.email}).
+                </p>
+              </div>
+            </div>
+
+            {changePasswordError && (
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[11px]">
+                {changePasswordError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block mb-1 text-white/70 font-medium">Nueva Contraseña (mínimo 8 caracteres)</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  autoFocus
+                  value={newPasswordInput}
+                  onChange={e => setNewPasswordInput(e.target.value)}
+                  placeholder="Ej: MiClaveSegura2026#"
+                  className="w-full p-3 rounded-xl bg-black/40 border border-white/15 text-white focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block mb-1 text-white/70 font-medium">Confirmar Nueva Contraseña</label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  value={confirmPasswordInput}
+                  onChange={e => setConfirmPasswordInput(e.target.value)}
+                  placeholder="Repite tu nueva contraseña"
+                  className="w-full p-3 rounded-xl bg-black/40 border border-white/15 text-white focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={changePasswordSaving}
+              className="w-full py-3 rounded-xl bg-white hover:bg-white/90 text-black font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{changePasswordSaving ? 'Guardando en la nube...' : 'Activar Contraseña y Entrar'}</span>
+            </button>
           </form>
         </div>
       )}
