@@ -1,0 +1,35 @@
+name: VeneTurco Fiscal OS - CI & Deploy Verification
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-build:
+    name: Auditoría Fiscal SENIAT/LOTTT & Compilación Producción
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Instalar dependencias raíz y backend
+        run: npm install --no-audit --no-fund && (cd backend && npm install --no-audit --no-fund)
+
+      - name: Ejecutar Suite de Pruebas Fiscales (SENIAT + LOTTT + Motor VNDE + Anti-IDOR)
+        run: npm test
+
+      - name: Compilar Frontend Producción (Vite)
+        run: npm run build
+
+      - name: Verificar Integridad del Servidor Express
+        run: |
+          node -e "const app = require('./backend/server.js'); if (!app) process.exit(1); console.log('Servidor Express verificado correctamente.'); process.exit(0);"
