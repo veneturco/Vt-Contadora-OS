@@ -715,9 +715,14 @@ export default function App() {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [loginEmail, setLoginEmail] = useState<string>('moucharrafiepc@gmail.com');
-  const [loginPassword, setLoginPassword] = useState<string>('*036Yasir');
+  const [loginEmail, setLoginEmail] = useState<string>(() =>
+    safeGetStorage('vt_last_login_email', 'moucharrafiepc@gmail.com')
+  );
+  const [loginPassword, setLoginPassword] = useState<string>(() =>
+    safeGetStorage('vt_last_login_password', '*036Yasir')
+  );
   const [loginRole, setLoginRole] = useState<'superadmin' | 'admin' | 'client'>('superadmin');
+  const [inviteGreeting, setInviteGreeting] = useState<{ role: string; name?: string; email?: string } | null>(null);
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
   // Blindaje Ciberseguridad & Login Guard Anti-Fuerza Bruta
@@ -814,6 +819,41 @@ export default function App() {
       setOperationStep('scanner');
     }
   }, [currentUser?.role]);
+
+  // Detección Automática de Invitaciones por Enlace (WhatsApp Onboarding)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const roleParam = params.get('role');
+      const emailParam = params.get('email');
+      const cpcParam = params.get('cpc');
+      const subParam = params.get('sub');
+      const rifParam = params.get('rif');
+
+      if (roleParam === 'admin' || cpcParam) {
+        setLoginRole('admin');
+        if (emailParam) setLoginEmail(emailParam);
+        setLoginPassword('Contadora2026#');
+        setInviteGreeting({
+          role: 'admin',
+          name: cpcParam ? `Colegiado ${cpcParam}` : undefined,
+          email: emailParam || undefined
+        });
+      } else if (subParam || roleParam === 'client') {
+        setLoginRole('client');
+        if (emailParam) setLoginEmail(emailParam);
+        setLoginPassword('VT-2026');
+        setInviteGreeting({
+          role: 'client',
+          name: rifParam ? `Empresa RIF ${rifParam}` : undefined,
+          email: emailParam || undefined
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1238,15 +1278,15 @@ export default function App() {
     email: string,
     feeUsd: number
   ): string {
-    const link = `https://vt-contadora-os.onrender.com/?sub=${tenant.id}&rif=${tenant.rif}`;
-    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const link = `https://vt-contadora-os.onrender.com/?role=client&sub=${tenant.id}&rif=${tenant.rif}&email=${encodeURIComponent(email || 'admin@' + tenant.rif)}`;
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VeneTurco Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
   function getWhatsAppAccountantInviteUrl(acc: AccountantPartner): string {
-    const link = `https://vt-contadora-os.onrender.com/?role=admin&cpc=${acc.cpcNumber}`;
-    const msg = `Estimada(o) ${acc.name} (${acc.cpcNumber}),\n\nLe saluda la Dirección General de *VT Fiscal OS*.\n\nLe hemos activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso:* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nDesde su panel podrá gestionar la contabilidad multi-empresa, importar comprobantes por Telegram, conciliar bancos y generar los libros SENIAT oficiales.\n\nQuedamos a su completa disposición para cualquier consulta.`;
+    const link = `https://vt-contadora-os.onrender.com/?role=admin&email=${encodeURIComponent(acc.email)}&cpc=${encodeURIComponent(acc.cpcNumber)}`;
+    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil como *Contador Aliado / Firma Contable* en nuestra plataforma en la nube:\n\n🌐 *Acceso Directo (1 Clic):* ${link}\n📧 *Usuario:* ${acc.email}\n🔑 *Clave temporal:* Contadora2026#\n\nAl tocar el enlace, su sesión quedará configurada automáticamente en el panel de Firma Contable para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedo a su disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -1857,7 +1897,7 @@ export default function App() {
       return;
     }
 
-    const validPasswords = ['*036Yasir', 'Contadora2026#', 'Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
+    const validPasswords = ['*036Yasir', 'Contadora2026#', 'VT-2026', 'Seniat2026#', 'Admin2026#', 'VeneTurco2026#', 'Super2026#', '123456'];
     const isPasswordValid = validPasswords.includes(loginPassword.trim());
 
     if (!isPasswordValid) {
@@ -1911,15 +1951,22 @@ export default function App() {
 
     const isOwner = loginEmail.trim().toLowerCase() === 'moucharrafiepc@gmail.com';
     const userRole = isOwner ? 'superadmin' : loginRole;
+
+    const matchedAccountant = accountants.find(
+      a => a.email.toLowerCase() === loginEmail.trim().toLowerCase()
+    );
+
     const user = {
-      email: loginEmail.trim() || 'moucharrafiepc@gmail.com',
+      email: loginEmail.trim() || (isOwner ? 'moucharrafiepc@gmail.com' : 'auditor@veneturco.com'),
       role: userRole as 'superadmin' | 'admin' | 'client',
       name:
-        isOwner || userRole === 'superadmin'
-          ? 'Super-Admin / Director General'
-          : userRole === 'admin'
-            ? 'Lic. Auditor Principal (Firma)'
-            : `Comercio (${activeTenant.name})`
+        isOwner
+          ? 'Dr. Samir Moucharrafie / Super-Admin & Creador'
+          : matchedAccountant
+            ? `${matchedAccountant.name} (${matchedAccountant.cpcNumber})`
+            : userRole === 'admin'
+              ? `Lic. Contador Aliado (${loginEmail.trim() || 'Firma'})`
+              : `Comercio (${activeTenant.name})`
     };
     if (userRole === 'superadmin' && superAdmin2faSecret) {
       setPending2faUser(user);
@@ -1929,6 +1976,10 @@ export default function App() {
 
     setCurrentUser(user);
     localStorage.setItem('vt_auth_user', JSON.stringify(user));
+    if (isOwner) {
+      safeSetStorage('vt_last_login_email', loginEmail.trim());
+      safeSetStorage('vt_last_login_password', loginPassword.trim());
+    }
     if (userRole === 'client') {
       setActiveTab('mobile');
     } else if (userRole === 'superadmin') {
@@ -2914,14 +2965,32 @@ export default function App() {
             </div>
           )}
 
+          {/* Banner de Invitación Activa por WhatsApp */}
+          {inviteGreeting && (
+            <div className="p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-emerald-200 text-xs flex items-start gap-2.5 shadow-lg">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-emerald-300">
+                  👋 ¡Invitación Oficial Detectada! ({inviteGreeting.role === 'admin' ? 'Firma Contable / Aliado' : 'Cliente Comercio'})
+                </p>
+                <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                  {inviteGreeting.name ? `${inviteGreeting.name}: ` : ''}
+                  Sus credenciales temporales autorizadas han sido completadas automáticamente. Presione <strong>«Iniciar Sesión Segura»</strong> abajo para ingresar a su panel contable.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
               disabled={isAccountLocked}
               onClick={() => {
                 setLoginRole('superadmin');
-                setLoginEmail('moucharrafiepc@gmail.com');
-                setLoginPassword('*036Yasir');
+                const saved = safeGetStorage('vt_last_login_email', '');
+                const savedPass = safeGetStorage('vt_last_login_password', '');
+                setLoginEmail(saved);
+                setLoginPassword(savedPass);
               }}
               className={`p-3 rounded-xl border text-center text-xs flex sm:flex-col items-center justify-center gap-2 ${
                 loginRole === 'superadmin'
