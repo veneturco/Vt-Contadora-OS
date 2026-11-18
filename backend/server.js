@@ -140,6 +140,73 @@ function createInMemoryFirestore() {
   };
 }
 
+function createResilientFirestore(primaryDb) {
+  const fallbackDb = createInMemoryFirestore();
+  let useFallback = false;
+
+  async function execWithFallback(primaryFn, fallbackFn) {
+    if (useFallback) return fallbackFn();
+    try {
+      return await primaryFn();
+    } catch (err) {
+      const code = err?.code;
+      const msg = String(err?.message || '');
+      if (
+        code === 7 || // PERMISSION_DENIED (Firestore API disabled)
+        code === 5 || // NOT_FOUND (Firestore database not created yet)
+        code === 14 || // UNAVAILABLE
+        /PERMISSION_DENIED|firestore\.googleapis\.com|NOT_FOUND/i.test(msg)
+      ) {
+        if (!useFallback) {
+          console.warn('⚠️ Cloud Firestore no disponible (' + msg.slice(0, 120) + '). Activando bóveda en memoria automática.');
+          useFallback = true;
+        }
+        return fallbackFn();
+      }
+      throw err;
+    }
+  }
+
+  function wrapDocRef(colPath, docId) {
+    const pDoc = docId ? primaryDb.collection(colPath).doc(docId) : primaryDb.collection(colPath).doc();
+    const effectiveId = pDoc.id;
+    const fDoc = fallbackDb.collection(colPath).doc(effectiveId);
+    return {
+      id: effectiveId,
+      path: `${colPath}/${effectiveId}`,
+      get: () => execWithFallback(() => pDoc.get(), () => fDoc.get()),
+      set: (payload, options) => execWithFallback(() => pDoc.set(payload, options), () => fDoc.set(payload, options)),
+      update: (payload) => execWithFallback(() => pDoc.update(payload), () => fDoc.update(payload)),
+      delete: () => execWithFallback(() => pDoc.delete(), () => fDoc.delete())
+    };
+  }
+
+  return {
+    get isFallback() {
+      return useFallback;
+    },
+    collection(colPath) {
+      const pCol = primaryDb.collection(colPath);
+      const fCol = fallbackDb.collection(colPath);
+      return {
+        doc: (docId) => wrapDocRef(colPath, docId),
+        add: (payload) => execWithFallback(() => pCol.add(payload), () => fCol.add(payload)),
+        get: () => execWithFallback(() => pCol.get(), () => fCol.get()),
+        where: (field, op, val) => ({
+          limit: (n) => ({
+            get: () => execWithFallback(() => pCol.where(field, op, val).limit(n).get(), () => fCol.where(field, op, val).limit(n).get())
+          })
+        }),
+        orderBy: (field, dir) => ({
+          limit: (n) => ({
+            get: () => execWithFallback(() => pCol.orderBy(field, dir).limit(n).get(), () => fCol.orderBy(field, dir).limit(n).get())
+          })
+        })
+      };
+    }
+  };
+}
+
 let db;
 try {
   const serviceAccountStr = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
@@ -155,7 +222,7 @@ try {
         credential: admin.credential.cert(serviceAccount)
       });
     }
-    db = admin.firestore();
+    db = createResilientFirestore(admin.firestore());
   } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS || fs.existsSync(path.resolve(__dirname, 'service-account-firebase.json'))) {
     const rawCredPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || path.resolve(__dirname, 'service-account-firebase.json');
     const resolvedCredPath = fs.existsSync(rawCredPath)
@@ -168,7 +235,7 @@ try {
           credential: admin.credential.cert(serviceAccount)
         });
       }
-      db = admin.firestore();
+      db = createResilientFirestore(admin.firestore());
     } else {
       db = createInMemoryFirestore();
     }
