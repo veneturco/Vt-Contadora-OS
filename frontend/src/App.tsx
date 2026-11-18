@@ -3100,7 +3100,7 @@ export default function App() {
               />
               <div>
                 <h1 className="ui-heading text-2xl font-bold tracking-tight text-white leading-none">
-                  VT FISCAL OS
+                  FISCAL OS
                 </h1>
                 <p className="opacity-75 mt-1">Acceso Blindado Multi-Empresa · SENIAT &amp; Contabilidad Cloud</p>
               </div>
@@ -3431,8 +3431,7 @@ export default function App() {
               />
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">VT</span>
-                  <span className="text-xs font-mono font-medium text-[#8E8E93]">Fiscal OS</span>
+                  <span className="font-semibold text-sm md:text-base text-white tracking-tight">Fiscal OS</span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70">v3.2</span>
                 </div>
               </div>
@@ -5920,7 +5919,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono uppercase font-bold flex items-center gap-1.5">
                   <Send className="w-3.5 h-3.5 text-[var(--accent-secondary)]" />
-                  Consola Bot Telegram (@VeneTurcoBot)
+                  Consola Bot Telegram (@VTFiscalBot)
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
                   GEMINI 2.5 FLASH
@@ -5938,7 +5937,7 @@ export default function App() {
                     }`}
                   >
                     <div className="flex justify-between text-[10px] opacity-60 mb-1">
-                      <span>{msg.sender === 'user' ? activeTenant.name : 'VeneTurco Fiscal Bot'}</span>
+                      <span>{msg.sender === 'user' ? activeTenant.name : 'VT Fiscal Bot'}</span>
                       <span>{msg.time}</span>
                     </div>
                     <div>{msg.text}</div>
