@@ -13,7 +13,12 @@ const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
 const { syncOfficialBcvRate, DEFAULT_CURRENT_BCV_USD } = require('./services/bcvSyncCron');
 const {
   verifySessionToken,
+  isUserActiveInDb,
+  generateTotpSecretNode,
   authenticateUser,
+  verifyPending2faLogin,
+  enableUser2fa,
+  disableUser2fa,
   changeUserPassword,
   upsertAccountantAccount,
   resetAccountantPassword,
@@ -333,17 +338,26 @@ const authLimiter = rateLimit({
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
+    const queryToken = req.path === '/api/events/invoices' && typeof req.query?.token === 'string'
+      ? req.query.token.trim()
+      : '';
     const isProduction = process.env.NODE_ENV === 'production';
     if (!isProduction && authHeader === 'Bearer DEV_LOCAL_BYPASS') {
       req.user = { uid: 'contador_auditor_local', role: 'superadmin', email: 'moucharrafiepc@gmail.com' };
       return next();
     }
-    if (!authHeader.startsWith('Bearer ')) {
+    const token = authHeader.startsWith('Bearer ')
+      ? authHeader.split('Bearer ')[1].trim()
+      : queryToken;
+    if (!token) {
       return res.status(401).json({ error: 'Token Bearer requerido' });
     }
-    const token = authHeader.split('Bearer ')[1].trim();
     const sessionUser = verifySessionToken(token);
     if (sessionUser) {
+      const active = await isUserActiveInDb(db, sessionUser.email);
+      if (!active) {
+        return res.status(403).json({ error: 'Cuenta suspendida o revocada.' });
+      }
       req.user = sessionUser;
       return next();
     }
@@ -408,8 +422,16 @@ function broadcastInvoiceEvent(tenantId, invoice) {
   }
 }
 
-app.get('/api/events/invoices', (req, res) => {
-  const tenantId = req.query.tenantId || 'all';
+app.get('/api/events/invoices', verifyFirebaseToken, (req, res) => {
+  const requestedTenant = String(req.query.tenantId || 'all');
+  const isSuper = req.user?.role === 'superadmin';
+  const allowedIds = Array.isArray(req.user?.tenantIds) ? req.user.tenantIds : [];
+  if (!isSuper) {
+    if (requestedTenant === 'all' || !allowedIds.includes(requestedTenant)) {
+      return res.status(403).json({ error: 'Acceso denegado al canal SSE de esta empresa.' });
+    }
+  }
+  const tenantId = requestedTenant;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -688,12 +710,69 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
         lockRemainingSeconds: result.lockRemainingSeconds
       });
     }
+    if (result.requires2fa) {
+      return res.json({
+        ok: true,
+        requires2fa: true,
+        pending2faToken: result.pending2faToken,
+        user: result.user,
+        storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE'
+      });
+    }
     return res.json({
       ok: true,
       token: result.token,
       user: result.user,
       storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE'
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/verify-2fa', authLimiter, async (req, res, next) => {
+  try {
+    const { pending2faToken, code } = req.body || {};
+    const result = await verifyPending2faLogin(db, pending2faToken, code);
+    if (!result.ok) {
+      return res.status(result.status || 401).json({ error: result.error });
+    }
+    return res.json({
+      ok: true,
+      token: result.token,
+      user: result.user,
+      storageMode: db.isFallback ? 'IN_MEMORY_VAULT' : 'FIREBASE_CLOUD_FIRESTORE'
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/2fa/setup', verifyFirebaseToken, requireSuperAdmin, (_req, res) => {
+  const secret = generateTotpSecretNode(20);
+  return res.json({ ok: true, secret });
+});
+
+app.post('/api/auth/2fa/enable', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { secret, code } = req.body || {};
+    const result = await enableUser2fa(db, req.user.email, secret, code);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/auth/2fa/disable', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await disableUser2fa(db, req.user.email);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
   } catch (err) {
     next(err);
   }
@@ -821,7 +900,7 @@ app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
     }
     const allowedIds = new Set(Array.isArray(req.user.tenantIds) ? req.user.tenantIds : []);
     const tenants = Array.isArray(raw.tenants)
-      ? raw.tenants.filter(t => allowedIds.has(t.id) || t.ownerEmail === req.user.email)
+      ? raw.tenants.filter(t => allowedIds.has(t.id))
       : [];
     const effectiveIds = new Set(tenants.map(t => t.id));
     return res.json({
@@ -842,6 +921,9 @@ app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
 
 app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   try {
+    if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado: solo contadores o Super-Admin pueden sincronizar el espacio de trabajo.' });
+    }
     const { tenants, invoices, employees, payments } = req.body || {};
     const nowIso = new Date().toISOString();
 
@@ -858,7 +940,7 @@ app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
       return res.json({ ok: true, updatedAt: nowIso });
     }
 
-    // Para contadores / clientes: fusiona solo las empresas permitidas sin sobrescribir las de otros
+    // Para contadores: solo permite actualizar empresas autorizadas en req.user.tenantIds del token
     const docRef = db.collection('vt_workspace').doc('shared_state');
     const snap = await docRef.get();
     const existing = snap.exists ? (snap.data() || {}) : {};
@@ -866,11 +948,11 @@ app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
 
     const incomingTenants = Array.isArray(tenants) ? tenants : [];
     const ownTenantIds = new Set(
-      incomingTenants.filter(t => allowedIds.has(t.id) || t.ownerEmail === req.user.email).map(t => t.id)
+      incomingTenants.filter(t => allowedIds.has(t.id)).map(t => t.id)
     );
 
     const mergeByTenant = (prevArr = [], nextArr = [], idField = 'id') => {
-      const preserved = (Array.isArray(prevArr) ? prevArr : []).filter(item => !ownTenantIds.has(item.tenantId || item[idField]));
+      const preserved = (Array.isArray(prevArr) ? prevArr : []).filter(item => !allowedIds.has(item.tenantId || item[idField]));
       const own = (Array.isArray(nextArr) ? nextArr : []).filter(item => ownTenantIds.has(item.tenantId || item[idField]));
       return [...own, ...preserved];
     };

@@ -1,19 +1,101 @@
 const crypto = require('crypto');
 
-const TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 días
+const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12 horas
+const PENDING_2FA_TTL_SECONDS = 5 * 60; // 5 minutos
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MS = 30 * 60 * 1000; // 30 minutos
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+// Cache breve (15s) de estado de usuario para validar bajas/suspensiones en vivo sin saturar Firestore
+const userStatusCache = new Map();
+const STATUS_CACHE_TTL_MS = 15 * 1000;
 
 const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || 'moucharrafiepc@gmail.com').trim().toLowerCase();
 const SUPER_ADMIN_BOOTSTRAP_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || '*036Yasir';
 
 function getSigningSecret() {
-  return (
+  const secret =
     process.env.AUTH_TOKEN_SECRET ||
     process.env.AES_MASTER_KEY ||
-    process.env.TELEGRAM_WEBHOOK_SECRET ||
-    'vt-fiscal-os-default-hmac-signing-key-2026'
-  );
+    process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('CONFIGURACIÓN CRÍTICA FALTANTE: Defina AUTH_TOKEN_SECRET o AES_MASTER_KEY en producción.');
+    }
+    return 'vt-fiscal-os-dev-only-signing-key-2026';
+  }
+  return secret;
+}
+
+function invalidateUserStatusCache(email) {
+  if (email) userStatusCache.delete(normalizeEmail(email));
+}
+
+async function isUserActiveInDb(db, email) {
+  const cleanEmail = normalizeEmail(email);
+  if (!cleanEmail || !db) return true;
+  const cached = userStatusCache.get(cleanEmail);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.active;
+  }
+  try {
+    const snap = await db.collection('vt_users').doc(cleanEmail).get();
+    const active = !snap.exists || (snap.data()?.status !== 'SUSPENDIDA' && snap.data()?.status !== 'ELIMINADO');
+    userStatusCache.set(cleanEmail, { active, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
+    return active;
+  } catch {
+    return true;
+  }
+}
+
+function base32ToBuffer(base32) {
+  const clean = String(base32 || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const out = [];
+  for (let i = 0; i < clean.length; i++) {
+    const idx = BASE32_ALPHABET.indexOf(clean[i]);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+function generateTotpSecretNode(length = 20) {
+  const bytes = crypto.randomBytes(length);
+  let secret = '';
+  for (let i = 0; i < length; i++) {
+    secret += BASE32_ALPHABET[bytes[i] % BASE32_ALPHABET.length];
+  }
+  return secret;
+}
+
+function verifyTotpCodeNode(secret, inputCode) {
+  const cleanCode = String(inputCode || '').replace(/\s+/g, '').trim();
+  if (!/^\d{6}$/.test(cleanCode) || !secret) return false;
+  const key = base32ToBuffer(secret);
+  const epoch = Math.floor(Date.now() / 1000);
+  for (const offset of [0, -1, 1]) {
+    const counter = Math.floor(epoch / 30) + offset;
+    const buf = Buffer.alloc(8);
+    buf.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+    buf.writeUInt32BE(counter >>> 0, 4);
+    const hmac = crypto.createHmac('sha1', key).update(buf).digest();
+    const dynOffset = hmac[hmac.length - 1] & 0x0f;
+    const codeInt =
+      ((hmac[dynOffset] & 0x7f) << 24) |
+      ((hmac[dynOffset + 1] & 0xff) << 16) |
+      ((hmac[dynOffset + 2] & 0xff) << 8) |
+      (hmac[dynOffset + 3] & 0xff);
+    const candidate = String(codeInt % 1000000).padStart(6, '0');
+    if (candidate === cleanCode) return true;
+  }
+  return false;
 }
 
 function normalizeEmail(email) {
@@ -61,8 +143,9 @@ function base64UrlDecode(str) {
   return Buffer.from(padded, 'base64').toString('utf8');
 }
 
-function signSessionToken(payload) {
+function signSessionToken(payload, options = {}) {
   const nowSec = Math.floor(Date.now() / 1000);
+  const ttl = options.ttlSeconds || TOKEN_TTL_SECONDS;
   const header = { alg: 'HS256', typ: 'JWT' };
   const body = {
     uid: payload.uid,
@@ -73,8 +156,9 @@ function signSessionToken(payload) {
     accountantId: payload.accountantId || null,
     tenantIds: Array.isArray(payload.tenantIds) ? payload.tenantIds : [],
     mustChangePassword: Boolean(payload.mustChangePassword),
+    scope: options.scope || 'session',
     iat: nowSec,
-    exp: nowSec + TOKEN_TTL_SECONDS
+    exp: nowSec + ttl
   };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedBody = base64UrlEncode(JSON.stringify(body));
@@ -83,7 +167,7 @@ function signSessionToken(payload) {
   return `${data}.${sig}`;
 }
 
-function verifySessionToken(token) {
+function verifySessionToken(token, expectedScope = 'session') {
   if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
@@ -97,6 +181,7 @@ function verifySessionToken(token) {
     const payload = JSON.parse(base64UrlDecode(encodedBody));
     const nowSec = Math.floor(Date.now() / 1000);
     if (!payload.exp || payload.exp < nowSec) return null;
+    if (expectedScope && (payload.scope || 'session') !== expectedScope) return null;
     return payload;
   } catch {
     return null;
@@ -113,7 +198,8 @@ function toPublicUser(userDoc) {
     accountantId: userDoc.accountantId || null,
     tenantIds: Array.isArray(userDoc.tenantIds) ? userDoc.tenantIds : [],
     status: userDoc.status || 'ACTIVA',
-    mustChangePassword: Boolean(userDoc.mustChangePassword)
+    mustChangePassword: Boolean(userDoc.mustChangePassword),
+    totpEnabled: Boolean(userDoc.totpEnabled)
   };
 }
 
@@ -285,8 +371,81 @@ async function authenticateUser(db, adminSdk, { email, password }) {
   );
 
   const publicUser = toPublicUser(userDoc);
+  if (userDoc.totpEnabled && userDoc.totpSecret) {
+    const pending2faToken = signSessionToken(publicUser, {
+      scope: 'pending_2fa',
+      ttlSeconds: PENDING_2FA_TTL_SECONDS
+    });
+    return {
+      ok: true,
+      status: 200,
+      requires2fa: true,
+      pending2faToken,
+      user: publicUser
+    };
+  }
+
   const token = signSessionToken(publicUser);
   return { ok: true, status: 200, token, user: publicUser };
+}
+
+async function verifyPending2faLogin(db, pending2faToken, code) {
+  const pending = verifySessionToken(pending2faToken, 'pending_2fa');
+  if (!pending || !pending.email) {
+    return { ok: false, status: 401, error: 'Sesión 2FA expirada. Ingresa tu correo y contraseña nuevamente.' };
+  }
+  const userRef = db.collection('vt_users').doc(normalizeEmail(pending.email));
+  const snap = await userRef.get();
+  if (!snap.exists) {
+    return { ok: false, status: 404, error: 'Usuario no encontrado.' };
+  }
+  const userDoc = snap.data();
+  if (userDoc.status === 'SUSPENDIDA' || userDoc.status === 'ELIMINADO') {
+    return { ok: false, status: 403, error: 'Cuenta suspendida.' };
+  }
+  if (!userDoc.totpEnabled || !userDoc.totpSecret) {
+    return { ok: false, status: 400, error: '2FA no está activo para esta cuenta.' };
+  }
+  if (!verifyTotpCodeNode(userDoc.totpSecret, code)) {
+    return { ok: false, status: 401, error: 'Código 2FA inválido o expirado. Verifica tu app autenticadora.' };
+  }
+  const publicUser = toPublicUser(userDoc);
+  const token = signSessionToken(publicUser);
+  return { ok: true, status: 200, token, user: publicUser };
+}
+
+async function enableUser2fa(db, email, secret, code) {
+  const cleanEmail = normalizeEmail(email);
+  const cleanSecret = String(secret || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+  if (cleanSecret.length < 16 || !verifyTotpCodeNode(cleanSecret, code)) {
+    return { ok: false, status: 400, error: 'Código de verificación 2FA inválido. Asegúrate de usar los 6 dígitos actuales.' };
+  }
+  const userRef = db.collection('vt_users').doc(cleanEmail);
+  const snap = await userRef.get();
+  if (!snap.exists) return { ok: false, status: 404, error: 'Usuario no encontrado.' };
+  const updated = {
+    ...snap.data(),
+    totpEnabled: true,
+    totpSecret: cleanSecret,
+    updatedAt: new Date().toISOString()
+  };
+  await userRef.set(updated, { merge: true });
+  return { ok: true, status: 200, user: toPublicUser(updated) };
+}
+
+async function disableUser2fa(db, email) {
+  const cleanEmail = normalizeEmail(email);
+  const userRef = db.collection('vt_users').doc(cleanEmail);
+  const snap = await userRef.get();
+  if (!snap.exists) return { ok: false, status: 404, error: 'Usuario no encontrado.' };
+  const updated = {
+    ...snap.data(),
+    totpEnabled: false,
+    totpSecret: null,
+    updatedAt: new Date().toISOString()
+  };
+  await userRef.set(updated, { merge: true });
+  return { ok: true, status: 200, user: toPublicUser(updated) };
 }
 
 async function changeUserPassword(db, adminSdk, { email, currentPassword, newPassword }) {
@@ -421,6 +580,8 @@ async function upsertAccountantAccount(db, adminSdk, payload) {
   }
 
   await userRef.set(userUpdate, { merge: true });
+  invalidateUserStatusCache(cleanEmail);
+  if (prevEmail && prevEmail !== cleanEmail) invalidateUserStatusCache(prevEmail);
 
   const firebaseSync = await syncFirebaseAuthUser(adminSdk, {
     email: cleanEmail,
@@ -586,8 +747,14 @@ module.exports = {
   generateReadableTempPassword,
   signSessionToken,
   verifySessionToken,
+  isUserActiveInDb,
+  generateTotpSecretNode,
+  verifyTotpCodeNode,
   ensureSuperAdminSeeded,
   authenticateUser,
+  verifyPending2faLogin,
+  enableUser2fa,
+  disableUser2fa,
   changeUserPassword,
   upsertAccountantAccount,
   resetAccountantPassword,

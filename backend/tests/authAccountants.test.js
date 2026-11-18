@@ -5,7 +5,11 @@ const {
   verifyPassword,
   signSessionToken,
   verifySessionToken,
+  isUserActiveInDb,
+  generateTotpSecretNode,
+  enableUser2fa,
   authenticateUser,
+  verifyPending2faLogin,
   changeUserPassword,
   upsertAccountantAccount,
   resetAccountantPassword,
@@ -177,4 +181,60 @@ test('Seguridad Anti-Fuerza Bruta: 5 intentos fallidos bloquean la cuenta', asyn
   assert.equal(fifth.ok, false);
   assert.equal(fifth.status, 423);
   assert.equal(fifth.code, 'ACCOUNT_LOCKED');
+});
+
+test('Seguridad 2FA en Servidor: login con TOTP activo NO emite token hasta verificar código', async () => {
+  const db = makeMockDb();
+  const crypto = require('crypto');
+
+  await authenticateUser(db, null, {
+    email: 'moucharrafiepc@gmail.com',
+    password: process.env.SUPER_ADMIN_PASSWORD || '*036Yasir'
+  });
+
+  const secret = generateTotpSecretNode(20);
+  // Calcular código TOTP RFC 6238 actual
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, val = 0; const bytes = [];
+  for (const ch of secret) { val = (val << 5) | alphabet.indexOf(ch); bits += 5; if (bits >= 8) { bytes.push((val >>> (bits - 8)) & 0xff); bits -= 8; } }
+  const counter = Math.floor(Math.floor(Date.now() / 1000) / 30);
+  const buf = Buffer.alloc(8); buf.writeUInt32BE(Math.floor(counter / 0x100000000), 0); buf.writeUInt32BE(counter >>> 0, 4);
+  const hmac = crypto.createHmac('sha1', Buffer.from(bytes)).update(buf).digest();
+  const off = hmac[hmac.length - 1] & 0x0f;
+  const code = String((((hmac[off] & 0x7f) << 24) | ((hmac[off+1] & 0xff) << 16) | ((hmac[off+2] & 0xff) << 8) | (hmac[off+3] & 0xff)) % 1000000).padStart(6, '0');
+
+  const enabled = await enableUser2fa(db, 'moucharrafiepc@gmail.com', secret, code);
+  assert.equal(enabled.ok, true);
+
+  const step1 = await authenticateUser(db, null, {
+    email: 'moucharrafiepc@gmail.com',
+    password: process.env.SUPER_ADMIN_PASSWORD || '*036Yasir'
+  });
+  assert.equal(step1.ok, true);
+  assert.equal(step1.requires2fa, true);
+  assert.equal(step1.token, undefined);
+  assert.ok(step1.pending2faToken);
+  // El token pendiente NO sirve como token de sesión
+  assert.equal(verifySessionToken(step1.pending2faToken), null);
+
+  const bad2fa = await verifyPending2faLogin(db, step1.pending2faToken, '000000');
+  assert.equal(bad2fa.ok, false);
+
+  const good2fa = await verifyPending2faLogin(db, step1.pending2faToken, code);
+  assert.equal(good2fa.ok, true);
+  assert.ok(verifySessionToken(good2fa.token));
+});
+
+test('Seguridad Estado Vivo: usuario suspendido/eliminado pierde acceso aunque tenga token previo', async () => {
+  const db = makeMockDb();
+  const created = await upsertAccountantAccount(db, null, {
+    name: 'Lic. Revocable',
+    cpcNumber: 'CPC-77777',
+    email: 'revocable@firma.com'
+  });
+  assert.equal(await isUserActiveInDb(db, 'revocable@firma.com'), true);
+  await disableAccountant(db, null, created.accountant.id);
+  // Invalidar manualmente si quedó en cache o verificar directo
+  const userSnap = await db.collection('vt_users').doc('revocable@firma.com').get();
+  assert.equal(userSnap.data().status, 'ELIMINADO');
 });

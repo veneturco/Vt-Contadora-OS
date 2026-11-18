@@ -39,7 +39,7 @@ import {
   exportBankReconciliationCsv,
   downloadPdfBankReconciliationAudit
 } from './utils/seniatEngine';
-import { generateTotpSecret, getTotpUri, verifyTotpCode } from './utils/totp';
+import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { safeApiRequest } from './services/apiClient';
 
@@ -718,6 +718,7 @@ export default function App() {
     accountantId?: string | null;
     tenantIds?: string[];
     mustChangePassword?: boolean;
+    totpEnabled?: boolean;
   } | null>(() => safeGetStorage('vt_auth_user', null));
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -769,12 +770,20 @@ export default function App() {
   ]);
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'apple-craft-pro'));
 
-  // Super-Admin 2FA (TOTP) States
-  const [superAdmin2faSecret, setSuperAdmin2faSecret] = useState<string>(() => localStorage.getItem('vt_superadmin_2fa_secret') || '');
-  const [pending2faUser, setPending2faUser] = useState<{ email: string; role: 'superadmin' | 'admin' | 'client'; name: string } | null>(null);
+  // Super-Admin 2FA (TOTP) States (validación real en servidor)
+  const [pending2faUser, setPending2faUser] = useState<{
+    uid?: string;
+    email: string;
+    role: 'superadmin' | 'admin' | 'client';
+    name: string;
+    mustChangePassword?: boolean;
+    totpEnabled?: boolean;
+  } | null>(null);
+  const [pending2faToken, setPending2faToken] = useState<string>('');
   const [loginTotpInput, setLoginTotpInput] = useState<string>('');
   const [setupTotpSecret, setSetupTotpSecret] = useState<string>('');
   const [setupTotpCode, setSetupTotpCode] = useState<string>('');
+  const [subTempPassByTenant, setSubTempPassByTenant] = useState<Record<string, string>>({});
 
   // Candado de Seguridad RBAC y Enrutamiento Protegido por Rol
   const ROLE_ALLOWED_TABS: Record<'superadmin' | 'admin' | 'client', ActiveTabId[]> = {
@@ -1269,8 +1278,12 @@ export default function App() {
   // Recepción en vivo de facturas vía Server-Sent Events (SSE) desde Telegram Bot
   useEffect(() => {
     if (!currentUser || typeof window === 'undefined' || !('EventSource' in window)) return;
+    const token = window.localStorage.getItem('vt_auth_token');
+    if (!token) return;
     const tenantParam = currentUser.role === 'superadmin' ? 'all' : selectedTenantId;
-    const evtSource = new EventSource(`/api/events/invoices?tenantId=${encodeURIComponent(tenantParam)}`);
+    const evtSource = new EventSource(
+      `/api/events/invoices?tenantId=${encodeURIComponent(tenantParam)}&token=${encodeURIComponent(token)}`
+    );
     evtSource.onmessage = event => {
       try {
         const data = JSON.parse(event.data);
@@ -1343,10 +1356,31 @@ export default function App() {
     setSubModalPlanFee(t.monthlyFeeUsd || 29.99);
   }
 
-  function handleSaveSubAccount(e: React.FormEvent) {
+  async function handleSaveSubAccount(e: React.FormEvent) {
     e.preventDefault();
     if (!subAccountModalTenant) return;
-    const targetId = subAccountModalTenant.id;
+    const targetTenant = subAccountModalTenant;
+    const targetId = targetTenant.id;
+    const cleanEmail = subModalEmail.trim().toLowerCase();
+
+    const apiRes = await safeApiRequest<{ ok: boolean; email: string; tempPassword: string }>('/api/auth/subaccount-invite', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: cleanEmail,
+        name: subModalContactName.trim(),
+        tenantId: targetId,
+        tenantName: targetTenant.name,
+        rif: targetTenant.rif
+      })
+    });
+
+    if (!apiRes.ok || !apiRes.data?.tempPassword) {
+      setSubPayToast(`No se pudo activar la sub-cuenta en la nube: ${apiRes.error || 'Error de servidor'}`);
+      setTimeout(() => setSubPayToast(null), 5000);
+      return;
+    }
+
+    setSubTempPassByTenant(prev => ({ ...prev, [targetId]: apiRes.data!.tempPassword }));
     setTenants(prev =>
       prev.map(t =>
         t.id === targetId
@@ -1355,7 +1389,7 @@ export default function App() {
               subAccountEnabled: true,
               subAccountContactName: subModalContactName.trim(),
               subAccountPhone: subModalPhone.trim(),
-              subAccountEmail: subModalEmail.trim(),
+              subAccountEmail: cleanEmail,
               subAccountRole: subModalRole,
               monthlyFeeUsd: subModalPlanFee,
               subAccountStatus: t.subAccountStatus || 'TRIAL_15_DIAS',
@@ -1369,8 +1403,10 @@ export default function App() {
       'SUB_CUENTA_ACTIVADA',
       currentUser?.email || 'admin:contador',
       targetId,
-      `Sub-cuenta empresarial habilitada para ${subAccountModalTenant.name} (${subModalEmail}) · Rol: ${subModalRole} · Plan: $${subModalPlanFee}/mes`
+      `Sub-cuenta empresarial activada en Cloud Firestore para ${targetTenant.name} (${cleanEmail}) · Rol: ${subModalRole} · Plan: $${subModalPlanFee}/mes`
     );
+    setSubPayToast(`Sub-cuenta activada en la nube. Clave temporal: ${apiRes.data.tempPassword}`);
+    setTimeout(() => setSubPayToast(null), 7000);
     setSubAccountModalTenant(null);
   }
 
@@ -1382,7 +1418,11 @@ export default function App() {
     feeUsd: number
   ): string {
     const link = `https://vt-contadora-os.onrender.com/?role=client&sub=${tenant.id}&rif=${tenant.rif}&email=${encodeURIComponent(email || 'admin@' + tenant.rif)}`;
-    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\nPIN de Acceso: VT-2026\n\nCualquier duda quedamos a su completa disposición.`;
+    const issuedPass = subTempPassByTenant[tenant.id];
+    const passText = issuedPass
+      ? `Clave temporal: ${issuedPass}`
+      : 'Clave temporal: Solicítela a su contador al activar su acceso';
+    const msg = `Hola *${contactName || tenant.name}*, le saluda su departamento contable.\n\nLe he activado el acceso a su *Sub-Cuenta Empresarial* en *VT Fiscal OS* para que su equipo pueda:\n✅ Emitir Comprobantes Oficiales de Retención IVA de 14 dígitos en 10 segundos.\n✅ Escanear facturas y tickets por foto/Telegram con detección de validez SENIAT.\n✅ Consultar su balance fiscal quincenal y cálculo de IGTF 3% en vivo.\n\n🎁 *Dispone de 15 Días de Prueba Gratis (Quincena Cortesía)*.\n\n👉 Ingrese con este enlace directo:\n${link}\nUsuario: ${email || 'admin@' + tenant.rif}\n${passText}\n\nCualquier duda quedamos a su completa disposición.`;
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
@@ -2084,7 +2124,7 @@ export default function App() {
       });
       const data = await resp.json().catch(() => ({}));
 
-      if (!resp.ok || !data.ok || !data.token || !data.user) {
+      if (!resp.ok || !data.ok || !data.user || (!data.token && !data.requires2fa)) {
         if (typeof data.failedAttempts === 'number') {
           setFailedLoginAttempts(data.failedAttempts);
         }
@@ -2109,17 +2149,18 @@ export default function App() {
         cpcNumber: data.user.cpcNumber,
         accountantId: data.user.accountantId,
         tenantIds: data.user.tenantIds || [],
-        mustChangePassword: Boolean(data.user.mustChangePassword)
+        mustChangePassword: Boolean(data.user.mustChangePassword),
+        totpEnabled: Boolean(data.user.totpEnabled)
       };
 
-      localStorage.setItem('vt_auth_token', data.token);
-
-      if (authenticatedUser.role === 'superadmin' && superAdmin2faSecret) {
+      if (data.requires2fa && data.pending2faToken) {
         setPending2faUser(authenticatedUser);
+        setPending2faToken(data.pending2faToken);
         setLoginTotpInput('');
         return;
       }
 
+      localStorage.setItem('vt_auth_token', data.token);
       setCurrentUser(authenticatedUser);
       localStorage.setItem('vt_auth_user', JSON.stringify(authenticatedUser));
       setLoginPassword('');
@@ -2173,17 +2214,25 @@ export default function App() {
 
   async function handleVerifyLoginTotp(e: React.FormEvent) {
     e.preventDefault();
-    if (!pending2faUser || !superAdmin2faSecret) return;
-    const isValid = await verifyTotpCode(superAdmin2faSecret, loginTotpInput);
-    if (!isValid) {
-      setLoginErrorMessage('Código 2FA inválido o expirado. Verifica tu app autenticadora.');
+    if (!pending2faUser || !pending2faToken) return;
+    const resp = await fetch('/api/auth/verify-2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending2faToken, code: loginTotpInput })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok || !data.token || !data.user) {
+      setLoginErrorMessage(data.error || 'Código 2FA inválido o expirado. Verifica tu app autenticadora.');
       return;
     }
     setLoginErrorMessage(null);
-    setCurrentUser(pending2faUser);
-    localStorage.setItem('vt_auth_user', JSON.stringify(pending2faUser));
+    localStorage.setItem('vt_auth_token', data.token);
+    localStorage.setItem('vt_auth_user', JSON.stringify(data.user));
+    setCurrentUser(data.user);
     setPending2faUser(null);
+    setPending2faToken('');
     setLoginTotpInput('');
+    setLoginPassword('');
     setActiveTab('accountants');
   }
 
@@ -7643,31 +7692,40 @@ export default function App() {
                   <h3 className="ui-heading text-base font-bold">2FA Super-Admin (TOTP)</h3>
                 </div>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  superAdmin2faSecret
+                  currentUser?.totpEnabled
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-white/10 text-zinc-400 border border-white/10'
                 }`}>
-                  {superAdmin2faSecret ? 'ACTIVO' : 'INACTIVO'}
+                  {currentUser?.totpEnabled ? 'ACTIVO' : 'INACTIVO'}
                 </span>
               </div>
               <p className="text-[11px] text-[#8E8E93]">
-                Protege el acceso Super-Admin con códigos temporales de 6 dígitos (Google Authenticator / Apple Passwords).
+                Protege el acceso Super-Admin con códigos temporales de 6 dígitos validados en el servidor (Google Authenticator / Apple Passwords).
               </p>
 
-              {superAdmin2faSecret ? (
+              {currentUser?.totpEnabled ? (
                 <div className="space-y-3 pt-1">
                   <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px]">
-                    Doble Factor activado. El inicio de sesión Super-Admin exige código TOTP cada 30 segundos.
+                    Doble Factor activado en Cloud Firestore. El inicio de sesión Super-Admin exige código TOTP en el servidor antes de emitir el token.
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm('¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin?')) {
-                        localStorage.removeItem('vt_superadmin_2fa_secret');
-                        setSuperAdmin2faSecret('');
-                        setSubPayToast('2FA desactivado para Super-Admin.');
+                    onClick={async () => {
+                      if (!window.confirm('¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin?')) return;
+                      const res = await safeApiRequest<{ ok: boolean; user: typeof currentUser }>('/api/auth/2fa/disable', {
+                        method: 'POST',
+                        body: JSON.stringify({})
+                      });
+                      if (!res.ok || !res.data?.user) {
+                        setSubPayToast(`No se pudo desactivar 2FA: ${res.error || 'Error de servidor'}`);
                         setTimeout(() => setSubPayToast(null), 4000);
+                        return;
                       }
+                      localStorage.removeItem('vt_superadmin_2fa_secret');
+                      localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
+                      setCurrentUser(res.data.user);
+                      setSubPayToast('2FA desactivado en la nube para Super-Admin.');
+                      setTimeout(() => setSubPayToast(null), 4000);
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-semibold transition"
                   >
@@ -7715,16 +7773,19 @@ export default function App() {
                       <button
                         type="button"
                         onClick={async () => {
-                          const ok = await verifyTotpCode(setupTotpSecret, setupTotpCode);
-                          if (!ok) {
-                            alert('Código inválido. Asegúrate de ingresar los 6 dígitos actuales de tu app autenticadora.');
+                          const res = await safeApiRequest<{ ok: boolean; user: typeof currentUser }>('/api/auth/2fa/enable', {
+                            method: 'POST',
+                            body: JSON.stringify({ secret: setupTotpSecret, code: setupTotpCode })
+                          });
+                          if (!res.ok || !res.data?.user) {
+                            alert(res.error || 'Código inválido. Asegúrate de ingresar los 6 dígitos actuales de tu app autenticadora.');
                             return;
                           }
-                          localStorage.setItem('vt_superadmin_2fa_secret', setupTotpSecret);
-                          setSuperAdmin2faSecret(setupTotpSecret);
+                          localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
+                          setCurrentUser(res.data.user);
                           setSetupTotpSecret('');
                           setSetupTotpCode('');
-                          setSubPayToast('¡2FA (TOTP) activado correctamente para Super-Admin!');
+                          setSubPayToast('¡2FA (TOTP) activado en el servidor para Super-Admin!');
                           setTimeout(() => setSubPayToast(null), 5000);
                         }}
                         className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
@@ -7737,8 +7798,17 @@ export default function App() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => {
-                    setSetupTotpSecret(generateTotpSecret(20));
+                  onClick={async () => {
+                    const res = await safeApiRequest<{ ok: boolean; secret: string }>('/api/auth/2fa/setup', {
+                      method: 'POST',
+                      body: JSON.stringify({})
+                    });
+                    if (!res.ok || !res.data?.secret) {
+                      setSubPayToast(`No se pudo iniciar 2FA: ${res.error || 'Error de servidor'}`);
+                      setTimeout(() => setSubPayToast(null), 4000);
+                      return;
+                    }
+                    setSetupTotpSecret(res.data.secret);
                     setSetupTotpCode('');
                   }}
                   className="ui-btn-primary w-full py-2.5 text-xs flex items-center justify-center gap-1.5"
