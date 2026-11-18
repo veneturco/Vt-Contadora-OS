@@ -870,12 +870,32 @@ export default function App() {
     }
   }, []);
 
+  // Verificar que exista token JWT válido si hay una sesión guardada de versiones anteriores
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (currentUser && !window.localStorage.getItem('vt_auth_token')) {
+      setCurrentUser(null);
+      window.localStorage.removeItem('vt_auth_user');
+      setLoginEmail(currentUser.email || '');
+      setLoginRole(currentUser.role || 'superadmin');
+      setLoginErrorMessage('Por seguridad, inicia sesión nuevamente para activar tu token en Cloud Firestore.');
+    }
+  }, []);
+
   // Sincronización en la nube de la red de Contadores (Cloud Firestore) cuando Super-Admin inicia sesión
   useEffect(() => {
     if (currentUser?.role !== 'superadmin') return;
     let cancelled = false;
     (async () => {
       const res = await safeApiRequest<{ ok: boolean; accountants: AccountantPartner[] }>('/api/accountants');
+      if (!cancelled && (res.status === 401 || res.status === 403)) {
+        setCurrentUser(null);
+        localStorage.removeItem('vt_auth_user');
+        localStorage.removeItem('vt_auth_token');
+        setLoginEmail(currentUser.email || '');
+        setLoginErrorMessage('Sesión expirada. Inicia sesión nuevamente para conectar con la nube.');
+        return;
+      }
       if (!cancelled && res.ok && res.data && Array.isArray(res.data.accountants)) {
         if (res.data.accountants.length > 0) {
           setAccountants(prev => {
@@ -1807,6 +1827,13 @@ export default function App() {
     }
 
     if (!apiRes.ok || !apiRes.data?.tempPassword) {
+      if (apiRes.status === 401 || apiRes.status === 403) {
+        setCurrentUser(null);
+        localStorage.removeItem('vt_auth_user');
+        localStorage.removeItem('vt_auth_token');
+        setLoginErrorMessage('Tu sesión anterior no tenía token en la nube. Inicia sesión nuevamente.');
+        return;
+      }
       setSubPayToast(`No se pudo generar la clave en la nube: ${apiRes.error || 'Error de servidor'}`);
       setTimeout(() => setSubPayToast(null), 6000);
       return;
