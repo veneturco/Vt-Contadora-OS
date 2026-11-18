@@ -142,10 +142,10 @@ function createInMemoryFirestore() {
 
 function createResilientFirestore(primaryDb) {
   const fallbackDb = createInMemoryFirestore();
-  let useFallback = false;
+  let fallbackUntil = 0;
 
   async function execWithFallback(primaryFn, fallbackFn) {
-    if (useFallback) return fallbackFn();
+    if (Date.now() < fallbackUntil) return fallbackFn();
     try {
       return await primaryFn();
     } catch (err) {
@@ -157,10 +157,10 @@ function createResilientFirestore(primaryDb) {
         code === 14 || // UNAVAILABLE
         /PERMISSION_DENIED|firestore\.googleapis\.com|NOT_FOUND/i.test(msg)
       ) {
-        if (!useFallback) {
-          console.warn('⚠️ Cloud Firestore no disponible (' + msg.slice(0, 120) + '). Activando bóveda en memoria automática.');
-          useFallback = true;
+        if (Date.now() >= fallbackUntil) {
+          console.warn('⚠️ Cloud Firestore no disponible (' + msg.slice(0, 120) + '). Usando respaldo en memoria por 30s.');
         }
+        fallbackUntil = Date.now() + 30 * 1000;
         return fallbackFn();
       }
       throw err;
@@ -183,7 +183,7 @@ function createResilientFirestore(primaryDb) {
 
   return {
     get isFallback() {
-      return useFallback;
+      return Date.now() < fallbackUntil;
     },
     collection(colPath) {
       const pCol = primaryDb.collection(colPath);
