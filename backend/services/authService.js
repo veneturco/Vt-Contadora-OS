@@ -156,13 +156,19 @@ async function ensureSuperAdminSeeded(db, adminSdk) {
   const docRef = db.collection('vt_users').doc(SUPER_ADMIN_EMAIL);
   const snap = await docRef.get();
   if (snap.exists) {
-    return snap.data();
+    const existing = snap.data();
+    if (existing && /samir|moucharrafie/i.test(String(existing.name || ''))) {
+      const cleaned = { ...existing, name: 'Super-Admin / Administración VeneTurco Fiscal OS', updatedAt: new Date().toISOString() };
+      await docRef.set(cleaned, { merge: true });
+      return cleaned;
+    }
+    return existing;
   }
   const nowIso = new Date().toISOString();
   const superAdminDoc = {
-    uid: 'superadmin_dr_samir',
+    uid: 'superadmin_vt_os',
     email: SUPER_ADMIN_EMAIL,
-    name: 'Dr. Samir Moucharrafie / Super-Admin & Creador',
+    name: 'Super-Admin / Administración VeneTurco Fiscal OS',
     role: 'superadmin',
     cpcNumber: 'SUPER-ADMIN',
     accountantId: null,

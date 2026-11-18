@@ -1354,7 +1354,7 @@ export default function App() {
     const passwordLine = tempPassword
       ? `🔑 *Clave temporal única:* ${tempPassword}\n*(Al iniciar sesión por primera vez, el sistema le pedirá crear su contraseña personal).*`
       : `🔑 *Clave de acceso:* Use la clave temporal asignada (si requiere una nueva, solicítela al administrador).`;
-    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el Dr. Samir Moucharrafie de *VeneTurco Fiscal OS*.\n\nLe he activado su perfil real en la nube como *Contador Aliado / Firma Contable*:\n\n🌐 *Acceso Directo:* ${link}\n📧 *Correo:* ${acc.email}\n${passwordLine}\n\nAl tocar el enlace, solo ingrese su clave temporal y pulse «Iniciar Sesión Segura» para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedo a su disposición para cualquier consulta.`;
+    const msg = `Estimada(o) *${acc.name}* (${acc.cpcNumber}),\n\nLe saluda el equipo de *VeneTurco Fiscal OS*.\n\nLe hemos activado su perfil real en la nube como *Contador Aliado / Firma Contable*:\n\n🌐 *Acceso Directo:* ${link}\n📧 *Correo:* ${acc.email}\n${passwordLine}\n\nAl tocar el enlace, solo ingrese su clave temporal y pulse «Iniciar Sesión Segura» para gestionar multi-empresas, Telegram OCR y libros SENIAT.\n\nQuedamos a su disposición para cualquier consulta.`;
     const cleanPhone = (acc.phone || '').replace(/[^0-9]/g, '');
     return cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
