@@ -218,3 +218,50 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
+
+/* ==========================================================================
+   Apple Squircle Jewel Icons & Tactile Micro-Interactions (macOS Sequoia / iOS 18)
+   ========================================================================== */
+.apple-icon-jewel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.35), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-icon-jewel:hover {
+  transform: translateY(-1px) scale(1.04);
+}
+
+.apple-icon-jewel-blue {
+  background: linear-gradient(145deg, rgba(10, 132, 255, 0.34), rgba(10, 132, 255, 0.12));
+  border: 1px solid rgba(10, 132, 255, 0.45);
+  color: #64D2FF;
+}
+
+.apple-icon-jewel-emerald {
+  background: linear-gradient(145deg, rgba(48, 209, 88, 0.34), rgba(48, 209, 88, 0.12));
+  border: 1px solid rgba(48, 209, 88, 0.45);
+  color: #30D158;
+}
+
+.apple-icon-jewel-amber {
+  background: linear-gradient(145deg, rgba(255, 159, 10, 0.35), rgba(255, 159, 10, 0.12));
+  border: 1px solid rgba(255, 159, 10, 0.45);
+  color: #FFD60A;
+}
+
+.apple-icon-jewel-rose {
+  background: linear-gradient(145deg, rgba(255, 69, 58, 0.35), rgba(255, 69, 58, 0.12));
+  border: 1px solid rgba(255, 69, 58, 0.45);
+  color: #FF6961;
+}
+
+.apple-icon-jewel-purple {
+  background: linear-gradient(145deg, rgba(191, 90, 242, 0.35), rgba(191, 90, 242, 0.12));
+  border: 1px solid rgba(191, 90, 242, 0.45);
+  color: #DA8FFF;
+}
+
