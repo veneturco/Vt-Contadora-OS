@@ -42,6 +42,7 @@ import {
 import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { enhanceDocumentForOcr, runLocalBrowserOcr } from './utils/documentEnhancer';
+import { lookupLocalVendorHints, learnFromConfirmedInvoice } from './utils/fiscalTemplateDb';
 import { safeApiRequest } from './services/apiClient';
 
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
@@ -2299,8 +2300,11 @@ export default function App() {
       }
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
       const localRawText = !detectedQr && file.type.startsWith('image/')
-        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
+        ? await runLocalBrowserOcr(enhanced, 16000)
         : undefined;
+      const localTemplateHint = localRawText
+        ? await lookupLocalVendorHints(activeTenant.id, localRawText)
+        : null;
       const res = await safeApiRequest<{
         mode: string;
         tokensUsed?: number;
@@ -2327,6 +2331,7 @@ export default function App() {
           base64Data: enhanced.base64Data,
           rawText: localRawText || undefined,
           qrPayload: detectedQr,
+          localTemplateHint: localTemplateHint || undefined,
           mimeType: enhanced.mimeType,
           fileName: file.name
         }),
@@ -2400,8 +2405,11 @@ export default function App() {
         const enhanced = await enhanceDocumentForOcr(file);
         const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
         const localRawText = !detectedQr && file.type.startsWith('image/')
-          ? await runLocalBrowserOcr(enhanced.dataUrl, 10000)
+          ? await runLocalBrowserOcr(enhanced, 10000)
           : undefined;
+        const localTemplateHint = localRawText
+          ? await lookupLocalVendorHints(activeTenant.id, localRawText)
+          : null;
         const res = await safeApiRequest<{
           extracted?: {
             supplierRif?: string;
@@ -2427,6 +2435,7 @@ export default function App() {
             base64Data: enhanced.base64Data,
             rawText: localRawText || undefined,
             qrPayload: detectedQr,
+            localTemplateHint: localTemplateHint || undefined,
             mimeType: enhanced.mimeType,
             fileName: file.name
           }),
@@ -2496,6 +2505,15 @@ export default function App() {
           };
 
           setInvoices(prev => [createdInvoice, ...prev]);
+    // Aprendizaje automático local en FiscalTemplateDB (IndexedDB aislado por tenantId)
+    learnFromConfirmedInvoice({
+      tenantId: activeTenant.id,
+      supplierRif: createdInvoice.supplierRif,
+      supplierName: createdInvoice.supplierName,
+      channel: createdInvoice.channel,
+      currency: createdInvoice.currency,
+      vatRate: createdInvoice.vatRate
+    }).catch(() => {});
           autoIndexedCount += 1;
           setBatchQueue(prev =>
             prev.map(it =>
@@ -2620,6 +2638,15 @@ export default function App() {
     };
 
     setInvoices(prev => [createdInvoice, ...prev]);
+    // Aprendizaje automático local en FiscalTemplateDB (IndexedDB aislado por tenantId)
+    learnFromConfirmedInvoice({
+      tenantId: activeTenant.id,
+      supplierRif: createdInvoice.supplierRif,
+      supplierName: createdInvoice.supplierName,
+      channel: createdInvoice.channel,
+      currency: createdInvoice.currency,
+      vatRate: createdInvoice.vatRate
+    }).catch(() => {});
     appendAuditLog(
       origin === 'TELEGRAM_BOT' ? 'INGESTA_TELEGRAM_OCR' : 'INGESTA_WEB_OCR',
       origin === 'TELEGRAM_BOT' ? `telegram:${activeTenant.telegramCode}` : 'web:scanner_ia',
@@ -2845,8 +2872,11 @@ export default function App() {
       const enhanced = await enhanceDocumentForOcr(file);
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
       const localRawText = !detectedQr && file.type.startsWith('image/')
-        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
+        ? await runLocalBrowserOcr(enhanced, 16000)
         : undefined;
+      const localTemplateHint = localRawText
+        ? await lookupLocalVendorHints(activeTenant.id, localRawText)
+        : null;
       const res = await safeApiRequest<{
         mode: string;
         tokensUsed?: number;
@@ -2866,6 +2896,7 @@ export default function App() {
           base64Data: enhanced.base64Data,
           rawText: localRawText || undefined,
           qrPayload: detectedQr,
+          localTemplateHint: localTemplateHint || undefined,
           mimeType: enhanced.mimeType,
           fileName: file.name
         }),
@@ -2965,6 +2996,14 @@ export default function App() {
       }
 
       setInvoices(prev => [newInv, ...prev]);
+      learnFromConfirmedInvoice({
+        tenantId: activeTenant.id,
+        supplierRif: newInv.supplierRif,
+        supplierName: newInv.supplierName,
+        channel: newInv.channel,
+        currency: newInv.currency,
+        vatRate: newInv.vatRate
+      }).catch(() => {});
       appendAuditLog(
         'INGESTA_PORTAL_MOVIL_9_16',
         `cliente_movil:${activeTenant.rif}`,

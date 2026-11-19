@@ -491,7 +491,7 @@ function pickVenezuelanSupplierName(lines, fullText) {
   if (/TRAKI/i.test(fullText)) return 'TRAKI DISTRIBUIDORA, C.A.';
   if (/MAXI\s*EMBUTIDOS/i.test(fullText)) return 'DISTRIBUIDORA MAXI EMBUTIDOS, C.A.';
 
-  const skipPattern = /^(?:seniat|rif|r\.i\.f|factura|ticket|nota\s*de|contribuyente|sucursal|caja|fecha|hora|telf|tel[eé]fono|dir(?:ecci[oó]n)?|cliente|raz[oó]n\s*social|no\s*fiscal|original|copia|[\d\s.,:/-]+)$/i;
+  const skipPattern = /^(?:seniat|rif|r\.i\.f|factura|ticket|nota\s*de|contribuyente|sucursal|caja|fecha|hora|telf|tel[eé]fono|dir(?:ecci[oó]n)?|cliente|raz[oó]n\s*social|no\s*fiscal|original|copia|base\s*imp|exento|iva|total|sub[-\s]?total|[\d\s.,:/-]+)\b/i;
   const entityHint = /\b(?:C\.?\s*A\.?|S\.?\s*A\.?|S\.?\s*R\.?\s*L\.?|F\.?\s*P\.?|INVERSIONES|COMERCIAL|DISTRIBUIDORA|FARMACIA|SUPERMERCADO|AUTOMERCADO|CL[IÍ]NICA|SERVICIOS|FERRETER[IÍ]A|PANADER[IÍ]A|BODEG[OÓ]N|ABASTO|CORPORACI[OÓ]N|GRUPO|IMPORTADORA|CENTRO)\b/i;
 
   const topLines = lines.slice(0, 8);
@@ -843,7 +843,7 @@ ${String(dirtyText || '').slice(0, 2200)}`;
  * Nivel 3: Visión Multimodal REST Directa + Auto-Discovery de Modelos + Doble Pasada Correctiva
  * Nivel 4: Respaldo Parcial Determinista (nunca devuelve pantalla en blanco si hubo señal local)
  */
-async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileName, geminiApiKey, db }) {
+async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileName, localTemplateHint, geminiApiKey, db }) {
   const cleanKey = sanitizeApiKey(geminiApiKey);
 
   // Nivel 0 (0 Tokens): Decodificación directa de QR Fiscal SENIAT
@@ -864,11 +864,33 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
     }
   }
 
-  // Nivel 1B (0 Tokens + Memoria Aprendida): Motor Determinista SENIAT
+  // Nivel 1B (0 Tokens + Memoria Aprendida + Plantilla Local IndexedDB): Motor Determinista SENIAT
   let detResult = null;
   if (effectiveRawText) {
     detResult = parseSeniatRawText(effectiveRawText);
     if (detResult && detResult.extracted) {
+      // 1. Enriquecer con plantilla local aprendida (FiscalTemplateDB de IndexedDB)
+      if (localTemplateHint && typeof localTemplateHint === 'object') {
+        const hintRif = String(localTemplateHint.rif || '').toUpperCase();
+        if (!detResult.extracted.supplierRif && hintRif) {
+          const check = validateVenezuelanRIF(hintRif);
+          if (check.valid) {
+            detResult.extracted.supplierRif = check.formatted;
+            detResult.extracted.rifValid = true;
+          }
+        }
+        if (localTemplateHint.razonSocial) {
+          detResult.extracted.supplierName = String(localTemplateHint.razonSocial).slice(0, 90);
+        }
+        if (localTemplateHint.preferredChannel && detResult.extracted.channel === 'DIGITAL') {
+          detResult.extracted.channel = localTemplateHint.preferredChannel;
+        }
+        if (localTemplateHint.currencyHint && detResult.extracted.currency === 'VES') {
+          detResult.extracted.currency = localTemplateHint.currencyHint;
+        }
+      }
+
+      // 2. Enriquecer con memoria cloud aprendida por el Guardián
       try {
         if (db && detResult.extracted.supplierRif) {
           const { getOcrLearnedHints } = require('./systemGuardian');
@@ -889,6 +911,27 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
       } catch {
         // Memoria opcional
       }
+
+      // 3. Puntaje de confianza ponderado campo por campo (evita descarte ciego binario)
+      const ext = detResult.extracted;
+      const fieldConfidence = {
+        rif: ext.rifValid ? 1.0 : (ext.supplierRif ? 0.45 : 0),
+        amounts: ext.mathValid ? 1.0 : (ext.totalOriginal > 0 ? 0.55 : 0),
+        invoiceNumber: ext.invoiceNumber && ext.invoiceNumber !== '00000001' ? 0.95 : 0.4,
+        date: ext.emissionDate ? 0.9 : 0.3,
+        supplierName: ext.supplierName && !ext.supplierName.startsWith('Proveedor Fiscal (') ? 0.95 : 0.5
+      };
+      const weightedScore = Number(
+        (
+          fieldConfidence.rif * 0.35 +
+          fieldConfidence.amounts * 0.35 +
+          fieldConfidence.invoiceNumber * 0.12 +
+          fieldConfidence.date * 0.08 +
+          fieldConfidence.supplierName * 0.10
+        ).toFixed(3)
+      );
+      detResult.extracted.fieldConfidence = fieldConfidence;
+      detResult.confidence = Math.max(detResult.confidence || 0, weightedScore);
 
       // Si el parser 0-Tokens logró RIF válido + cuadre matemático exacto -> ¡LISTO CON 0 TOKENS!
       if (detResult.extracted.mathValid && detResult.extracted.rifValid) {

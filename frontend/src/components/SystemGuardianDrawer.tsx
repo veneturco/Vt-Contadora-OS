@@ -14,7 +14,12 @@ import {
   Upload
 } from 'lucide-react';
 import { safeApiRequest } from '../services/apiClient';
-import { enhanceDocumentForOcr, runLocalBrowserOcr } from '../utils/documentEnhancer';
+import { enhanceDocumentForOcr, runLocalBrowserOcrDetailed } from '../utils/documentEnhancer';
+import {
+  getFiscalTemplateStats,
+  learnFromConfirmedInvoice,
+  lookupLocalVendorHints
+} from '../utils/fiscalTemplateDb';
 
 export interface GuardianInfraFinding {
   severity: 'CRITICAL' | 'WARNING' | 'INFO';
@@ -93,6 +98,7 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     error: string | null;
   } | null>(null);
   const [labRunning, setLabRunning] = useState(false);
+  const [localTplCount, setLocalTplCount] = useState(0);
   const [labResult, setLabResult] = useState<{
     fileName: string;
     previewUrl: string | null;
@@ -100,6 +106,9 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     optimizedKb: number;
     localOcrMs: number;
     localOcrText: string;
+    localOcrUsedRoi: boolean;
+    localOcrError: string | null;
+    docKind: string;
     serverMs: number;
     ok: boolean;
     mode: string;
@@ -141,10 +150,13 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     try {
       const enhanced = await enhanceDocumentForOcr(file);
       const localStart = performance.now();
-      const localOcrText = file.type.startsWith('image/')
-        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
-        : '';
+      const localOcr = file.type.startsWith('image/')
+        ? await runLocalBrowserOcrDetailed(enhanced, 16000)
+        : { text: '', usedRoi: false, error: null };
       const localOcrMs = Math.round(performance.now() - localStart);
+      const localTemplateHint = localOcr.text
+        ? await lookupLocalVendorHints('guardian_lab', localOcr.text)
+        : null;
 
       const res = await safeApiRequest<{
         ok: boolean;
@@ -158,7 +170,8 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
         method: 'POST',
         body: JSON.stringify({
           base64Data: enhanced.base64Data,
-          rawText: localOcrText || undefined,
+          rawText: localOcr.text || undefined,
+          localTemplateHint: localTemplateHint || undefined,
           mimeType: enhanced.mimeType,
           fileName: file.name
         }),
@@ -166,13 +179,31 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
       });
 
       const d = res.data;
+      if (res.ok && d?.ok && d?.extracted && d.extracted.rifValid && d.extracted.mathValid) {
+        await learnFromConfirmedInvoice({
+          tenantId: 'guardian_lab',
+          supplierRif: String(d.extracted.supplierRif || ''),
+          supplierName: String(d.extracted.supplierName || ''),
+          channel: (d.extracted.channel as 'DIGITAL' | 'MAQUINA_FISCAL' | 'CONTINGENCIA') || 'DIGITAL',
+          currency: (d.extracted.currency as 'VES' | 'USD') || 'VES',
+          vatRate: Number(d.extracted.vatRate ?? 16),
+          rawOcrText: localOcr.text,
+          docKind: enhanced.docKind
+        });
+      }
+      const stats = await getFiscalTemplateStats();
+      setLocalTplCount(stats.vendorCount);
+
       setLabResult({
         fileName: file.name,
         previewUrl: file.type.startsWith('image/') ? enhanced.dataUrl : null,
         originalKb: Math.max(1, Math.round(enhanced.originalBytes / 1024)),
         optimizedKb: Math.max(1, Math.round(enhanced.optimizedBytes / 1024)),
         localOcrMs,
-        localOcrText,
+        localOcrText: localOcr.text,
+        localOcrUsedRoi: localOcr.usedRoi,
+        localOcrError: localOcr.error,
+        docKind: enhanced.docKind,
         serverMs: d?.durationMs ?? 0,
         ok: Boolean(res.ok && d?.ok && d?.extracted),
         mode: d?.mode || 'ERROR_RED',
@@ -482,8 +513,14 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                     />
                   )}
                   <div className="font-mono text-[10px] text-white/75 space-y-0.5 min-w-0">
-                    <div>Imagen: {labResult.originalKb} KB → <span className="text-emerald-300">{labResult.optimizedKb} KB</span></div>
-                    <div>OCR Local: {labResult.localOcrText.length} chars ({labResult.localOcrMs}ms)</div>
+                    <div>Imagen: {labResult.originalKb} KB → <span className="text-emerald-300">{labResult.optimizedKb} KB</span> ({labResult.docKind})</div>
+                    <div>
+                      OCR Local: <span className={labResult.localOcrText.length > 0 ? 'text-emerald-300 font-bold' : 'text-amber-300'}>{labResult.localOcrText.length} chars</span> ({labResult.localOcrMs}ms{labResult.localOcrUsedRoi ? ' · ROI' : ''})
+                      {localTplCount > 0 ? ` · DB Local: ${localTplCount}` : ''}
+                    </div>
+                    {labResult.localOcrError && (
+                      <div className="text-rose-300 text-[9px] break-words">Aviso OCR Local: {labResult.localOcrError}</div>
+                    )}
                     <div>Servidor: <span className="text-sky-300">{labResult.mode}</span> ({labResult.serverMs}ms)</div>
                     <div>Consumo: <span className={labResult.tokensUsed === 0 ? 'text-emerald-300 font-bold' : 'text-amber-300'}>{labResult.tokensUsed} tokens</span> · Confianza: {Math.round(labResult.confidence * 100)}%</div>
                   </div>

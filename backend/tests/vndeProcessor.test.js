@@ -228,6 +228,37 @@ test('VNDE OCR Local 0 Tokens: tolera confusión O/0 en RIF, salta encabezado SE
   assert.equal(diag.apiKeyConfigured, false);
 });
 
+test('VNDE Plantilla Local IndexedDB: enriquece proveedor y calcula confianza ponderada por campo con 0 Tokens', async () => {
+  const result = await processFiscalInvoiceVNDE({
+    rawText: `
+      RIF: J-50509556-0
+      FACTURA: 00186009
+      FECHA: 11/04/2026
+      BASE IMP: 823,91
+      EXENTO: 5180,63
+      IVA 16%: 131,83
+      TOTAL: 6136,37
+    `,
+    localTemplateHint: {
+      rif: 'J-50509556-0',
+      razonSocial: 'MEGAMARKET SAN MIGUEL, C.A.',
+      preferredChannel: 'MAQUINA_FISCAL',
+      currencyHint: 'VES',
+      vatRateHint: 16
+    },
+    fileName: 'megamarket_roi.jpg'
+  });
+
+  assert.ok(result);
+  assert.equal(result.tokensUsed, 0);
+  assert.equal(result.extracted.supplierName, 'MEGAMARKET SAN MIGUEL, C.A.');
+  assert.equal(result.extracted.channel, 'MAQUINA_FISCAL');
+  assert.equal(result.extracted.totalOriginal, 6136.37);
+  assert.ok(result.extracted.fieldConfidence);
+  assert.equal(result.extracted.fieldConfidence.rif, 1.0);
+  assert.equal(result.extracted.fieldConfidence.amounts, 1.0);
+});
+
 test('SaaS Billing & Seguridad: Códigos Telegram 12-hex, Conciliación de Pagos y Cuotas por Plan', async () => {
   const {
     generateTelegramLinkCode,

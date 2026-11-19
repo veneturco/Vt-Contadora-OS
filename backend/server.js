@@ -295,7 +295,8 @@ app.use(helmet({
     directives: {
       "default-src": ["'self'"],
       "script-src": ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", "https://cdn.jsdelivr.net"],
-      "worker-src": ["'self'", "blob:"],
+      "worker-src": ["'self'", "blob:", "https://cdn.jsdelivr.net"],
+      "child-src": ["'self'", "blob:", "https://cdn.jsdelivr.net"],
       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
       "img-src": ["'self'", "data:", "blob:", "https:"],
@@ -668,7 +669,7 @@ app.get('/api/ocr/diagnostics', verifyFirebaseToken, requireSuperAdmin, async (_
 app.post('/api/ocr/test-lab', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
   const startedAt = Date.now();
   try {
-    const { base64Data, mimeType = 'image/jpeg', fileName = 'prueba_guardian.jpg', rawText, qrPayload } = req.body || {};
+    const { base64Data, mimeType = 'image/jpeg', fileName = 'prueba_guardian.jpg', rawText, qrPayload, localTemplateHint } = req.body || {};
     if (!base64Data && !rawText && !qrPayload) {
       return res.status(400).json({ ok: false, error: 'Se requiere imagen, PDF, texto o QR para ejecutar la prueba.' });
     }
@@ -685,6 +686,7 @@ app.post('/api/ocr/test-lab', verifyFirebaseToken, requireSuperAdmin, async (req
       fileName: String(fileName || 'prueba_guardian.jpg').slice(0, 120),
       rawText: rawText ? String(rawText).slice(0, 15000) : undefined,
       qrPayload: qrPayload ? String(qrPayload).slice(0, 1024) : undefined,
+      localTemplateHint: localTemplateHint && typeof localTemplateHint === 'object' ? localTemplateHint : undefined,
       geminiApiKey: process.env.GEMINI_API_KEY,
       db
     });
@@ -704,7 +706,7 @@ app.post('/api/ocr/test-lab', verifyFirebaseToken, requireSuperAdmin, async (req
 });
 
 app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
-  const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
+  const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload, localTemplateHint } = req.body;
   try {
     if (!base64Data && !rawText && !qrPayload) {
       return res.status(400).json({ error: 'Se requiere imagen/PDF (base64Data), texto fiscal (rawText) o código QR (qrPayload).' });
@@ -725,6 +727,7 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
       fileName: String(fileName || 'factura.jpg').slice(0, 120),
       rawText: rawText ? String(rawText).slice(0, 15000) : undefined,
       qrPayload: qrPayload ? String(qrPayload).slice(0, 1024) : undefined,
+      localTemplateHint: localTemplateHint && typeof localTemplateHint === 'object' ? localTemplateHint : undefined,
       geminiApiKey: process.env.GEMINI_API_KEY,
       db
     });
