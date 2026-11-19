@@ -122,7 +122,7 @@ export default function App() {
       hash: 'a38f71b9c20188de47f9b001a1c3df8992019481bc201481729381cba90123ef'
     }
   ]);
-  const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin', 'obsidian-champagne'));
+  const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin_v4', 'obsidian-champagne'));
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   // Super-Admin 2FA (TOTP) States (validación real en servidor)
@@ -537,7 +537,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-skin', skin);
-    safeSetStorage('ui_active_skin', skin);
+    safeSetStorage('ui_active_skin_v4', skin);
   }, [skin]);
 
   useEffect(() => {
