@@ -190,14 +190,18 @@ function parseSeniatRawText(rawText) {
   let controlNumber = '';
   let machineSerial = '';
 
-  const machineSerialMatch = fullText.match(/\b([Zz][0-9A-Za-z]{9,11}|[Bb][Xx][Ll][0-9A-Za-z]{6,10}|[Hh][Aa][Ss][0-9A-Za-z]{6,10})\b/);
+  const machineSerialMatch =
+    fullText.match(/\bMH\s+([A-Za-z0-9]{8,12})\b/i) ||
+    fullText.match(/\b([Zz][0-9A-Za-z]{9,11}|[Ee][0-9]{9,10}|[Bb][Xx][Ll][0-9A-Za-z]{6,10}|[Hh][Aa][Ss][0-9A-Za-z]{6,10})\b/);
   if (machineSerialMatch) {
     channel = 'MAQUINA_FISCAL';
     machineSerial = machineSerialMatch[1].toUpperCase();
     controlNumber = machineSerial;
   }
 
-  const invoiceMatch = fullText.match(/(?:factura|fact\.?|nro\.?\s*factura|n°\s*factura)\s*[:.\s#]*([0-9]{4,10})/i);
+  const invoiceMatch =
+    fullText.match(/(?:factura|fact\.?|nro\.?\s*factura|n°\s*factura)\s*[:.\s#]*([0-9]{4,10})/i) ||
+    fullText.match(/\b(?:nro\.?|n[°o]\.?)\s*[:.#]?\s*([0-9]{5,10})\b/i);
   if (invoiceMatch) {
     invoiceNumber = invoiceMatch[1].padStart(8, '0');
   }
@@ -241,6 +245,8 @@ function parseSeniatRawText(rawText) {
   // Detección de doble columna de moneda (USD $ y Bolívares Bs.)
   const dualExemptMatch = fullText.match(/exento[:.\s]+([0-9.,]+)\s*\$\s*([0-9.,]+)\s*Bs/i);
   const dualTotalMatch = fullText.match(/(?:tot\.?\s*factura|tot\s*a\s*pagar|total)[:.\s]+([0-9.,]+)\s*\$\s*([0-9.,]+)\s*Bs/i);
+  // Nota de conversión bimoneda en pie de imagen/caption (ej. "46.930 Bs = 51,17$")
+  const captionDualMatch = fullText.match(/([0-9.,]+)\s*bs\.?s?\s*=\s*([0-9.,]+)\s*\$/i);
 
   if (dualTotalMatch) {
     const usdTotal = parseVenezuelanAmount(dualTotalMatch[1]);
@@ -251,20 +257,34 @@ function parseSeniatRawText(rawText) {
       exempt = parseVenezuelanAmount(dualExemptMatch[2]);
     }
   } else {
-    const exemptMatch = fullText.match(/(?:exento|exen|ex|monto\s*exento)\s*[:.]?\s*(?:bs\.?|ves|\$)?\s*([0-9.,]+)/i);
+    const curPrefix = '(?:bs\\.?s\\.?|bss\\.?|bs\\.?|ves|\\$|usd)?';
+    const exemptMatch = fullText.match(new RegExp(`(?:exento|exen|monto\\s*exento)\\s*[:.]?\\s*${curPrefix}\\s*([0-9.,]+)`, 'i'));
     if (exemptMatch) exempt = parseVenezuelanAmount(exemptMatch[1]);
 
-    const baseMatch = fullText.match(/(?:bi\s*g\s*(?:16(?:[,.]00)?%?)?|base\s*imp(?:onible)?(?:\.|\b)?(?:\s*(?:al\s*)?16(?:[,.]00)?%?|\s*g\s*16(?:[,.]00)?%?|\s*g)?)\s*[:.]?\s*(?:bs\.?|ves|\$)?\s*([0-9.,]+)/i);
+    const baseMatch = fullText.match(new RegExp(`(?:bi\\s*g\\s*(?:16(?:[,.]00)?%?)?|base\\s*imp(?:onible)?(?:\\.|\\b)?(?:\\s*(?:al\\s*)?16(?:[,.]00)?%?|\\s*g\\s*16(?:[,.]00)?%?|\\s*g)?)\\s*[:.]?\\s*${curPrefix}\\s*([0-9.,]+)`, 'i'));
     if (baseMatch) base16 = parseVenezuelanAmount(baseMatch[1]);
 
-    const vatMatch = fullText.match(/(?:iva\s*g\s*(?:16(?:[,.]00)?%?)?|i\.?v\.?a\.?(?:\s*(?:al\s*)?16(?:[,.]00)?%?|\s*g)?|impuesto\s*(?:al\s*valor\s*agregado|iva))\s*[:.]?\s*(?:bs\.?|ves|\$)?\s*([0-9.,]+)/i);
+    const vatMatch = fullText.match(new RegExp(`(?:iva\\s*g\\s*(?:16(?:[,.]00)?%?)?|i\\.?v\\.?a\\.?(?:\\s*(?:al\\s*)?16(?:[,.]00)?%?|\\s*g)?|impuesto\\s*(?:al\\s*valor\\s*agregado|iva))\\s*[:.]?\\s*${curPrefix}\\s*([0-9.,]+)`, 'i'));
     if (vatMatch) vatAmount = parseVenezuelanAmount(vatMatch[1]);
 
-    const igtfMatch = fullText.match(/(?:igtf\s*3%?|percepcion\s*igtf)\s*[:.]?\s*(?:bs\.?|ves|\$)?\s*([0-9.,]+)/i);
+    const igtfMatch = fullText.match(new RegExp(`(?:igtf\\s*3%?|percepcion\\s*igtf)\\s*[:.]?\\s*${curPrefix}\\s*([0-9.,]+)`, 'i'));
     if (igtfMatch) igtfAmount = parseVenezuelanAmount(igtfMatch[1]);
 
-    const totalMatch = fullText.match(/(?:tot\.?\s*factura|tot\s*a\s*pagar|total|total\s*a\s*pagar)\s*[:.]?\s*(?:bs\.?|ves|\$)?\s*([0-9.,]+)/i);
+    // Evitar confundir "SUB-TOTAL" con "TOTAL" usando negative lookbehind/separador
+    const totalMatch = fullText.match(new RegExp(`(?:tot\\.?\\s*factura|tot\\s*a\\s*pagar|total\\s*a\\s*pagar|(?<!sub[-\\s])\\btotal)\\s*[:.]?\\s*${curPrefix}\\s*([0-9.,]+)`, 'i'));
     if (totalMatch) totalAmount = parseVenezuelanAmount(totalMatch[1]);
+  }
+
+  // Si hay nota de equivalencia "46.930 Bs = 51,17$" y el ticket imprimió 51,19 bajo etiqueta Bss, detectar que el ticket está expresado en USD
+  if (captionDualMatch && totalAmount > 0) {
+    const capBs = parseVenezuelanAmount(captionDualMatch[1]);
+    const capUsd = parseVenezuelanAmount(captionDualMatch[2]);
+    if (capBs > 0 && capUsd > 0) {
+      bcvRateImplicit = Number((capBs / capUsd).toFixed(4));
+      if (Math.abs(totalAmount - capUsd) <= Math.max(1.5, capUsd * 0.05)) {
+        currency = 'USD';
+      }
+    }
   }
 
   // 5. Triangulación Matemática y Comprobación de Consistencia
@@ -279,7 +299,10 @@ function parseSeniatRawText(rawText) {
     base16 = Number((vatAmount / 0.16).toFixed(2));
   }
 
-  if (exempt === 0 && totalAmount > 0 && base16 > 0) {
+  // Ticket 100% exento (ej. artículos marcados (E) con I.V.A. 0,00 sin línea explícita "EXENTO")
+  if (exempt === 0 && totalAmount > 0 && base16 === 0 && vatAmount === 0) {
+    exempt = Number((totalAmount - igtfAmount).toFixed(2));
+  } else if (exempt === 0 && totalAmount > 0 && base16 > 0) {
     const diff = Number((totalAmount - (base16 + vatAmount + igtfAmount)).toFixed(2));
     if (diff > 0.10) {
       exempt = diff;
@@ -451,7 +474,14 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
         generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
       });
       const mimeType = detectMimeTypeFromBase64(base64Data, fileName);
-      const prompt = `Analiza esta factura fiscal venezolana bajo la Providencia SNAT/2026/00093 y extrae en JSON puro:
+      const prompt = `Analiza esta factura o ticket fiscal venezolano bajo la Providencia SNAT/2026/00093 y extrae en JSON puro.
+      REGLAS ESTRICTAS:
+      - Ignora tachaduras, firmas, resaltadores o montos escritos a mano con bolígrafo sobre el papel; lee solo el texto impreso.
+      - Si es un ticket térmico con serial fiscal (MH, Z..., E..., BXL..., HAS...), usa channel="MAQUINA_FISCAL" y coloca el serial en controlNumber.
+      - Pon hasBuyerRifOnTicket=false si el ticket NO tiene impreso el RIF y Razón Social del comprador (Art. 10.4).
+      - Si el ticket imprime "Bss" o "Bs" pero los precios unitarios y/o leyenda inferior indican USD (ej. "46.930 Bs = 51,17$"), marca currency="USD".
+      - Si I.V.A. es 0,00 y los ítems son (E), coloca todo el total en exemptOriginal y taxableBaseOriginal=0.
+      Devuelve exactamente este JSON:
       { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
 
       const aiResult = await model.generateContent([

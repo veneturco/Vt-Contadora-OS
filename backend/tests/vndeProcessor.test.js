@@ -102,6 +102,48 @@ test('VNDE: Procesamiento Determinista Muestra 2 - Traki (Máquina Fiscal, Mixto
   assert.equal(parsed.extracted.mathValid, true);
 });
 
+test('VNDE: Procesamiento Determinista Muestra 3 - Ticket Térmico MH con Bss, Exento 100% y Sin RIF Comprador (Art. 10.4)', () => {
+  const sample3Text = `
+    COMERCIAL MI YUDI
+    J-501381623
+    CALLE JUNCAL E/ LAS MARGARITAS EDIF SAN FRANCISCO
+    CARUPANO EDO. SUCRE
+    Nro:00262658
+    CAJA4/Cajero:gerente
+    FECHA: 18/11/2026
+    [1] x BULTO HARINA P.A.N BLANCA (E) 16,78
+    [12] x JABON ANITA ROSADO 125G (E) 10,20
+    SUB-TOTAL
+    Bss 51,19
+    I.V.A.
+    Bss 0,00
+    TOTAL
+    Bss 51,19
+    FORMAS DE PAGO:
+    Tarjeta de Debito
+    Bss 51,19
+    Cantidad:27
+    MH
+    E162571648
+    46.930 Bs = 51,17$
+  `;
+
+  const parsed = parseSeniatRawText(sample3Text);
+  assert.ok(parsed);
+  assert.equal(parsed.tokensUsed, 0);
+  assert.equal(parsed.extracted.supplierRif, 'J-50138162-3');
+  assert.equal(parsed.extracted.hasBuyerRifOnTicket, false);
+  assert.equal(parsed.extracted.channel, 'MAQUINA_FISCAL');
+  assert.equal(parsed.extracted.machineSerial, 'E162571648');
+  assert.equal(parsed.extracted.invoiceNumber, '00262658');
+  assert.equal(parsed.extracted.emissionDate, '2026-11-18');
+  assert.equal(parsed.extracted.currency, 'USD');
+  assert.equal(parsed.extracted.exemptOriginal, 51.19);
+  assert.equal(parsed.extracted.vatOriginal, 0);
+  assert.equal(parsed.extracted.totalOriginal, 51.19);
+  assert.equal(parsed.extracted.mathValid, true);
+});
+
 test('VNDE: Pipeline Maestro processFiscalInvoiceVNDE con 0 Tokens', async () => {
   const result = await processFiscalInvoiceVNDE({
     qrPayload: 'J-40549697-5|V-17216546-6|00038205|00-041538|2026-11-03|0.00|0.00|435475.58',
