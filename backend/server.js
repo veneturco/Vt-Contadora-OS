@@ -403,18 +403,54 @@ function requireSuperAdmin(req, res, next) {
 }
 
 // Middleware de Control de Acceso y Prevención de IDOR (Insecure Direct Object References)
-function requireTenantAccess(req, res, next) {
-  const user = req.user;
-  if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
-  if (user.role === 'superadmin') return next();
-  const tenantId = req.body?.tenantId || req.params?.tenantId || req.query?.tenantId;
-  if (!tenantId) {
-    return res.status(400).json({ error: 'Identificador tenantId requerido para esta operación' });
+const DEMO_TENANT_IDS = new Set(['tenant_bodega_jh', 'tenant_importadora_vt', 'tenant_clinica_ccmi']);
+
+async function requireTenantAccess(req, res, next) {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
+    if (user.role === 'superadmin') return next();
+    const tenantId = String(req.body?.tenantId || req.params?.tenantId || req.query?.tenantId || '').trim();
+    if (!tenantId) {
+      return res.status(400).json({ error: 'Identificador tenantId requerido para esta operación' });
+    }
+    if (Array.isArray(user.tenantIds) && user.tenantIds.includes(tenantId)) {
+      return next();
+    }
+
+    // Verificar en vivo en Firestore si los tenantIds del usuario fueron actualizados tras emitir el JWT
+    const userEmail = String(user.email || '').trim().toLowerCase();
+    if (userEmail) {
+      const userSnap = await db.collection('vt_users').doc(userEmail).get();
+      if (userSnap && userSnap.exists) {
+        const liveTenantIds = Array.isArray(userSnap.data()?.tenantIds) ? userSnap.data().tenantIds : [];
+        if (liveTenantIds.includes(tenantId)) {
+          req.user = { ...user, tenantIds: liveTenantIds };
+          return next();
+        }
+      }
+    }
+
+    // Para contadores (admin): permitir empresas de demostración o empresas aún no reclamadas por otro contador
+    if (user.role === 'admin') {
+      if (DEMO_TENANT_IDS.has(tenantId)) {
+        return next();
+      }
+      const wsSnap = await db.collection('vt_workspace_tenants').doc(tenantId).get();
+      const wsData = wsSnap && wsSnap.exists ? wsSnap.data() : null;
+      const ownerEmail = String(wsData?.updatedBy || '').trim().toLowerCase();
+      if (!wsData || !ownerEmail || ownerEmail === userEmail || ownerEmail === 'system') {
+        if (userEmail) {
+          addTenantToAccountant(db, admin, userEmail, tenantId).catch(() => {});
+        }
+        return next();
+      }
+    }
+
+    return res.status(403).json({ error: 'Acceso denegado: no posee privilegios sobre este tenant/empresa (Protección Anti-IDOR)' });
+  } catch (err) {
+    return next(err);
   }
-  if (Array.isArray(user.tenantIds) && user.tenantIds.includes(tenantId)) {
-    return next();
-  }
-  return res.status(403).json({ error: 'Acceso denegado: no posee privilegios sobre este tenant/empresa (Protección Anti-IDOR)' });
 }
 
 app.get('/health', (_req, res) => {

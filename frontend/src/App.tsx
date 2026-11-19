@@ -491,29 +491,30 @@ export default function App() {
   const [cestaticketBs, setCestaticketBs] = useState<number>(1882);
   const [riskLevel, setRiskLevel] = useState<'MINIMO' | 'MEDIO' | 'ALTO'>('MINIMO');
 
-  // Tab 02: OCR & Telegram state
-  const [ocrDraft, setOcrDraft] = useState({
+  // Tab 02: OCR & Telegram state (arranca en blanco para evitar confusión con facturas de prueba)
+  const createEmptyOcrDraft = () => ({
     bookType: 'COMPRA' as 'COMPRA' | 'VENTA',
     docType: '01' as '01' | '02' | '03',
     channel: 'DIGITAL' as 'DIGITAL' | 'MAQUINA_FISCAL' | 'CONTINGENCIA',
-    supplierRif: 'J-40192831-5',
-    supplierName: 'Importadora Repuestos Turco-Ven C.A.',
+    supplierRif: '',
+    supplierName: '',
     hasBuyerRifOnTicket: true,
-    invoiceNumber: '00089410',
-    controlNumber: '00-00491822',
-    emissionDate: '2026-11-14',
-    emissionTime: '11:38:45',
-    currency: 'USD' as 'VES' | 'USD',
-    taxableBaseOriginal: 1850,
+    invoiceNumber: '',
+    controlNumber: '',
+    emissionDate: new Date().toISOString().slice(0, 10),
+    emissionTime: new Date().toTimeString().slice(0, 8),
+    currency: 'VES' as 'VES' | 'USD',
+    taxableBaseOriginal: 0,
     exemptOriginal: 0,
     vatRate: 16,
-    igtfOriginal: 55.5,
-    vatRetentionRate: 75 as 0 | 75 | 100,
-    islrRetentionRate: 2,
+    igtfOriginal: 0,
+    vatRetentionRate: 0 as 0 | 75 | 100,
+    islrRetentionRate: 0,
     sourceChannel: 'WEB_OCR' as 'WEB_OCR' | 'TELEGRAM_BOT' | 'MANUAL'
   });
+  const [ocrDraft, setOcrDraft] = useState(createEmptyOcrDraft);
   const [ocrScanning, setOcrScanning] = useState(false);
-  const [ocrUploadedFileName, setOcrUploadedFileName] = useState<string>('factura_seniat_00089410.jpg');
+  const [ocrUploadedFileName, setOcrUploadedFileName] = useState<string>('Ningún archivo cargado');
   const [ocrAlertMessage, setOcrAlertMessage] = useState<string | null>(null);
   const [telegramSimMessages, setTelegramSimMessages] = useState<
     { id: string; sender: 'user' | 'bot'; text: string; time: string }[]
@@ -2232,6 +2233,36 @@ export default function App() {
     });
   }
 
+  function handleClearOcrDraft() {
+    setOcrDraft(createEmptyOcrDraft());
+    setOcrUploadedFileName('Ningún archivo cargado');
+    setOcrAlertMessage('Formulario limpio y en blanco. Listo para subir una nueva factura.');
+    setTimeout(() => setOcrAlertMessage(null), 3500);
+  }
+
+  function handleClearTenantInvoices() {
+    setConfirmDialog({
+      title: `Vaciar todas las facturas de ${activeTenant.name}`,
+      message: `¿Desea borrar las ${tenantInvoices.length} factura(s) registradas en "${activeTenant.name}" (incluyendo facturas de prueba anteriores) para dejar la empresa completamente en blanco?`,
+      confirmLabel: 'Sí, dejar en blanco',
+      destructive: true,
+      onConfirm: () => {
+        setInvoices(prev => prev.filter(inv => inv.tenantId !== activeTenant.id));
+        setOcrDraft(createEmptyOcrDraft());
+        setOcrUploadedFileName('Ningún archivo cargado');
+        setOcrAlertMessage(`Todas las facturas de "${activeTenant.name}" fueron borradas. La bandeja quedó en blanco.`);
+        appendAuditLog(
+          'LIMPIEZA_BANDEJA_FACTURAS',
+          currentUser?.email || 'admin:contador',
+          activeTenant.id,
+          `Bandeja de facturas vaciada para pruebas/reinicio en ${activeTenant.name}`
+        );
+        setSubPayToast(`Bandeja de "${activeTenant.name}" dejada en blanco (0 facturas).`);
+        setTimeout(() => setSubPayToast(null), 4500);
+      }
+    });
+  }
+
   function handleFileUploadSimulation(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -2240,6 +2271,7 @@ export default function App() {
       setOcrAlertMessage(`El archivo "${file.name}" supera el límite máximo de 7.5 MB. Comprima la imagen o PDF e intente nuevamente.`);
       return;
     }
+    setOcrDraft(createEmptyOcrDraft());
     setOcrUploadedFileName(file.name);
     setOcrScanning(true);
     setOcrAlertMessage(null);
@@ -5390,11 +5422,33 @@ export default function App() {
                     Clasificación automática SNAT/2026/00093 · Validación Módulo 11 · Bloqueo de Facturas Duplicadas
                   </p>
                 </div>
-                <label className={`ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5 ${ocrScanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
-                  <Upload className="w-3.5 h-3.5" />
-                  {ocrScanning ? 'Procesando Factura...' : 'Subir Foto / PDF Factura'}
-                  <input type="file" accept="image/*,application/pdf" disabled={ocrScanning} onChange={handleFileUploadSimulation} className="hidden" />
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className={`ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5 ${ocrScanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+                    <Upload className="w-3.5 h-3.5" />
+                    {ocrScanning ? 'Procesando Factura...' : 'Subir Foto / PDF Factura'}
+                    <input type="file" accept="image/*,application/pdf" disabled={ocrScanning} onChange={handleFileUploadSimulation} className="hidden" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleClearOcrDraft}
+                    disabled={ocrScanning}
+                    className="px-3 py-2 text-xs font-mono rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Limpiar Campos
+                  </button>
+                  {currentUser?.role !== 'client' && (
+                    <button
+                      type="button"
+                      onClick={handleClearTenantInvoices}
+                      disabled={ocrScanning}
+                      className="px-3 py-2 text-xs font-mono rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 transition flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Vaciar Facturas ({tenantInvoices.length})
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Preset Scenarios Bar */}
