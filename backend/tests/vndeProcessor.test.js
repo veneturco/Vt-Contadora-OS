@@ -197,6 +197,37 @@ endstream endobj
   assert.equal(result.extracted.totalOriginal, 1160);
 });
 
+test('VNDE OCR Local 0 Tokens: tolera confusión O/0 en RIF, salta encabezado SENIAT y lee fechas DD/MM/YY', async () => {
+  const { diagnoseOcrEngine } = require('../services/vndeFiscalProcessor');
+  const noisyOcr = `
+    SENIAT
+    FARMACIA CENTRAL LOS ANDES C.A.
+    R.I.F.: J-4O549697-5
+    FECHA: 19/11/26  HORA: 09:42 AM
+    FACTURA NRO: 001245
+    BASE IMPONIBLE 16%: Bs. 500,00
+    IVA 16%: Bs. 80,00
+    TOTAL A PAGAR: Bs. 580,00
+  `;
+  const result = await processFiscalInvoiceVNDE({
+    rawText: noisyOcr,
+    fileName: 'ticket_local.jpg'
+  });
+
+  assert.ok(result);
+  assert.equal(result.tokensUsed, 0);
+  assert.ok(result.extracted);
+  assert.equal(result.extracted.supplierRif, 'J-40549697-5');
+  assert.match(result.extracted.supplierName, /FARMACIA CENTRAL LOS ANDES/i);
+  assert.equal(result.extracted.emissionDate, '2026-11-19');
+  assert.equal(result.extracted.totalOriginal, 580);
+  assert.equal(result.extracted.mathValid, true);
+
+  const diag = await diagnoseOcrEngine('');
+  assert.equal(diag.ok, false);
+  assert.equal(diag.apiKeyConfigured, false);
+});
+
 test('SaaS Billing & Seguridad: Códigos Telegram 12-hex, Conciliación de Pagos y Cuotas por Plan', async () => {
   const {
     generateTelegramLinkCode,

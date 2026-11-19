@@ -41,7 +41,7 @@ import {
 } from './utils/seniatEngine';
 import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
-import { enhanceDocumentForOcr } from './utils/documentEnhancer';
+import { enhanceDocumentForOcr, runLocalBrowserOcr } from './utils/documentEnhancer';
 import { safeApiRequest } from './services/apiClient';
 
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
@@ -2298,6 +2298,9 @@ export default function App() {
         setOcrPreviewUrl(null);
       }
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
+      const localRawText = !detectedQr && file.type.startsWith('image/')
+        ? await runLocalBrowserOcr(enhanced.dataUrl, 12000)
+        : undefined;
       const res = await safeApiRequest<{
         mode: string;
         tokensUsed?: number;
@@ -2322,11 +2325,12 @@ export default function App() {
         body: JSON.stringify({
           tenantId: activeTenant.id,
           base64Data: enhanced.base64Data,
+          rawText: localRawText || undefined,
           qrPayload: detectedQr,
           mimeType: enhanced.mimeType,
           fileName: file.name
         }),
-        timeoutMs: 30000
+        timeoutMs: 45000
       });
 
       if (res.ok && res.data?.extracted) {
@@ -2395,6 +2399,9 @@ export default function App() {
       try {
         const enhanced = await enhanceDocumentForOcr(file);
         const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
+        const localRawText = !detectedQr && file.type.startsWith('image/')
+          ? await runLocalBrowserOcr(enhanced.dataUrl, 10000)
+          : undefined;
         const res = await safeApiRequest<{
           extracted?: {
             supplierRif?: string;
@@ -2418,11 +2425,12 @@ export default function App() {
           body: JSON.stringify({
             tenantId: activeTenant.id,
             base64Data: enhanced.base64Data,
+            rawText: localRawText || undefined,
             qrPayload: detectedQr,
             mimeType: enhanced.mimeType,
             fileName: file.name
           }),
-          timeoutMs: 30000
+          timeoutMs: 45000
         });
 
         if (!res.ok || !res.data?.extracted) {
@@ -2825,13 +2833,23 @@ export default function App() {
     }
     setMobileUploadedFileName(file.name);
     setMobileScanning(true);
+    setMobileQuickRif('');
+    setMobileQuickSupplier('');
+    setMobileQuickInvoiceNumber('');
+    setMobileQuickControlNumber('');
+    setMobileQuickAmount(0);
+    setMobileQuickExempt(0);
     setMobileToast(`Optimizando nitidez y leyendo "${file.name}"...`);
 
     try {
       const enhanced = await enhanceDocumentForOcr(file);
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
+      const localRawText = !detectedQr && file.type.startsWith('image/')
+        ? await runLocalBrowserOcr(enhanced.dataUrl, 12000)
+        : undefined;
       const res = await safeApiRequest<{
         mode: string;
+        tokensUsed?: number;
         extracted: {
           supplierRif?: string;
           supplierName?: string;
@@ -2846,11 +2864,12 @@ export default function App() {
         body: JSON.stringify({
           tenantId: activeTenant.id,
           base64Data: enhanced.base64Data,
+          rawText: localRawText || undefined,
           qrPayload: detectedQr,
           mimeType: enhanced.mimeType,
           fileName: file.name
         }),
-        timeoutMs: 30000
+        timeoutMs: 45000
       });
 
       if (res.ok && res.data?.extracted) {
@@ -2862,7 +2881,8 @@ export default function App() {
         if (typeof ext.exemptOriginal === 'number') setMobileQuickExempt(ext.exemptOriginal);
         if (ext.invoiceNumber) setMobileQuickInvoiceNumber(ext.invoiceNumber);
         if (ext.controlNumber) setMobileQuickControlNumber(ext.controlNumber);
-        setMobileToast(`Factura procesada (${Math.round(enhanced.optimizedBytes / 1024)} KB). Verifica y toca "Enviar Factura Ahora".`);
+        const zeroTokenBadge = res.data.tokensUsed === 0 ? ' · Lectura Local 0-Tokens' : '';
+        setMobileToast(`Factura procesada (${Math.round(enhanced.optimizedBytes / 1024)} KB${zeroTokenBadge}). Verifica y toca "Enviar Factura Ahora".`);
       } else {
         setMobileToast(`Aviso de Lectura: ${res.error || 'No se pudo leer automáticamente'}. Completa los datos y envía.`);
       }

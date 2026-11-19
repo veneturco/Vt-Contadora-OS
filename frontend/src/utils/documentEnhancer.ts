@@ -1,6 +1,8 @@
-// Optimizador Documental estilo CamScanner (100% en navegador · Canvas · Costo $0)
-// Redimensiona fotos 4K del celular a 1800px, elimina sombras/iluminación desigual,
-// refuerza contraste y aplica enfoque suave para tickets térmicos y facturas arrugadas.
+// Optimizador Documental estilo CamScanner + Motor OCR Local 0-Tokens (100% en navegador · Canvas + Tesseract WASM)
+// 1. Redimensiona fotos 4K del celular a 1600px (ligero para 4G y nítido para texto térmico)
+// 2. Normalización por percentiles (p5-p95) que ignora mesas oscuras y destellos de luz
+// 3. Enfoque suave (Sharpen 3x3) para letras pequeñas en tickets térmicos y facturas arrugadas
+// 4. OCR Local en español (0 Tokens, 0 RAM en servidor) con timeout de seguridad
 
 export interface EnhancedDocumentResult {
   base64Data: string;
@@ -24,21 +26,41 @@ function applyDocumentClarityFilter(ctx: CanvasRenderingContext2D, width: number
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = imgData.data;
 
-  // 1. Calcular rango de luminancia (percentiles aproximados por muestreo rápido)
-  let minLum = 255;
-  let maxLum = 0;
-  const step = Math.max(4, Math.floor((data.length / 4) / 6000) * 4);
+  // 1. Histograma de luminancia para percentiles p5 y p95 (evita que fondos oscuros o brillos arruinen el contraste)
+  const hist = new Uint32Array(256);
+  let sampled = 0;
+  const step = Math.max(4, Math.floor((data.length / 4) / 12000) * 4);
   for (let i = 0; i < data.length; i += step) {
-    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    if (lum < minLum) minLum = lum;
-    if (lum > maxLum) maxLum = lum;
+    const lum = Math.min(255, Math.max(0, Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])));
+    hist[lum]++;
+    sampled++;
   }
 
-  // Estiramiento suave de contraste (blanquea papel con sombra y oscurece tinta tenue)
-  const low = Math.min(minLum + 8, 90);
-  const high = Math.max(maxLum - 6, 175);
-  const range = Math.max(40, high - low);
-  const contrastFactor = 1.14;
+  let acc = 0;
+  let p5 = 20;
+  let p95 = 235;
+  const targetLow = sampled * 0.05;
+  const targetHigh = sampled * 0.95;
+  for (let b = 0; b < 256; b++) {
+    acc += hist[b];
+    if (acc >= targetLow) {
+      p5 = b;
+      break;
+    }
+  }
+  acc = 0;
+  for (let b = 0; b < 256; b++) {
+    acc += hist[b];
+    if (acc >= targetHigh) {
+      p95 = b;
+      break;
+    }
+  }
+
+  const low = Math.min(p5, 95);
+  const high = Math.max(p95, 170);
+  const range = Math.max(45, high - low);
+  const contrastFactor = 1.16;
 
   for (let i = 0; i < data.length; i += 4) {
     for (let c = 0; c < 3; c++) {
@@ -48,7 +70,7 @@ function applyDocumentClarityFilter(ctx: CanvasRenderingContext2D, width: number
     }
   }
 
-  // 2. Enfoque suave (Sharpen 3x3) para letras pequeñas en tickets térmicos
+  // 2. Enfoque suave (Sharpen 3x3) mezclado al 30% para letras finas sin amplificar ruido
   const copy = new Uint8ClampedArray(data);
   const w4 = width * 4;
   for (let y = 1; y < height - 1; y++) {
@@ -63,8 +85,7 @@ function applyDocumentClarityFilter(ctx: CanvasRenderingContext2D, width: number
           copy[idx - w4 + c] +
           copy[idx + w4 + c];
         const sharp = center - neighbors;
-        // Mezcla 35% sharpen + 65% original para evitar ruido en papel arrugado
-        const blended = copy[idx + c] * 0.65 + sharp * 0.35;
+        const blended = copy[idx + c] * 0.70 + sharp * 0.30;
         data[idx + c] = blended < 0 ? 0 : blended > 255 ? 255 : blended;
       }
     }
@@ -77,7 +98,7 @@ export async function enhanceDocumentForOcr(file: File): Promise<EnhancedDocumen
   const rawDataUrl = await fileToDataUrl(file);
   const rawBase64 = rawDataUrl.split(',')[1] || '';
 
-  // PDFs pasan directo sin rasterizar
+  // PDFs pasan directo sin rasterizar (el backend extrae texto nativo con 0 tokens)
   if (!file.type.startsWith('image/')) {
     return {
       base64Data: rawBase64,
@@ -93,7 +114,7 @@ export async function enhanceDocumentForOcr(file: File): Promise<EnhancedDocumen
     const img = new Image();
     img.onload = () => {
       try {
-        const maxDim = 1800;
+        const maxDim = 1600;
         const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
         const width = Math.max(1, Math.round(img.width * scale));
         const height = Math.max(1, Math.round(img.height * scale));
@@ -118,7 +139,7 @@ export async function enhanceDocumentForOcr(file: File): Promise<EnhancedDocumen
         ctx.drawImage(img, 0, 0, width, height);
         applyDocumentClarityFilter(ctx, width, height);
 
-        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+        const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
         const optimizedBase64 = optimizedDataUrl.split(',')[1] || rawBase64;
         const optimizedBytes = Math.round((optimizedBase64.length * 3) / 4);
 
@@ -153,4 +174,56 @@ export async function enhanceDocumentForOcr(file: File): Promise<EnhancedDocumen
     };
     img.src = rawDataUrl;
   });
+}
+
+// Singleton de Worker Tesseract WASM en español para reutilizar entre fotos (Modo Ráfaga veloz · 0 Tokens)
+let tesseractWorkerPromise: Promise<{ recognize: (img: string) => Promise<{ data?: { text?: string } }> }> | null = null;
+
+async function getSpanishOcrWorker() {
+  if (!tesseractWorkerPromise) {
+    tesseractWorkerPromise = (async () => {
+      const mod = (await import('tesseract.js')) as unknown as {
+        createWorker?: (lang: string) => Promise<{ recognize: (img: string) => Promise<{ data?: { text?: string } }> }>;
+        default?: {
+          createWorker?: (lang: string) => Promise<{ recognize: (img: string) => Promise<{ data?: { text?: string } }> }>;
+        };
+      };
+      const createWorker = mod.createWorker || mod.default?.createWorker;
+      if (typeof createWorker !== 'function') {
+        throw new Error('createWorker no disponible');
+      }
+      const worker = await createWorker('spa');
+      return worker;
+    })().catch(err => {
+      tesseractWorkerPromise = null;
+      throw err;
+    });
+  }
+  return tesseractWorkerPromise;
+}
+
+/**
+ * Motor OCR Local 0-Tokens en el navegador (Tesseract WASM español).
+ * Extrae texto impreso del recibo antes de enviarlo al servidor para que el Motor Determinista
+ * SENIAT pueda resolver la factura con 0 Tokens incluso si el proveedor cloud está caído.
+ * Nunca lanza excepciones ni bloquea el envío (timeout de seguridad).
+ */
+export async function runLocalBrowserOcr(dataUrl: string, timeoutMs = 12000): Promise<string> {
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return '';
+  try {
+    const ocrPromise = (async () => {
+      const worker = await getSpanishOcrWorker();
+      const result = await worker.recognize(dataUrl);
+      const text = String(result?.data?.text || '').trim();
+      return text.length >= 15 ? text.slice(0, 12000) : '';
+    })();
+
+    const timeoutPromise = new Promise<string>(resolve => {
+      setTimeout(() => resolve(''), timeoutMs);
+    });
+
+    return await Promise.race([ocrPromise, timeoutPromise]);
+  } catch {
+    return '';
+  }
 }

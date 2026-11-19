@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const admin = require('firebase-admin');
 const { processTelegramReceiptUpdate } = require('./services/telegramBot');
-const { processFiscalInvoiceVNDE } = require('./services/vndeFiscalProcessor');
+const { processFiscalInvoiceVNDE, diagnoseOcrEngine } = require('./services/vndeFiscalProcessor');
 const { syncOfficialBcvRate, DEFAULT_CURRENT_BCV_USD } = require('./services/bcvSyncCron');
 const {
   verifySessionToken,
@@ -294,11 +294,21 @@ app.use(helmet({
     useDefaults: true,
     directives: {
       "default-src": ["'self'"],
-      "script-src": ["'self'", "'unsafe-inline'"],
+      "script-src": ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", "https://cdn.jsdelivr.net"],
+      "worker-src": ["'self'", "blob:"],
       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
       "img-src": ["'self'", "data:", "blob:", "https:"],
-      "connect-src": ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com", "https://ve.dolarapi.com"]
+      "connect-src": [
+        "'self'",
+        "blob:",
+        "data:",
+        "https://*.googleapis.com",
+        "https://*.firebaseio.com",
+        "https://ve.dolarapi.com",
+        "https://cdn.jsdelivr.net",
+        "https://tessdata.projectnaptha.com"
+      ]
     }
   },
   crossOriginEmbedderPolicy: false
@@ -643,6 +653,16 @@ app.post('/api/saas/suspend-expired', verifyFirebaseToken, requireSuperAdmin, as
 });
 
 const ALLOWED_OCR_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+
+// Diagnóstico en vivo del Motor OCR (solo Super-Admin, accesible desde Guardián VT)
+app.get('/api/ocr/diagnostics', verifyFirebaseToken, requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const report = await diagnoseOcrEngine(process.env.GEMINI_API_KEY);
+    return res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
   const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;

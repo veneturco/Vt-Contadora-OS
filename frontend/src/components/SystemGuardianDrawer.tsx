@@ -79,6 +79,15 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [testingOcr, setTestingOcr] = useState(false);
+  const [ocrDiag, setOcrDiag] = useState<{
+    ok: boolean;
+    apiKeyConfigured: boolean;
+    maskedKey: string | null;
+    activeModel: string | null;
+    latencyMs: number;
+    error: string | null;
+  } | null>(null);
   const [report, setReport] = useState<GuardianReport | null>(null);
   const [activeView, setActiveView] = useState<'findings' | 'alerts' | 'ocr_legal'>('findings');
   const [toast, setToast] = useState<string | null>(null);
@@ -102,6 +111,34 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     const interval = setInterval(fetchStatus, 180000);
     return () => clearInterval(interval);
   }, [isSuperAdmin, fetchStatus]);
+
+  async function handleTestOcrDiagnostics() {
+    if (testingOcr) return;
+    setTestingOcr(true);
+    setToast(null);
+    try {
+      const res = await safeApiRequest<{
+        ok: boolean;
+        apiKeyConfigured: boolean;
+        maskedKey: string | null;
+        activeModel: string | null;
+        latencyMs: number;
+        error: string | null;
+      }>('/api/ocr/diagnostics', { timeoutMs: 20000 });
+      if (res.ok && res.data) {
+        setOcrDiag(res.data);
+        setToast(
+          res.data.ok
+            ? `Motor OCR en línea (${res.data.activeModel} · ${res.data.latencyMs} ms · Clave ${res.data.maskedKey}).`
+            : `Diagnóstico OCR: ${res.data.error || 'Sin respuesta del motor cloud'}`
+        );
+      } else {
+        setToast(`Error al consultar diagnóstico OCR: ${res.error || 'sin respuesta'}`);
+      }
+    } finally {
+      setTestingOcr(false);
+    }
+  }
 
   async function handleRunAudit(autoRepair: boolean) {
     if (loading || repairing) return;
@@ -318,6 +355,19 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
             </div>
 
             {/* Action bar */}
+            {ocrDiag && (
+              <div
+                className={`mx-4 mt-3 p-2.5 rounded-xl border text-[11px] font-mono ${
+                  ocrDiag.ok
+                    ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200'
+                    : 'bg-rose-500/10 border-rose-400/30 text-rose-200'
+                }`}
+              >
+                {ocrDiag.ok
+                  ? `✅ OCR Cloud Activo · Modelo: ${ocrDiag.activeModel} · Latencia: ${ocrDiag.latencyMs}ms · Clave: ${ocrDiag.maskedKey}`
+                  : `❌ OCR Cloud con fallo (${ocrDiag.maskedKey || 'sin clave'}): ${ocrDiag.error}`}
+              </div>
+            )}
             <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <button
@@ -328,6 +378,15 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   <span>{loading ? 'Auditando...' : 'Escanear Ahora'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTestOcrDiagnostics}
+                  disabled={testingOcr}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/35 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Activity className={`w-3.5 h-3.5 ${testingOcr ? 'animate-pulse' : ''}`} />
+                  <span>{testingOcr ? 'Probando OCR...' : 'Probar OCR'}</span>
                 </button>
                 <button
                   type="button"
