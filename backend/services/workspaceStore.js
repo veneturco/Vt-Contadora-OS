@@ -22,6 +22,8 @@ function aggregatePartitionDocs(docs) {
   const invoices = [];
   const employees = [];
   const payments = [];
+  const bankMovements = [];
+  const auditLogs = [];
   let latestUpdatedAt = null;
 
   for (const docData of docs) {
@@ -30,6 +32,8 @@ function aggregatePartitionDocs(docs) {
     if (Array.isArray(docData.invoices)) invoices.push(...docData.invoices);
     if (Array.isArray(docData.employees)) employees.push(...docData.employees);
     if (Array.isArray(docData.payments)) payments.push(...docData.payments);
+    if (Array.isArray(docData.bankMovements)) bankMovements.push(...docData.bankMovements);
+    if (Array.isArray(docData.auditLogs)) auditLogs.push(...docData.auditLogs);
     if (docData.updatedAt && (!latestUpdatedAt || String(docData.updatedAt) > String(latestUpdatedAt))) {
       latestUpdatedAt = docData.updatedAt;
     }
@@ -40,6 +44,8 @@ function aggregatePartitionDocs(docs) {
     invoices,
     employees,
     payments,
+    bankMovements,
+    auditLogs,
     updatedAt: latestUpdatedAt
   };
 }
@@ -110,7 +116,7 @@ async function readWorkspaceState(db, user) {
   return { empty: false, partitioned: false, state: legacy };
 }
 
-async function writeWorkspaceState(db, user, { tenants, invoices, employees, payments }) {
+async function writeWorkspaceState(db, user, { tenants, invoices, employees, payments, bankMovements, auditLogs }) {
   const isSuper = user?.role === 'superadmin';
   const isAdmin = user?.role === 'admin';
   if (!isSuper && !isAdmin) {
@@ -130,11 +136,13 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
   const invoicesByTenant = groupByTenantId(invoices);
   const employeesByTenant = groupByTenantId(employees);
   const paymentsByTenant = groupByTenantId(payments);
+  const bankMovesByTenant = groupByTenantId(bankMovements);
+  const auditLogsByTenant = groupByTenantId(auditLogs);
 
   await Promise.all(
     targetTenants.map(tenant => {
       const tid = String(tenant.id);
-      return db.collection(PARTITIONED_COLLECTION).doc(tid).set({
+      const payload = {
         tenantId: tid,
         tenant,
         invoices: invoicesByTenant.get(tid) || [],
@@ -142,7 +150,14 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
         payments: paymentsByTenant.get(tid) || [],
         updatedAt: nowIso,
         updatedBy: user.email || user.uid || 'system'
-      }, { merge: true });
+      };
+      if (Array.isArray(bankMovements)) {
+        payload.bankMovements = bankMovesByTenant.get(tid) || [];
+      }
+      if (Array.isArray(auditLogs)) {
+        payload.auditLogs = (auditLogsByTenant.get(tid) || []).slice(-150);
+      }
+      return db.collection(PARTITIONED_COLLECTION).doc(tid).set(payload, { merge: true });
     })
   );
 
@@ -151,6 +166,18 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
     updatedAt: nowIso,
     tenantsWritten: targetTenants.length
   };
+}
+
+async function deleteTenantWorkspace(db, tenantId) {
+  const tid = String(tenantId || '').trim();
+  if (!tid) {
+    const err = new Error('tenantId requerido para eliminar empresa.');
+    err.status = 400;
+    throw err;
+  }
+  await db.collection(PARTITIONED_COLLECTION).doc(tid).delete();
+  await db.collection('tenants').doc(tid).delete();
+  return { ok: true, deletedTenantId: tid };
 }
 
 async function appendTenantInvoice(db, tenantId, invoice, actorEmail = 'client') {
@@ -198,5 +225,6 @@ module.exports = {
   PARTITIONED_COLLECTION,
   readWorkspaceState,
   writeWorkspaceState,
-  appendTenantInvoice
+  appendTenantInvoice,
+  deleteTenantWorkspace
 };

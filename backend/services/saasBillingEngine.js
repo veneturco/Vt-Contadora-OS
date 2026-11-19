@@ -82,6 +82,7 @@ async function registerSubscriptionPayment(db, { tenantId, planId, paymentMethod
   });
 
   return {
+    paymentId: paymentRef.id,
     status: isAutoVerified ? 'ACTIVA' : 'PENDIENTE_VERIFICACION',
     paymentStatus,
     nextBillingDate: nextDueDate.toISOString().slice(0, 10),

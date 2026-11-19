@@ -47,6 +47,7 @@ import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from 
 import { AppleEmptyState } from './components/AppleEmptyState';
 import { ConfirmDialog, ConfirmDialogState } from './components/ConfirmDialog';
 import { SkinMenuPopover } from './components/SkinMenuPopover';
+import { SystemGuardianDrawer } from './components/SystemGuardianDrawer';
 import {
   SKINS,
   INITIAL_TENANTS,
@@ -280,7 +281,7 @@ export default function App() {
         }
       }
 
-      // Cargar estado operativo (empresas, facturas, nómina, pagos) desde Cloud Firestore
+      // Cargar estado operativo (empresas, facturas, nómina, pagos, bancos, auditoría) desde Cloud Firestore
       const wsRes = await safeApiRequest<{
         ok: boolean;
         empty: boolean;
@@ -289,6 +290,8 @@ export default function App() {
           invoices?: FiscalInvoice[];
           employees?: PayrollEmployee[];
           payments?: SaasPaymentRecord[];
+          bankMovements?: BankMovement[];
+          auditLogs?: AuditLogEntry[];
         } | null;
       }>('/api/workspace/state');
 
@@ -301,6 +304,8 @@ export default function App() {
         if (Array.isArray(st.invoices) && st.invoices.length > 0) setInvoices(st.invoices);
         if (Array.isArray(st.employees) && st.employees.length > 0) setEmployees(st.employees);
         if (Array.isArray(st.payments) && st.payments.length > 0) setPayments(st.payments);
+        if (Array.isArray(st.bankMovements) && st.bankMovements.length > 0) setBankMovements(st.bankMovements);
+        if (Array.isArray(st.auditLogs) && st.auditLogs.length > 0) setAuditLogs(st.auditLogs);
       }
       if (!cancelled) setWorkspaceCloudHydrated(true);
     })();
@@ -373,18 +378,54 @@ export default function App() {
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
 
-  // Guardar automáticamente cambios operativos (empresas, facturas, nómina, pagos) en Cloud Firestore
+  // Telemetría automática de errores en tiempo real hacia el Guardián del Sistema
+  useEffect(() => {
+    if (!currentUser || typeof window === 'undefined') return;
+    let lastSentAt = 0;
+    const reportError = (message: string, stack?: string) => {
+      const now = Date.now();
+      if (now - lastSentAt < 5000) return;
+      lastSentAt = now;
+      safeApiRequest('/api/guardian/telemetry', {
+        method: 'POST',
+        body: JSON.stringify({
+          severity: 'WARNING',
+          category: 'FRONTEND_RUNTIME',
+          message,
+          stack,
+          route: window.location.hash || '#/',
+          tenantId: selectedTenantId
+        })
+      }).catch(() => {});
+    };
+    const onError = (evt: ErrorEvent) => {
+      if (evt.message) reportError(evt.message, evt.error?.stack);
+    };
+    const onRejection = (evt: PromiseRejectionEvent) => {
+      const msg = evt.reason instanceof Error ? evt.reason.message : String(evt.reason || 'Unhandled rejection');
+      const stack = evt.reason instanceof Error ? evt.reason.stack : undefined;
+      reportError(msg, stack);
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, [currentUser?.email, selectedTenantId]);
+
+  // Guardar automáticamente cambios operativos (empresas, facturas, nómina, pagos, bancos, auditoría) en Cloud Firestore
   useEffect(() => {
     if (!currentUser || !workspaceCloudHydrated) return;
     if (currentUser.role !== 'superadmin' && currentUser.role !== 'admin') return;
     const timer = setTimeout(() => {
       safeApiRequest('/api/workspace/state', {
         method: 'PUT',
-        body: JSON.stringify({ tenants, invoices, employees, payments })
+        body: JSON.stringify({ tenants, invoices, employees, payments, bankMovements, auditLogs })
       }).catch(() => {});
     }, 1200);
     return () => clearTimeout(timer);
-  }, [tenants, invoices, employees, payments, currentUser, workspaceCloudHydrated]);
+  }, [tenants, invoices, employees, payments, bankMovements, auditLogs, currentUser, workspaceCloudHydrated]);
 
   // Super-Admin & Accountants Management States
   const [accountants, setAccountants] = useState<AccountantPartner[]>(() => safeGetStorage('vt_accountants_v32', INITIAL_ACCOUNTANTS));
@@ -875,8 +916,10 @@ export default function App() {
   // BANK RECONCILIATION HANDLERS (VEN-NIF NIC 21 & ART. 177 COT)
   // =========================================================================
   function handleRunAutoReconcile() {
-    const res = runDeterministicBankReconciliation(bankMovements, tenantInvoices, bcvRate);
-    setBankMovements(res.reconciledMoves);
+    const activeMoves = bankMovements.filter(m => m.tenantId === activeTenant.id);
+    const otherMoves = bankMovements.filter(m => m.tenantId !== activeTenant.id);
+    const res = runDeterministicBankReconciliation(activeMoves, tenantInvoices, bcvRate);
+    setBankMovements([...res.reconciledMoves, ...otherMoves]);
     appendAuditLog(
       'CONCILIACION_BANCARIA_EJECUTADA',
       currentUser?.email || 'admin:contador',
@@ -889,7 +932,13 @@ export default function App() {
 
   function handleFileUploadBankCsv(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (/\.(xlsx|xls)$/i.test(file.name)) {
+      setSubPayToast('Formato Excel binario (.xlsx/.xls) no soportado directamente. Exporte su extracto como CSV (delimitado por comas) o TXT e importe de nuevo.');
+      setTimeout(() => setSubPayToast(null), 6000);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = evt => {
       const text = evt.target?.result as string;
@@ -911,12 +960,11 @@ export default function App() {
         setSubPayToast(`¡${parsed.length} movimientos importados con éxito! Haz clic en "Ejecutar Conciliación" para cruzarlos.`);
         setTimeout(() => setSubPayToast(null), 5000);
       } else {
-        setSubPayToast('No se detectaron movimientos válidos en el archivo. Verifique el formato CSV/Excel.');
+        setSubPayToast('No se detectaron movimientos válidos en el archivo. Verifique que sea formato CSV o TXT.');
         setTimeout(() => setSubPayToast(null), 5000);
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   }
 
   function handleManualLinkMoveToInvoice(moveId: string, invoiceId: string) {
@@ -962,22 +1010,26 @@ export default function App() {
   }
 
   function handleDownloadReconcilePdf() {
-    downloadPdfBankReconciliationAudit(activeTenant.name, activeTenant.rif, '202611', bankMovements);
+    const period = new Date().toISOString().slice(0, 7).replace('-', '');
+    const tenantMoves = bankMovements.filter(m => m.tenantId === activeTenant.id);
+    downloadPdfBankReconciliationAudit(activeTenant.name, activeTenant.rif, period, tenantMoves);
     appendAuditLog(
       'CERTIFICADO_CONCILIACION_PDF_DESCARGADO',
       currentUser?.email || 'admin:contador',
       activeTenant.id,
-      `Certificado Oficial de Conciliación Bancaria Art. 177 COT descargado en PDF`
+      `Certificado Oficial de Conciliación Bancaria Art. 177 COT descargado en PDF (${period})`
     );
   }
 
   function handleDownloadReconcileCsv() {
-    const csv = exportBankReconciliationCsv(bankMovements, activeTenant.rif, '202611');
-    handleDownloadFile(`CONCILIACION_BANCARIA_${activeTenant.rif}_202611.csv`, csv, 'text/csv');
+    const period = new Date().toISOString().slice(0, 7).replace('-', '');
+    const tenantMoves = bankMovements.filter(m => m.tenantId === activeTenant.id);
+    const csv = exportBankReconciliationCsv(tenantMoves, activeTenant.rif, period);
+    handleDownloadFile(`CONCILIACION_BANCARIA_${activeTenant.rif}_${period}.csv`, csv, 'text/csv');
   }
 
   const reconciliationStats = useMemo(() => {
-    const tenantMoves = bankMovements.filter(m => m.tenantId === activeTenant.id || m.tenantId.includes('bodega'));
+    const tenantMoves = bankMovements.filter(m => m.tenantId === activeTenant.id);
     const totalMoves = tenantMoves.length;
     const reconciledMoves = tenantMoves.filter(m => m.reconciliationStatus === 'CONCILIADO' || m.reconciliationStatus === 'DIFERENCIAL_CAMBIARIO');
     const matchedCount = reconciledMoves.length;
@@ -1391,7 +1443,15 @@ export default function App() {
       message: `¿Está seguro de retirar la empresa "${tenantName}" de su cartera activa? Se desvincularán sus comprobantes fiscales asociados en esta vista.`,
       confirmLabel: 'Retirar empresa',
       destructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
+        const delRes = await safeApiRequest<{ ok: boolean }>(`/api/tenants/${encodeURIComponent(tenantId)}`, {
+          method: 'DELETE'
+        });
+        if (!delRes.ok && delRes.status !== 0) {
+          setSubPayToast(`No se pudo eliminar la empresa en el servidor: ${delRes.error || 'Error de permisos'}`);
+          setTimeout(() => setSubPayToast(null), 5000);
+          return;
+        }
         setTenants(prev => prev.filter(t => t.id !== tenantId));
         if (selectedTenantId === tenantId) {
           const remaining = tenants.filter(t => t.id !== tenantId);
@@ -1401,9 +1461,9 @@ export default function App() {
           'BAJA_EMPRESA_CARTERA',
           currentUser?.email || 'founder@veneturco.com',
           tenantId,
-          `Empresa eliminada de la cartera: ${tenantName}`
+          `Empresa eliminada permanentemente de la cartera: ${tenantName}`
         );
-        setSubPayToast(`Empresa "${tenantName}" retirada correctamente.`);
+        setSubPayToast(`Empresa "${tenantName}" retirada permanentemente.`);
         setTimeout(() => setSubPayToast(null), 4000);
       }
     });
@@ -1668,12 +1728,26 @@ export default function App() {
     }
   }
 
-  function handleUnlockAccount(adminKey?: string) {
-    const validKeys = ['Desbloquear2026#', 'SuperAdmin2026#', 'Seniat2026#', 'admin'];
-    if (adminKey && !validKeys.includes(adminKey.trim())) {
-      setUnlockFeedback('Clave Maestra incorrecta.');
+  async function handleUnlockAccount(adminKey?: string) {
+    if (adminKey !== undefined && adminKey.trim().length < 4) {
+      setUnlockFeedback('Ingrese una clave o solicite desbloqueo a un Super-Admin autenticado.');
       return;
     }
+    const targetEmail = loginEmail.trim().toLowerCase();
+    if (targetEmail && currentUser?.role === 'superadmin') {
+      const unlockRes = await safeApiRequest<{ ok: boolean }>('/api/auth/unlock-account', {
+        method: 'POST',
+        body: JSON.stringify({ email: targetEmail })
+      });
+      if (!unlockRes.ok) {
+        setUnlockFeedback(unlockRes.error || 'No se pudo desbloquear la cuenta en el servidor.');
+        return;
+      }
+    } else if (targetEmail && !currentUser) {
+      setUnlockFeedback('El desbloqueo definitivo requiere sesión activa de Super-Admin en el servidor.');
+      return;
+    }
+
     setIsAccountLocked(false);
     setFailedLoginAttempts(0);
     setLockCountdownSeconds(0);
@@ -1681,12 +1755,6 @@ export default function App() {
     setShowUnlockModal(false);
     setUnlockMasterKey('');
     setUnlockFeedback(null);
-
-    fetch('/api/auth/unlock-account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail, adminUid: 'superadmin_console' })
-    }).catch(() => {});
   }
 
   function handleLogout() {
@@ -1696,7 +1764,7 @@ export default function App() {
     localStorage.removeItem('vt_last_login_password');
   }
 
-  function handleCreateTenant(e: React.FormEvent) {
+  async function handleCreateTenant(e: React.FormEvent) {
     e.preventDefault();
     const rifCheck = validateVenezuelanRIF(newTenantRif);
     if (!rifCheck.valid || !newTenantName.trim()) return;
@@ -1716,16 +1784,44 @@ export default function App() {
       telegramCode: `VT-${prefix}-${hex}`,
       telegramChatLinked: 'Pendiente de /vincular'
     };
-    setTenants(prev => [...prev, created]);
-    setSelectedTenantId(id);
+
+    const apiRes = await safeApiRequest<{
+      ok: boolean;
+      tenant?: Tenant;
+      token?: string | null;
+      user?: typeof currentUser;
+    }>('/api/tenants', {
+      method: 'POST',
+      body: JSON.stringify({ tenant: created })
+    });
+
+    if (!apiRes.ok && apiRes.status !== 0) {
+      setSubPayToast(`Error al registrar empresa en el servidor: ${apiRes.error || 'No autorizado'}`);
+      setTimeout(() => setSubPayToast(null), 5000);
+      return;
+    }
+
+    if (apiRes.data?.token) {
+      localStorage.setItem('vt_auth_token', apiRes.data.token);
+    }
+    if (apiRes.data?.user) {
+      setCurrentUser(apiRes.data.user);
+      localStorage.setItem('vt_auth_user', JSON.stringify(apiRes.data.user));
+    }
+
+    const savedTenant = apiRes.data?.tenant || created;
+    setTenants(prev => [...prev, savedTenant]);
+    setSelectedTenantId(savedTenant.id);
     appendAuditLog(
       'ALTA_EMPRESA_TENANT',
       currentUser?.email || 'admin:firma',
-      id,
-      `Nueva empresa registrada: ${created.name} (${created.rif}) · Régimen ${created.regime} · Plan ${created.planId}`
+      savedTenant.id,
+      `Nueva empresa registrada: ${savedTenant.name} (${savedTenant.rif}) · Régimen ${savedTenant.regime} · Plan ${savedTenant.planId}`
     );
     setNewTenantName('');
     setNewTenantModalOpen(false);
+    setSubPayToast(`Empresa "${savedTenant.name}" creada y vinculada en la nube.`);
+    setTimeout(() => setSubPayToast(null), 4000);
   }
 
   function handleAddEmployee(e: React.FormEvent) {
@@ -2334,23 +2430,20 @@ export default function App() {
     const plan = SAAS_PLANS_CATALOG.find(p => p.id === selectedPlanForPayment) || SAAS_PLANS_CATALOG[1];
     const amountBs = Number((plan.priceUsdMonthly * bcvRate).toFixed(2));
     const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
-    const paymentId = `pay_${Date.now()}`;
-    const isAdminUser = currentUser?.role !== 'client';
-    const initialStatus: 'VERIFICADO' | 'PENDIENTE' = isAdminUser ? 'VERIFICADO' : 'PENDIENTE';
-    const auditHash = computeDeterministicHash(lastHash, {
-      paymentId,
-      tenantId: activeTenant.id,
-      planId: plan.id,
-      ref: paymentRefInput,
-      status: initialStatus
-    });
+    const isSuperAdminUser = currentUser?.role === 'superadmin';
+    const initialStatus: 'VERIFICADO' | 'PENDIENTE' = isSuperAdminUser ? 'VERIFICADO' : 'PENDIENTE';
 
     const nextDate = new Date();
     nextDate.setDate(nextDate.getDate() + 30);
     const nextBillingStr = nextDate.toISOString().slice(0, 10);
 
-    // Sincronizar con el Backend SaaS Billing Engine
-    await safeApiRequest('/api/saas/register-payment', {
+    // Sincronizar con el Backend SaaS Billing Engine y usar el paymentId real de Firestore
+    const apiRes = await safeApiRequest<{
+      paymentId?: string;
+      status?: string;
+      nextBillingDate?: string;
+      auditHash?: string;
+    }>('/api/saas/register-payment', {
       method: 'POST',
       body: JSON.stringify({
         tenantId: activeTenant.id,
@@ -2360,6 +2453,24 @@ export default function App() {
         bcvRate
       })
     });
+
+    if (!apiRes.ok && apiRes.status !== 0) {
+      setSubPayToast(`Error registrando pago SaaS: ${apiRes.error || 'Referencia inválida o sin permisos'}`);
+      setTimeout(() => setSubPayToast(null), 5000);
+      return;
+    }
+
+    const paymentId = apiRes.data?.paymentId || `pay_${Date.now()}`;
+    const effectiveNextBilling = apiRes.data?.nextBillingDate || nextBillingStr;
+    const auditHash =
+      apiRes.data?.auditHash ||
+      computeDeterministicHash(lastHash, {
+        paymentId,
+        tenantId: activeTenant.id,
+        planId: plan.id,
+        ref: paymentRefInput,
+        status: initialStatus
+      });
 
     const newRecord: SaasPaymentRecord = {
       id: paymentId,
@@ -2377,24 +2488,30 @@ export default function App() {
     };
 
     setPayments(prev => [newRecord, ...prev]);
-    if (isAdminUser) {
+    if (isSuperAdminUser) {
       setTenants(prev =>
         prev.map(t =>
           t.id === activeTenant.id
-            ? { ...t, planId: plan.id, subscriptionStatus: 'ACTIVA', nextBillingDate: nextBillingStr }
+            ? { ...t, planId: plan.id, subscriptionStatus: 'ACTIVA', nextBillingDate: effectiveNextBilling }
             : t
         )
       );
     }
     appendAuditLog(
-      isAdminUser ? 'RENOVACION_LICENCIA_SAAS' : 'REPORTE_PAGO_PENDIENTE_SAAS',
-      isAdminUser ? 'admin:saas_billing' : `cliente:${activeTenant.rif}`,
+      isSuperAdminUser ? 'RENOVACION_LICENCIA_SAAS' : 'REPORTE_PAGO_PENDIENTE_SAAS',
+      isSuperAdminUser ? 'admin:saas_billing' : `${currentUser?.role || 'cliente'}:${activeTenant.rif}`,
       paymentId,
-      isAdminUser
+      isSuperAdminUser
         ? `Suscripción ${plan.name} renovada vía ${paymentMethod} (Ref: ${paymentRefInput}) por USD ${plan.priceUsdMonthly} (Bs. ${amountBs.toFixed(2)})`
         : `Pago reportado en espera de conciliación bancaria (${paymentMethod} Ref: ${paymentRefInput}) por USD ${plan.priceUsdMonthly}`
     );
     setPaymentRefInput(`0134-${Math.floor(10000000 + Math.random() * 89999999)}`);
+    setSubPayToast(
+      isSuperAdminUser
+        ? `Pago verificado y licencia ${plan.name} activada hasta ${effectiveNextBilling}.`
+        : `Pago reportado (ID ${paymentId.slice(0, 8)}). Queda pendiente de aprobación por Super-Admin.`
+    );
+    setTimeout(() => setSubPayToast(null), 5000);
   }
 
   async function handleApproveSaasPayment(payment: SaasPaymentRecord) {
@@ -2402,7 +2519,7 @@ export default function App() {
     nextDate.setDate(nextDate.getDate() + 30);
     const nextBillingStr = nextDate.toISOString().slice(0, 10);
 
-    await safeApiRequest('/api/saas/approve-payment', {
+    const apiRes = await safeApiRequest<{ nextBillingDate?: string }>('/api/saas/approve-payment', {
       method: 'POST',
       body: JSON.stringify({
         tenantId: payment.tenantId,
@@ -2410,11 +2527,18 @@ export default function App() {
       })
     });
 
+    if (!apiRes.ok && apiRes.status !== 0) {
+      setSubPayToast(`Error al aprobar pago en servidor: ${apiRes.error || 'Pago no encontrado'}`);
+      setTimeout(() => setSubPayToast(null), 5000);
+      return;
+    }
+
+    const effectiveNextBilling = apiRes.data?.nextBillingDate || nextBillingStr;
     setPayments(prev => prev.map(p => (p.id === payment.id ? { ...p, status: 'VERIFICADO' } : p)));
     setTenants(prev =>
       prev.map(t =>
         t.id === payment.tenantId
-          ? { ...t, planId: payment.planId, subscriptionStatus: 'ACTIVA', nextBillingDate: nextBillingStr }
+          ? { ...t, planId: payment.planId, subscriptionStatus: 'ACTIVA', nextBillingDate: effectiveNextBilling }
           : t
       )
     );
@@ -2422,21 +2546,34 @@ export default function App() {
       'CONCILIACION_APROBADA_SAAS',
       'admin:super_auditor',
       payment.id,
-      `Pago Ref #${payment.referenceNumber} conciliado y verificado. Licencia ${payment.planName} activada hasta ${nextBillingStr}`
+      `Pago Ref #${payment.referenceNumber} conciliado y verificado. Licencia ${payment.planName} activada hasta ${effectiveNextBilling}`
     );
+    setSubPayToast(`Pago Ref #${payment.referenceNumber} aprobado y licencia activada hasta ${effectiveNextBilling}.`);
+    setTimeout(() => setSubPayToast(null), 4500);
   }
 
-  function handleRegenerateTelegramCode() {
+  async function handleRegenerateTelegramCode() {
+    const apiRes = await safeApiRequest<{ telegramCode?: string }>('/api/saas/generate-telegram-code', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId: activeTenant.id })
+    });
+    if (!apiRes.ok && apiRes.status !== 0) {
+      setSubPayToast(`Error al regenerar código Telegram: ${apiRes.error || 'No autorizado'}`);
+      setTimeout(() => setSubPayToast(null), 5000);
+      return;
+    }
     const randomHex = Math.floor(0x100000 + Math.random() * 0xefffff).toString(16).toUpperCase();
     const prefix = activeTenant.name.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase();
-    const newCode = `VT-${prefix}-${randomHex}`;
+    const newCode = apiRes.data?.telegramCode || `VT-${prefix}-${randomHex}`;
     setTenants(prev => prev.map(t => (t.id === activeTenant.id ? { ...t, telegramCode: newCode } : t)));
     appendAuditLog(
       'ROTACION_TOKEN_TELEGRAM',
       'admin:security',
       activeTenant.id,
-      `Nuevo código de vinculación Telegram generado para ${activeTenant.name}: ${newCode}`
+      `Nuevo código de vinculación Telegram sincronizado para ${activeTenant.name}: ${newCode}`
     );
+    setSubPayToast(`Código Telegram actualizado en servidor: ${newCode}`);
+    setTimeout(() => setSubPayToast(null), 4500);
   }
 
   function handleToggleTenantSuspension(tenantId: string) {
@@ -6913,10 +7050,10 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-2">
               <label className="px-3.5 py-2 rounded bg-[var(--bg-elevated)] hover:bg-white/10 border border-[var(--border-subtle)] font-bold cursor-pointer flex items-center gap-1.5 transition">
                 <Upload className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-                <span>Importar Extracto (CSV/Excel)</span>
+                <span>Importar Extracto (CSV/TXT)</span>
                 <input
                   type="file"
-                  accept=".csv,.txt,.xlsx"
+                  accept=".csv,.txt"
                   onChange={handleFileUploadBankCsv}
                   className="hidden"
                 />
@@ -8657,6 +8794,28 @@ export default function App() {
         </div>
       )}
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      <SystemGuardianDrawer
+        isSuperAdmin={currentUser?.role === 'superadmin'}
+        onRepairedRefresh={() => {
+          safeApiRequest<{
+            ok: boolean;
+            empty: boolean;
+            state: {
+              tenants?: Tenant[];
+              invoices?: FiscalInvoice[];
+              employees?: PayrollEmployee[];
+              payments?: SaasPaymentRecord[];
+              bankMovements?: BankMovement[];
+              auditLogs?: AuditLogEntry[];
+            } | null;
+          }>('/api/workspace/state').then(wsRes => {
+            if (wsRes.ok && wsRes.data && !wsRes.data.empty && wsRes.data.state) {
+              const st = wsRes.data.state;
+              if (Array.isArray(st.invoices) && st.invoices.length > 0) setInvoices(st.invoices);
+            }
+          }).catch(() => {});
+        }}
+      />
       {/* Emil Kowalski / OpenDesign Sonner Floating Toast Pill */}
       {(subPayToast || mobileToast) && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto" role="status" aria-live="polite">

@@ -25,7 +25,9 @@ const {
   resetAccountantPassword,
   listAccountants,
   disableAccountant,
-  upsertClientSubAccount
+  upsertClientSubAccount,
+  unlockUserAccount,
+  addTenantToAccountant
 } = require('./services/authService');
 const {
   SAAS_PLANS,
@@ -51,8 +53,15 @@ const {
 const {
   readWorkspaceState,
   writeWorkspaceState,
-  appendTenantInvoice
+  appendTenantInvoice,
+  deleteTenantWorkspace
 } = require('./services/workspaceStore');
+const {
+  runSystemGuardianAudit,
+  recordGuardianAlert,
+  resolveGuardianAlert,
+  recordOcrLearningPattern
+} = require('./services/systemGuardian');
 
 // Lightweight In-Memory Firestore Fallback when GOOGLE_APPLICATION_CREDENTIALS is not configured
 function createInMemoryFirestore() {
@@ -268,6 +277,15 @@ if (!process.env.VERCEL) {
   cron.schedule('5 0 * * *', async () => {
     await suspendExpiredSubscriptions(db);
   }, { timezone: 'America/Caracas' });
+
+  // Cron Job continuo del Guardián del Sistema (cada 30 minutos)
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      await runSystemGuardianAudit(db, { autoRepair: false });
+    } catch (err) {
+      console.warn('Guardián cron aviso:', err.message);
+    }
+  }, { timezone: 'America/Caracas' });
 }
 
 const app = express();
@@ -280,7 +298,7 @@ app.use(helmet({
       "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
       "img-src": ["'self'", "data:", "blob:", "https:"],
-      "connect-src": ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com"]
+      "connect-src": ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com", "https://ve.dolarapi.com"]
     }
   },
   crossOriginEmbedderPolicy: false
@@ -616,11 +634,26 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
       db
     });
     if (!result || !result.extracted) {
+      recordOcrLearningPattern(db, {
+        supplierName: String(fileName || 'documento').slice(0, 60),
+        qualityIssue: result?.error || 'Documento borroso o ilegible',
+        mode: result?.mode || 'VNDE_UNPARSEABLE_DOCUMENT',
+        success: false
+      }).catch(() => {});
       return res.status(422).json({
         error: result?.error || 'No se pudieron extraer datos fiscales legibles del comprobante.',
         mode: result?.mode || 'VNDE_UNPARSEABLE_DOCUMENT'
       });
     }
+    recordOcrLearningPattern(db, {
+      supplierRif: result.extracted.supplierRif,
+      supplierName: result.extracted.supplierName,
+      channel: result.extracted.channel,
+      currency: result.extracted.currency,
+      vatRate: result.extracted.vatRate,
+      mode: result.mode,
+      success: true
+    }).catch(() => {});
     await incrementTenantInvoiceUsage(db, tenantId);
     return res.json({
       ...result,
@@ -1026,10 +1059,155 @@ app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   }
 });
 
+app.post('/api/auth/unlock-account', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    const result = await unlockUserAccount(db, email);
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/tenants', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo contadores o Super-Admin pueden registrar empresas.' });
+    }
+    const { tenant } = req.body || {};
+    if (!tenant || !tenant.id || !tenant.name || !tenant.rif) {
+      return res.status(400).json({ error: 'Datos de empresa incompletos (id, name, rif).' });
+    }
+    const rifCheck = validateVenezuelanRIF(tenant.rif);
+    if (!rifCheck.valid) {
+      return res.status(400).json({ error: `RIF inválido (Módulo 11): ${tenant.rif}` });
+    }
+    const tid = String(tenant.id);
+    const nowIso = new Date().toISOString();
+    const cleanTenant = { ...tenant, id: tid, rif: rifCheck.formatted };
+
+    await db.collection('tenants').doc(tid).set(
+      {
+        ...cleanTenant,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      },
+      { merge: true }
+    );
+    await db.collection('vt_workspace_tenants').doc(tid).set(
+      {
+        tenantId: tid,
+        tenant: cleanTenant,
+        invoices: [],
+        employees: [],
+        payments: [],
+        bankMovements: [],
+        auditLogs: [],
+        updatedAt: nowIso,
+        updatedBy: req.user.email || req.user.uid || 'system'
+      },
+      { merge: true }
+    );
+
+    let authRefresh = null;
+    if (req.user.role === 'admin' && req.user.email) {
+      const bindRes = await addTenantToAccountant(db, admin, req.user.email, tid);
+      if (bindRes.ok) {
+        authRefresh = { token: bindRes.token, user: bindRes.user };
+      }
+    }
+
+    return res.status(201).json({
+      ok: true,
+      tenant: cleanTenant,
+      token: authRefresh?.token || null,
+      user: authRefresh?.user || null
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/tenants/:tenantId', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo contadores o Super-Admin pueden eliminar empresas.' });
+    }
+    const result = await deleteTenantWorkspace(db, req.params.tenantId);
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =========================================================================
+// GUARDIÁN DEL SISTEMA — MONITOREO CONTINUO, SENIAT 2026 Y APRENDIZAJE OCR
+// =========================================================================
+
+app.get('/api/guardian/status', verifyFirebaseToken, requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const report = await runSystemGuardianAudit(db, { autoRepair: false });
+    return res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/guardian/audit', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const autoRepair = Boolean(req.body?.autoRepair);
+    const report = await runSystemGuardianAudit(db, { autoRepair });
+    return res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/guardian/alerts/:id/resolve', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await resolveGuardianAlert(db, req.params.id, req.user?.email || 'superadmin');
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/guardian/telemetry', verifyFirebaseToken, async (req, res, next) => {
+  try {
+    const { severity = 'WARNING', category = 'FRONTEND_RUNTIME', message, stack, route, tenantId } = req.body || {};
+    if (!message) {
+      return res.status(400).json({ error: 'message requerido para telemetría del Guardián.' });
+    }
+    const alert = await recordGuardianAlert(db, {
+      severity,
+      source: 'frontend',
+      category,
+      message,
+      stack,
+      route,
+      userEmail: req.user?.email || null,
+      tenantId: tenantId || null
+    });
+    return res.status(201).json({ ok: true, alert });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   try {
-    const { tenants, invoices, employees, payments } = req.body || {};
-    const result = await writeWorkspaceState(db, req.user, { tenants, invoices, employees, payments });
+    const { tenants, invoices, employees, payments, bankMovements, auditLogs } = req.body || {};
+    const result = await writeWorkspaceState(db, req.user, {
+      tenants,
+      invoices,
+      employees,
+      payments,
+      bankMovements,
+      auditLogs
+    });
     return res.json(result);
   } catch (err) {
     next(err);

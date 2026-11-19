@@ -780,6 +780,66 @@ async function upsertClientSubAccount(db, adminSdk, { email, name, tenantId, ten
   return { ok: true, status: 200, email: cleanEmail, tempPassword: finalPass, tenantIds: mergedTenants };
 }
 
+async function unlockUserAccount(db, email) {
+  const cleanEmail = normalizeEmail(email);
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { ok: false, status: 400, error: 'Correo de cuenta inválido.' };
+  }
+  const userRef = db.collection('vt_users').doc(cleanEmail);
+  const snap = await userRef.get();
+  if (!snap.exists) {
+    return { ok: false, status: 404, error: 'Usuario no encontrado en el directorio.' };
+  }
+  await userRef.set(
+    {
+      failedAttempts: 0,
+      lockedUntil: null,
+      updatedAt: new Date().toISOString()
+    },
+    { merge: true }
+  );
+  if (typeof userActiveCache !== 'undefined' && userActiveCache && typeof userActiveCache.delete === 'function') {
+    userActiveCache.delete(cleanEmail);
+  }
+  return { ok: true, status: 200, email: cleanEmail };
+}
+
+async function addTenantToAccountant(db, adminSdk, userEmail, tenantId) {
+  const cleanEmail = normalizeEmail(userEmail);
+  if (!cleanEmail || !tenantId) return { ok: false, status: 400, error: 'Correo y tenantId son requeridos.' };
+  const userRef = db.collection('vt_users').doc(cleanEmail);
+  const snap = await userRef.get();
+  if (!snap.exists) return { ok: false, status: 404, error: 'Cuenta de contador no encontrada.' };
+  const userDoc = snap.data();
+  const existingIds = Array.isArray(userDoc.tenantIds) ? userDoc.tenantIds : [];
+  const updatedIds = Array.from(new Set([...existingIds, String(tenantId)]));
+  const updatedUser = {
+    ...userDoc,
+    tenantIds: updatedIds,
+    updatedAt: new Date().toISOString()
+  };
+  await userRef.set({ tenantIds: updatedIds, updatedAt: updatedUser.updatedAt }, { merge: true });
+
+  if (userDoc.accountantId) {
+    await db.collection('vt_accountants').doc(userDoc.accountantId).set(
+      { assignedTenantIds: updatedIds, updatedAt: updatedUser.updatedAt },
+      { merge: true }
+    );
+  }
+
+  await syncFirebaseAuthUser(adminSdk, {
+    email: cleanEmail,
+    displayName: userDoc.name,
+    role: userDoc.role,
+    tenantIds: updatedIds,
+    disabled: userDoc.status === 'SUSPENDIDA'
+  });
+
+  const publicUser = toPublicUser(updatedUser);
+  const token = signSessionToken(publicUser);
+  return { ok: true, status: 200, token, user: publicUser, tenantIds: updatedIds };
+}
+
 module.exports = {
   SUPER_ADMIN_EMAIL,
   normalizeEmail,
@@ -801,5 +861,7 @@ module.exports = {
   resetAccountantPassword,
   listAccountants,
   disableAccountant,
-  upsertClientSubAccount
+  upsertClientSubAccount,
+  unlockUserAccount,
+  addTenantToAccountant
 };

@@ -4,7 +4,8 @@ const {
   PARTITIONED_COLLECTION,
   readWorkspaceState,
   writeWorkspaceState,
-  appendTenantInvoice
+  appendTenantInvoice,
+  deleteTenantWorkspace
 } = require('../services/workspaceStore');
 
 function createMockDb() {
@@ -24,6 +25,10 @@ function createMockDb() {
             async set(payload, opts = {}) {
               const prev = store.get(path) || {};
               store.set(path, opts.merge ? { ...prev, ...payload } : { ...payload });
+              return true;
+            },
+            async delete() {
+              store.delete(path);
               return true;
             }
           };
@@ -136,4 +141,28 @@ test('WorkspaceStore: appendTenantInvoice persiste facturas de clientes y bloque
     () => appendTenantInvoice(db, 'tenant_a', inv, 'cliente@a.com'),
     err => err.status === 409
   );
+});
+
+test('WorkspaceStore: persiste bankMovements y auditLogs y elimina empresas permanentemente', async () => {
+  const db = createMockDb();
+  const superAdmin = { role: 'superadmin', email: 'super@vt.com' };
+
+  await writeWorkspaceState(db, superAdmin, {
+    tenants: [{ id: 'tenant_del', name: 'Empresa Temporal' }],
+    invoices: [],
+    employees: [],
+    payments: [],
+    bankMovements: [{ id: 'bm_1', tenantId: 'tenant_del', amountBs: 500 }],
+    auditLogs: [{ id: 'log_1', tenantId: 'tenant_del', action: 'TEST' }]
+  });
+
+  const before = await readWorkspaceState(db, superAdmin);
+  assert.equal(before.state.bankMovements.length, 1);
+  assert.equal(before.state.auditLogs.length, 1);
+
+  const delRes = await deleteTenantWorkspace(db, 'tenant_del');
+  assert.equal(delRes.ok, true);
+
+  const after = await readWorkspaceState(db, superAdmin);
+  assert.equal(after.empty, true);
 });

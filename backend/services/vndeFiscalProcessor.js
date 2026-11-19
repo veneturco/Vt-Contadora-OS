@@ -474,13 +474,26 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
         generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
       });
       const mimeType = detectMimeTypeFromBase64(base64Data, fileName);
+      let learnedHintsBlock = '';
+      try {
+        const { getOcrLearnedHints } = require('./systemGuardian');
+        const hints = await getOcrLearnedHints(db, 8);
+        if (hints.length > 0) {
+          learnedHintsBlock = `\n      MEMORIA OCR APRENDIDA DE PROVEEDORES FRECUENTES:\n      ${hints
+            .map(h => `- ${h.supplierRif} (${h.supplierName || 'Proveedor'}): canal=${h.preferredChannel || 'AUTO'}, moneda=${h.preferredCurrency || 'AUTO'}, notas=[${(h.qualityNotes || []).join(', ')}]`)
+            .join('\n      ')}`;
+        }
+      } catch {
+        learnedHintsBlock = '';
+      }
       const prompt = `Analiza esta factura o ticket fiscal venezolano bajo la Providencia SNAT/2026/00093 y extrae en JSON puro.
       REGLAS ESTRICTAS:
-      - Ignora tachaduras, firmas, resaltadores o montos escritos a mano con bolígrafo sobre el papel; lee solo el texto impreso.
+      - Ignora tachaduras, firmas, resaltadores, dobleces, rayas, manchas o montos escritos a mano con bolígrafo sobre el papel; lee solo el texto impreso.
+      - Si la imagen está borrosa, inclinada o doblada, reconstruye el RIF validando Módulo 11 y verifica la consistencia matemática Base + Exento + IVA + IGTF = Total.
       - Si es un ticket térmico con serial fiscal (MH, Z..., E..., BXL..., HAS...), usa channel="MAQUINA_FISCAL" y coloca el serial en controlNumber.
       - Pon hasBuyerRifOnTicket=false si el ticket NO tiene impreso el RIF y Razón Social del comprador (Art. 10.4).
       - Si el ticket imprime "Bss" o "Bs" pero los precios unitarios y/o leyenda inferior indican USD (ej. "46.930 Bs = 51,17$"), marca currency="USD".
-      - Si I.V.A. es 0,00 y los ítems son (E), coloca todo el total en exemptOriginal y taxableBaseOriginal=0.
+      - Si I.V.A. es 0,00 y los ítems son (E), coloca todo el total en exemptOriginal y taxableBaseOriginal=0.${learnedHintsBlock}
       Devuelve exactamente este JSON:
       { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
 
