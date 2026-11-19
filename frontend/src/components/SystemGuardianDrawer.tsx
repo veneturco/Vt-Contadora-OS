@@ -497,7 +497,7 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                     <p className="text-[11px] text-white/75">
                       Patrones de proveedores aprendidos: <strong>{report?.metrics.ocrPatternsCount ?? 0}</strong> ·
                       Documentos analizados: <strong>{report?.metrics.ocrTotalSamples ?? 0}</strong>. El motor
-                      inyecta estos patrones automáticamente en Gemini Vision para mejorar lecturas de facturas
+                      inyecta estos patrones automáticamente en el Núcleo de Validación Documental para mejorar lecturas de facturas
                       borrosas, dobladas o con tachaduras.
                     </p>
                   </div>

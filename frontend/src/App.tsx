@@ -528,7 +528,7 @@ export default function App() {
     {
       id: 'm2',
       sender: 'bot',
-      text: 'Vinculación exitosa con Bodega JH C.A. (J-40918273-8). Envía una foto o PDF de cualquier factura y la procesaré con Gemini 2.5 Flash.',
+      text: 'Vinculación exitosa con Bodega JH C.A. (J-40918273-8). Envía una foto o PDF de cualquier factura para validación documental automática.',
       time: '10:22'
     },
     {
@@ -2339,7 +2339,7 @@ export default function App() {
           const quotaText = res.data.quota
             ? ` · Cuota mes: ${res.data.quota.usedInvoices}/${res.data.quota.maxInvoicesMonthly}`
             : '';
-          setOcrAlertMessage(`Imagen "${file.name}" procesada vía Backend (${res.data.mode})${quotaText}. Verifique los datos y pulse "Indexar".`);
+          setOcrAlertMessage(`Documento "${file.name}" procesado por el Núcleo de Validación Documental${quotaText}. Verifique los datos y pulse "Indexar".`);
         } else {
           setOcrAlertMessage(`Aviso OCR: ${res.error || 'El documento requiere mayor nitidez'}. Verifique o complete los campos en el formulario.`);
         }
@@ -4268,7 +4268,7 @@ export default function App() {
                 {portfolioStats.totalPendingDrafts}
               </div>
               <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
-                <span>Facturas IA / Telegram</span>
+                <span>Recepción Fiscal & Asistente</span>
                 <span className="text-rose-300 font-semibold group-hover:translate-x-0.5 transition-transform">Revisar →</span>
               </div>
             </button>
@@ -5218,7 +5218,7 @@ export default function App() {
               <div className="ui-card p-4 border-sky-500/50 flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
                 <div className="text-xs font-mono">
-                  <strong className="text-sky-300 uppercase">Talonario de Contingencia Aceptado (Prórroga 180 días · Vigente hasta 30/04/2027):</strong> Existen {fiscalSummary.contingencyCount} factura(s) registradas en talonario físico de contingencia, plenamente válidas durante el período de adecuación de la Gaceta Oficial.
+                  <strong className="text-sky-300 uppercase">Talonario de Contingencia Aceptado (G.O. Nº 43.484 · 180 días hasta 19/04/2027):</strong> Existen {fiscalSummary.contingencyCount} factura(s) registradas en talonario físico de contingencia, plenamente válidas durante el período de adecuación de la Providencia SNAT/2026/00093.
                 </div>
               </div>
             )}
@@ -5376,7 +5376,7 @@ export default function App() {
                 }`}
               >
                 <span className="w-4 h-4 rounded-full bg-cyan-500/30 text-[10px] flex items-center justify-center font-mono">1</span>
-                <span>Ingesta IA & Telegram</span>
+                <span>Centro de Procesamiento Fiscal</span>
               </button>
 
               <button
@@ -5417,9 +5417,9 @@ export default function App() {
             <div className="ui-card p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="ui-heading text-lg font-bold">Mesa de Extracción Multimodal Gemini 2.5 Flash OCR</h2>
+                  <h2 className="ui-heading text-lg font-bold">Centro de Procesamiento Fiscal</h2>
                   <p className="text-xs font-mono opacity-75">
-                    Clasificación automática SNAT/2026/00093 · Validación Módulo 11 · Bloqueo de Facturas Duplicadas
+                    Núcleo de Validación Documental · SNAT/2026/00093 · Validación Módulo 11 · Control Anti-Duplicados
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -5502,7 +5502,7 @@ export default function App() {
                   >
                     <option value="DIGITAL">DIGITAL (Imprenta / Portal)</option>
                     <option value="MAQUINA_FISCAL">MAQUINA_FISCAL (Ticket Z)</option>
-                    <option value="CONTINGENCIA">CONTINGENCIA (Talonario Físico · Aceptado hasta 30/04/2027)</option>
+                    <option value="CONTINGENCIA">CONTINGENCIA (Talonario Físico · Vigente hasta 19/04/2027)</option>
                   </select>
                 </div>
 
@@ -5656,13 +5656,13 @@ export default function App() {
 
               {ocrDraft.channel === 'CONTINGENCIA' && (
                 <div className={`p-3 rounded text-xs font-mono border ${
-                  ocrDraft.emissionDate > '2027-04-30'
+                  ocrDraft.emissionDate > '2027-04-19'
                     ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
                     : 'bg-sky-500/15 border-sky-500/40 text-sky-300'
                 }`}>
-                  {ocrDraft.emissionDate > '2027-04-30'
-                    ? '[ARTS. 6-7 SNAT/2026/00093] Período de transición vencido (30/04/2027). Esta factura de Contingencia requiere envío PDF al SENIAT en menos de 24 horas.'
-                    : '[PRÓRROGA 180 DÍAS · HASTA 30/04/2027] Factura de Talonario de Contingencia aceptada y válida durante el plazo de adecuación de la Gaceta Oficial (sin penalización por reporte <24h).'}
+                  {ocrDraft.emissionDate > '2027-04-19'
+                    ? '[ARTS. 6-7 SNAT/2026/00093 · G.O. 43.484] Período de transición de 180 días vencido (19/04/2027). Esta factura de Contingencia requiere envío PDF al SENIAT en menos de 24 horas.'
+                    : '[G.O. Nº 43.484 · 21/10/2026 · PRÓRROGA 180 DÍAS HASTA 19/04/2027] Factura de Talonario de Contingencia plenamente aceptada durante el plazo de adecuación de la Providencia SNAT/2026/00093.'}
                 </div>
               )}
 
@@ -5670,7 +5670,7 @@ export default function App() {
                 <div className="text-xs font-mono">
                   <span>Archivo Activo: </span>
                   <strong className="text-[var(--accent-secondary)]">{ocrUploadedFileName}</strong>
-                  {ocrScanning && <span className="ml-2 text-amber-400 animate-pulse">Analizando con Gemini 2.5 Flash...</span>}
+                  {ocrScanning && <span className="ml-2 text-amber-400 animate-pulse">Procesando con Núcleo de Validación Documental...</span>}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -5679,30 +5679,30 @@ export default function App() {
                     className="ui-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Indexar en Bandeja Contable (Web OCR)
+                    Indexar en Bandeja Contable
                   </button>
                   <button
                     onClick={() => handleRegisterOcrInvoice('TELEGRAM_BOT')}
                     className="px-3.5 py-2 text-xs font-mono rounded border border-[var(--accent-secondary)] text-[var(--accent-secondary)] hover:bg-white/5 flex items-center gap-1.5"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    Simular Recepción vía Bot Telegram
+                    Simular Recepción vía Asistente Virtual
                   </button>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* 4-Column Right Sidecar: Telegram Bot Live Simulator & RIF Validator */}
+          {/* 4-Column Right Sidecar: Asistente Virtual Contable & RIF Validator */}
           <div className="col-span-12 lg:col-span-4 space-y-5">
             <div className="ui-card p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono uppercase font-bold flex items-center gap-1.5">
                   <Send className="w-3.5 h-3.5 text-[var(--accent-secondary)]" />
-                  Consola Bot Telegram (@VTFiscalBot)
+                  Asistente Virtual Contable
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-                  GEMINI 2.5 FLASH
+                  NÚCLEO FISCAL
                 </span>
               </div>
 
@@ -5717,7 +5717,7 @@ export default function App() {
                     }`}
                   >
                     <div className="flex justify-between text-[10px] opacity-60 mb-1">
-                      <span>{msg.sender === 'user' ? activeTenant.name : 'VT Fiscal Bot'}</span>
+                      <span>{msg.sender === 'user' ? activeTenant.name : 'Asistente Virtual Contable'}</span>
                       <span>{msg.time}</span>
                     </div>
                     <div>{msg.text}</div>
@@ -7009,13 +7009,13 @@ export default function App() {
                 <div className="p-4 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-1.5">
                   <strong className="text-[var(--accent-primary)] block">1. Sincronización Instantánea</strong>
                   <p className="opacity-80">
-                    Cada factura enviada desde el visor móvil 9:16 (o desde el Bot de Telegram) entra con estado <code>BORRADOR_IA</code> a la bandeja principal del Contador.
+                    Cada factura enviada desde el visor móvil 9:16 (o desde el Asistente Virtual Contable) entra en revisión a la bandeja principal del Contador.
                   </p>
                 </div>
                 <div className="p-4 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-1.5">
                   <strong className="text-[var(--accent-secondary)] block">2. Permisos de Solo-Ingesta</strong>
                   <p className="opacity-80">
-                    Las reglas de seguridad en <code>firestore.rules</code> impiden que el cliente modifique o elimine facturas una vez selladas por la firma contable.
+                    Las políticas de seguridad de la Bóveda Cloud impiden que el cliente modifique o elimine facturas una vez selladas por la firma contable.
                   </p>
                 </div>
               </div>
@@ -7649,11 +7649,11 @@ export default function App() {
                 <h3 className="ui-heading text-base font-bold">Reglas de Producción Activas</h3>
               </div>
               <ul className="space-y-2 opacity-90">
-                <li>[OK] Aislamiento Multi-Tenant por RIF en firestore.rules</li>
-                <li>[OK] Bloqueo físico de borrado (allow delete: if false) — COT 10 años</li>
+                <li>[OK] Aislamiento Multi-Tenant por RIF en Bóveda Cloud</li>
+                <li>[OK] Bloqueo físico de borrado — Resguardo COT 10 años</li>
                 <li>[OK] Bitácora Append-Only encadenada con SHA-256 + AES-256-GCM</li>
-                <li>[OK] Robot diario Tasa Oficial BCV (09:05 AM y 01:15 PM VET)</li>
-                <li>[OK] Webhook Telegram con Secret Token + Gemini Vision OCR</li>
+                <li>[OK] Sincronización diaria Tasa Oficial BCV (09:05 AM y 01:15 PM VET)</li>
+                <li>[OK] Asistente Virtual Contable + Núcleo de Validación Documental</li>
               </ul>
             </div>
           </div>
@@ -8745,7 +8745,7 @@ export default function App() {
                   }
                 },
                 {
-                  label: 'Ir a 02. Escáner IA Gemini 2.5 Flash & Bot Telegram',
+                  label: 'Ir a 02. Centro de Procesamiento Fiscal & Asistente Virtual',
                   category: 'MÓDULO',
                   action: () => {
                     setActiveTab('ocr');

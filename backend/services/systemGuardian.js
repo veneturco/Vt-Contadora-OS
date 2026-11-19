@@ -6,45 +6,69 @@ const { PARTITIONED_COLLECTION } = require('./workspaceStore');
 
 const GUARDIAN_ALERTS_COL = 'vt_guardian_alerts';
 const GUARDIAN_OCR_MEMORY_COL = 'vt_guardian_ocr_memory';
-// Período de transición de 180 días desde publicación en Gaceta Oficial (vigente hasta abril 2027)
-const CONTINGENCY_GRACE_DEADLINE = '2027-04-30';
+// Período de transición de 180 días continuos desde G.O. Nº 43.484 (21/10/2026) -> vence 19/04/2027
+const CONTINGENCY_GRACE_DEADLINE = '2027-04-19';
 
-// Base normativa SENIAT Venezuela 2026 (reglas verificables)
+// Base normativa SENIAT Venezuela 2026 (reglas verificables con Gaceta Oficial)
 const SENIAT_LEGAL_RULES = [
   {
     code: 'SNAT_2026_00093_ART_8',
-    norm: 'Providencia SNAT/2026/00093 Art. 8',
-    title: 'Requisitos formales obligatorios (Nº Control y Fecha)',
+    norm: 'SNAT/2026/00093 Art. 8 (G.O. Nº 43.484 · 21/10/2026)',
+    title: 'Requisitos formales obligatorios (Nº Control, Fecha y Hora)',
     penalty: 'Multa 100-150x TCMMV BCV y posible cierre temporal (COT Art. 101).'
   },
   {
     code: 'SNAT_2026_00093_ART_10_4',
-    norm: 'Providencia SNAT/2026/00093 Art. 10.4',
-    title: 'Ticket de Máquina Fiscal sin RIF del comprador',
+    norm: 'SNAT/2026/00093 Art. 10.4 (G.O. Nº 43.484)',
+    title: 'Ticket de Máquina Fiscal (opcional) sin RIF del comprador',
     penalty: 'Descalificación total del Crédito Fiscal IVA en auditoría SENIAT.'
   },
   {
     code: 'SNAT_2026_00093_ART_6_7',
-    norm: 'Providencia SNAT/2026/00093 Arts. 6 y 7 (Prórroga 180 días)',
-    title: 'Talonario de Contingencia (Aceptado hasta 30/04/2027)',
-    penalty: 'Vigente sin penalización durante los 180 días de transición (hasta abril 2027); luego exige reporte PDF <24h.'
+    norm: 'SNAT/2026/00093 Arts. 6 y 7 (G.O. Nº 43.484 · Plazo 180 días)',
+    title: 'Talonario de Contingencia (Aceptado hasta 19/04/2027)',
+    penalty: 'Vigente sin penalización hasta el 19/04/2027 (deroga SNAT/2011/00071); luego solo fuerza mayor con reporte PDF <24h.'
+  },
+  {
+    code: 'SNAT_2026_00093_DIVISAS_BCV',
+    norm: 'SNAT/2026/00093 + Convenio Cambiario Nº 1 (G.O. 6.405 Ext.)',
+    title: 'Facturación en divisas debe expresar equivalente en Bs. y Tasa BCV',
+    penalty: 'Reparo fiscal e impugnación de base imponible en bolívares.'
+  },
+  {
+    code: 'SNAT_2026_00093_ART_18',
+    norm: 'SNAT/2026/00093 Art. 18 (G.O. Nº 43.484)',
+    title: 'Comprobante unificado IVA/ISLR de 14 caracteres (AAAAMMSSSSSSSS)',
+    penalty: 'Invalidez del comprobante de retención ante el portal SENIAT.'
+  },
+  {
+    code: 'SNAT_2026_00099_SPE',
+    norm: 'SNAT/2026/00099 (G.O. Nº 43.485 · 22/10/2026)',
+    title: 'Nuevos umbrales de Sujetos Pasivos Especiales (deroga SNAT/2023/00005)',
+    penalty: 'Aplicación incorrecta de régimen SPE u obligaciones quincenales.'
+  },
+  {
+    code: 'SNAT_2026_00084_SOFT',
+    norm: 'SNAT/2026/00084 (G.O. Nº 43.435 · 12/08/2026)',
+    title: 'Libre adopción de sistemas administrativos (deroga SNAT/2024/000121)',
+    penalty: 'Elimina exigencia de homologación previa para software administrativo.'
   },
   {
     code: 'COT_ART_101_RIF_MOD11',
-    norm: 'COT Art. 101 / Validación RIF Módulo 11',
+    norm: 'COT Art. 101 (G.O. Nº 6.507 Ext.) / Validación RIF Módulo 11',
     title: 'RIF de proveedor inválido o mal estructurado',
     penalty: 'Rechazo del Libro de Compras / Archivo TXT IVA en portal SENIAT.'
   },
   {
     code: 'SNAT_2015_0049_SPE_RET',
-    norm: 'Providencia SNAT/2015/0049 (Agentes de Retención SPE)',
+    norm: 'SNAT/2015/0049 (G.O. Nº 40.720) — Agentes de Retención SPE',
     title: 'Omisión de Retención de IVA (75%/100%) en Sujeto Pasivo Especial',
     penalty: 'Multa del 100% al 300% del tributo no retenido (COT Art. 115).'
   },
   {
     code: 'COT_ART_177_MATH_INTEGRITY',
-    norm: 'COT Art. 177 / Integridad Matemática Tributaria',
-    title: 'Descuadre matemático entre Base, Exento, IVA, IGTF y Total',
+    norm: 'COT Art. 177 + LIVA (G.O. Nº 6.507 Ext.) + Ley IGTF (G.O. 6.687 Ext.)',
+    title: 'Descuadre matemático entre Base, Exento, IVA 16%, IGTF 3% y Total',
     penalty: 'Reparo fiscal por diferencia en débito/crédito fiscal declarado.'
   }
 ];
@@ -109,11 +133,24 @@ function auditInvoiceSeniatCompliance(inv, tenant = {}) {
           tenantId: inv.tenantId,
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber || 'SIN_NUMERO',
-          message: `Factura de Contingencia #${inv.invoiceNumber} posterior al 30/04/2027 supera 24h sin reporte/aprobación SENIAT.`,
+          message: `Factura de Contingencia #${inv.invoiceNumber} posterior al 19/04/2027 supera 24h sin reporte/aprobación SENIAT.`,
           autoFixable: false
         });
       }
     }
+  }
+
+  if (inv.currency === 'USD' && (!inv.bcvRateOnDate || Number(inv.bcvRateOnDate) <= 0)) {
+    issues.push({
+      severity: 'CRITICAL',
+      ruleCode: 'SNAT_2026_00093_DIVISAS_BCV',
+      norm: 'SNAT/2026/00093 + Convenio Cambiario Nº 1',
+      tenantId: inv.tenantId,
+      invoiceId: inv.id,
+      invoiceNumber: inv.invoiceNumber || 'SIN_NUMERO',
+      message: `Factura en divisas #${inv.invoiceNumber} sin tasa oficial BCV registrada para conversión obligatoria a Bolívares.`,
+      autoFixable: false
+    });
   }
 
   const base = Number(inv.taxableBaseOriginal || 0);

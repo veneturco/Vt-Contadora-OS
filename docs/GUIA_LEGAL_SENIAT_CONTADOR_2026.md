@@ -11,11 +11,14 @@ El ejercicio contable y tributario en Venezuela para empresas catalogadas como *
 
 | Jerarquía Legal | Norma / Instrumento | Gaceta Oficial | Ámbito de Aplicación en la App |
 | :--- | :--- | :--- | :--- |
-| **Código Marco** | **Código Orgánico Tributario (COT)** | G.O. N° 6.507 Ext. (2020) | Resguardo 10 años (Art. 54/145), Sanciones e Ilícitos (Arts. 99-115) |
+| **Código Marco** | **Código Orgánico Tributario (COT)** | G.O. N° 6.507 Ext. (2020) | Resguardo 10 años (Art. 54/145), Sanciones e Ilícitos (Arts. 99-115), Integridad (Art. 177) |
 | **Ley Especial** | **Ley de Impuesto al Valor Agregado (LIVA)** | G.O. N° 6.507 Ext. (2020) | Débito/Crédito Fiscal (Arts. 28-36), Alícuota 16%, Período Quincenal SPE |
-| **Providencia** | **SNAT/2011/00071 (Facturación)** | G.O. N° 39.795 (2011) | 16 requisitos formales de facturas, Formas Libres, Regla Crédito Fiscal Art. 54 |
-| **Providencia** | **SNAT/2018/0141 (Máquinas Fiscales)** | G.O. N° 41.518 (2018) | Transmisión de datos, Reportes Z, Tickets de caja y exigencia de RIF |
-| **Providencia** | **SNAT/2015/0049 (Retenciones IVA)** | G.O. N° 40.720 (2015) | Sujetos Pasivos Especiales, Retención 75%/100%, Comprobante 14 dígitos, TXT 16 cols |
+| **Providencia** | **SNAT/2026/00093 (Facturación Digital y Medios)** | G.O. N° 43.484 (21/10/2026) | **Deroga SNAT/2011/00071**. Libre elección (Portal SENIAT, Imprenta Digital o Máquina Fiscal opcional), Talonarios en contingencia válidos por **180 días hasta el 19/04/2027**, Divisas con equivalente en Bs. a tasa BCV, Comprobante unificado de 14 dígitos (Art. 18) |
+| **Providencia** | **SNAT/2026/00099 (Umbrales SPE)** | G.O. N° 43.485 (22/10/2026) | **Deroga SNAT/2023/00005**. Nuevos criterios y umbrales para Sujetos Pasivos Especiales |
+| **Providencia** | **SNAT/2026/00084 (Sistemas Administrativos)** | G.O. N° 43.435 (12/08/2026) | **Deroga SNAT/2024/000121**. Elimina homologación obligatoria previa de software administrativo |
+| **Providencia** | **SNAT/2024/000102 (Medios Digitales)** | G.O. N° 43.032 (Dic 2024) | Marco base de emisión digital/electrónica de documentos fiscales |
+| **Providencia** | **SNAT/2018/0141 (Máquinas Fiscales)** | G.O. N° 41.518 (2018) | Transmisión de datos, Reportes Z, Tickets de caja (uso opcional bajo SNAT/2026/00093) |
+| **Providencia** | **SNAT/2015/0049 (Retenciones IVA)** | G.O. N° 40.720 (2015) | Sujetos Pasivos Especiales, Retención 75%/100%, TXT 16 columnas |
 | **Decreto** | **Decreto Presidencial N° 1.808 (ISLR)** | G.O. N° 36.203 (1997) | Retenciones de ISLR (2%, 3%, 5%), Sustraendos UT, Generación XML SENIAT |
 | **Ley Especial** | **Ley de Reforma del IGTF** | G.O. N° 6.687 Ext. (2022) | Alícuota 3% sobre divisas/cripto en SPE (Providencia SNAT/2022/000013) |
 | **Convenio** | **Convenio Cambiario N° 1 (BCV)** | G.O. N° 6.405 Ext. (2018) | Obligatoriedad contable de conversión a Tasa Oficial BCV del día |

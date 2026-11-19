@@ -243,7 +243,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     action: 'INGESTA_TELEGRAM_OCR',
     actorUid: 'telegram:59182041',
     targetId: 'inv_001',
-    details: 'Factura #00045812 (Distribuidora Alimentos Oriente C.A.) extraída con Gemini 2.5 Flash (Confianza 99.1%)',
+    details: 'Factura #00045812 (Distribuidora Alimentos Oriente C.A.) procesada por el Núcleo de Validación Documental (Confianza 99.1%)',
     previousHash: computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
     sha256Hash: computeDeterministicHash(
       computeDeterministicHash('GENESIS_SENIAT_2026', { seq: 1, action: 'BCV_ORACLE_SYNC', rate: 914.02 }),
@@ -277,7 +277,7 @@ export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
 
 export const OCR_PRESETS = [
   {
-    label: 'VNDE 0 Tokens: Maxi Embutidos (Forma Libre)',
+    label: 'Plantilla: Maxi Embutidos (Forma Libre)',
     bookType: 'COMPRA' as const,
     channel: 'DIGITAL' as const,
     supplierRif: 'J-40549697-5',
@@ -294,7 +294,7 @@ export const OCR_PRESETS = [
     islrRetentionRate: 0
   },
   {
-    label: 'VNDE 0 Tokens: Traki (Máquina Fiscal Z7C)',
+    label: 'Plantilla: Traki (Máquina Fiscal Z7C)',
     bookType: 'COMPRA' as const,
     channel: 'MAQUINA_FISCAL' as const,
     supplierRif: 'J-09512460-6',
@@ -484,7 +484,7 @@ export const ACCOUNTANT_PLANS_CATALOG = [
     features: [
       'Hasta 3 Empresas (Multi-RIF)',
       'Libros SENIAT y TXT IVA / XML ISLR',
-      'Escáner OCR Gemini 2.5 Flash (0 Tokens)',
+      'Núcleo de Validación Documental (Procesamiento Fiscal)',
       'Soporte estándar vía WhatsApp'
     ]
   },
