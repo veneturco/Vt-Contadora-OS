@@ -14,7 +14,72 @@ try {
     }
   };
 }
+const zlib = require('zlib');
 const { validateVenezuelanRIF } = require('./seniatEngine');
+
+/**
+ * Extractor nativo de texto de PDFs digitales (0 Tokens · 0 dependencias externas)
+ * Decodifica bloques de texto PDF tanto planos como comprimidos con FlateDecode (zlib).
+ */
+function extractTextFromPdfBase64(base64Data) {
+  if (!base64Data || typeof base64Data !== 'string') return '';
+  try {
+    const buf = Buffer.from(base64Data, 'base64');
+    if (buf.length < 16 || buf.slice(0, 5).toString('latin1') !== '%PDF-') return '';
+    const rawLatin = buf.toString('latin1');
+    const chunks = [];
+
+    const collectPdfTextOps = content => {
+      // Extrae literales entre paréntesis usados por operadores Tj / TJ
+      const litMatches = content.match(/\((?:\\.|[^\\()])*\)/g);
+      if (!litMatches) return;
+      for (const m of litMatches) {
+        const cleaned = m
+          .slice(1, -1)
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, ' ')
+          .replace(/\\t/g, ' ')
+          .replace(/\\\(/g, '(')
+          .replace(/\\\)/g, ')')
+          .replace(/\\\\/g, '\\')
+          .replace(/[^\x20-\x7E\xA0-\xFF\n]/g, ' ')
+          .trim();
+        if (cleaned.length >= 2) chunks.push(cleaned);
+      }
+    };
+
+    // 1. Texto en streams sin comprimir
+    collectPdfTextOps(rawLatin);
+
+    // 2. Streams comprimidos con FlateDecode
+    let pos = 0;
+    while (pos < buf.length) {
+      const startIdx = buf.indexOf('stream', pos, 'latin1');
+      if (startIdx === -1) break;
+      let dataStart = startIdx + 6;
+      if (buf[dataStart] === 0x0d && buf[dataStart + 1] === 0x0a) dataStart += 2;
+      else if (buf[dataStart] === 0x0a) dataStart += 1;
+      const endIdx = buf.indexOf('endstream', dataStart, 'latin1');
+      if (endIdx === -1) break;
+      const streamSlice = buf.slice(dataStart, endIdx);
+      if (streamSlice.length > 0 && streamSlice.length < 2 * 1024 * 1024) {
+        try {
+          const inflated = zlib.inflateSync(streamSlice).toString('latin1');
+          if (inflated.includes('BT') || inflated.includes('Tj') || inflated.includes('TJ')) {
+            collectPdfTextOps(inflated);
+          }
+        } catch {
+          // No era FlateDecode o stream de imagen; ignorar
+        }
+      }
+      pos = endIdx + 9;
+    }
+
+    return chunks.join('\n').replace(/\s+\n/g, '\n').trim();
+  } catch {
+    return '';
+  }
+}
 
 // Memoria de firmas y plantillas de proveedores frecuentes (Vendor Fingerprinting)
 const vendorFingerprintCache = new Map();
@@ -438,28 +503,66 @@ async function repairFiscalDataWithMicroPrompt(dirtyText, geminiApiKey) {
 }
 
 /**
- * PIPELINE MAESTRO DEL MOTOR VNDE v3.2
+ * PIPELINE MAESTRO HÍBRIDO DEL MOTOR VNDE v3.4 (0 Tokens Primero + Aprendizaje Progresivo)
  */
 async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileName, geminiApiKey, db }) {
+  // Nivel 0 (0 Tokens): Decodificación directa de QR Fiscal SENIAT
   if (qrPayload) {
     const qrResult = parseSeniatFiscalQr(qrPayload);
     if (qrResult) return qrResult;
   }
 
-  if (rawText) {
-    const detResult = parseSeniatRawText(rawText);
-    if (detResult && detResult.extracted.mathValid) {
-      if (detResult.extracted.supplierRif) {
-        vendorFingerprintCache.set(detResult.extracted.supplierRif, {
-          channel: detResult.extracted.channel,
-          lastSeen: new Date().toISOString()
-        });
+  // Nivel 1A (0 Tokens): Extracción nativa de texto si es un PDF digital sin rawText previo
+  let effectiveRawText = rawText || '';
+  if (!effectiveRawText && base64Data) {
+    const detectedMime = detectMimeTypeFromBase64(base64Data, fileName);
+    if (detectedMime === 'application/pdf') {
+      const pdfText = extractTextFromPdfBase64(base64Data);
+      if (pdfText && pdfText.length >= 25) {
+        effectiveRawText = pdfText;
       }
-      return detResult;
+    }
+  }
+
+  // Nivel 1B (0 Tokens + Memoria Aprendida): Motor Determinista SENIAT enriquecido con patrones aprendidos
+  if (effectiveRawText) {
+    const detResult = parseSeniatRawText(effectiveRawText);
+    if (detResult && detResult.extracted) {
+      // Enriquecer con memoria de proveedores aprendida por el Guardián para reducir uso de IA
+      try {
+        if (db && detResult.extracted.supplierRif) {
+          const { getOcrLearnedHints } = require('./systemGuardian');
+          const hints = await getOcrLearnedHints(db, 30);
+          const learned = hints.find(h => h.supplierRif === detResult.extracted.supplierRif);
+          if (learned) {
+            if (!detResult.extracted.supplierName || detResult.extracted.supplierName.startsWith('Proveedor Fiscal (')) {
+              detResult.extracted.supplierName = learned.supplierName || detResult.extracted.supplierName;
+            }
+            if (learned.preferredChannel && detResult.extracted.channel === 'DIGITAL') {
+              detResult.extracted.channel = learned.preferredChannel;
+            }
+            if (learned.preferredCurrency && detResult.extracted.currency === 'VES') {
+              detResult.extracted.currency = learned.preferredCurrency;
+            }
+          }
+        }
+      } catch {
+        // Memoria opcional
+      }
+
+      if (detResult.extracted.mathValid) {
+        if (detResult.extracted.supplierRif) {
+          vendorFingerprintCache.set(detResult.extracted.supplierRif, {
+            channel: detResult.extracted.channel,
+            lastSeen: new Date().toISOString()
+          });
+        }
+        return detResult;
+      }
     }
 
-    if (geminiApiKey) {
-      const repaired = await repairFiscalDataWithMicroPrompt(rawText, geminiApiKey);
+    if (geminiApiKey && geminiApiKey !== 'tu_clave_gemini_ai_studio') {
+      const repaired = await repairFiscalDataWithMicroPrompt(effectiveRawText, geminiApiKey);
       if (repaired) return repaired;
     }
 
@@ -551,34 +654,57 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
       return bestCandidate;
     }
 
-    // Diagnóstico transparente: nunca mentir que la foto está borrosa si el fallo fue de API/cuota/red
+    // Diagnóstico privado al Guardián + mensaje corporativo confidencial al cliente (sin exponer proveedores externos)
     if (lastVisionError) {
       const lower = lastVisionError.toLowerCase();
-      let friendlyError = `Error técnico del motor de lectura documental: ${lastVisionError.slice(0, 180)}`;
+      let guardianMsg = `Fallo del motor de lectura documental: ${lastVisionError.slice(0, 220)}`;
+      let userFriendlyError = 'El servicio de lectura automática no pudo completar el análisis en este momento. Complete o verifique los campos manualmente.';
       if (lower.includes('api_key') || lower.includes('api key') || lower.includes('401') || lower.includes('403')) {
-        friendlyError = 'La clave de acceso al motor de lectura (GEMINI_API_KEY) es inválida o no tiene permisos en el servidor.';
+        guardianMsg = 'Clave de motor de lectura (GEMINI_API_KEY) inválida, revocada o sin permisos en el servidor.';
+        userFriendlyError = 'El servicio de lectura automática se encuentra en mantenimiento de credenciales. Puede registrar los datos manualmente mientras se restablece.';
       } else if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
-        friendlyError = 'El motor de lectura alcanzó temporalmente su límite de solicitudes por minuto. Espere unos segundos y reintente.';
-      } else if (lower.includes('timeout') || lower.includes('network') || lower.includes('fetch')) {
-        friendlyError = 'Error de conexión temporal con el motor de lectura documental. Reintente en unos segundos.';
+        guardianMsg = 'Cuota temporal de lectura documental alcanzada (HTTP 429).';
+        userFriendlyError = 'Alta demanda temporal en el servicio de lectura automática. Espere unos segundos e intente nuevamente.';
+      }
+      try {
+        const { recordGuardianAlert } = require('./systemGuardian');
+        await recordGuardianAlert(db, {
+          severity: 'CRITICAL',
+          source: 'ocr_engine',
+          category: 'OCR_PROVIDER_ERROR',
+          message: guardianMsg
+        });
+      } catch {
+        // No interrumpir respuesta
       }
       return {
-        mode: 'VNDE_UNPARSEABLE_DOCUMENT (Error de Motor)',
+        mode: 'VNDE_UNPARSEABLE_DOCUMENT (Servicio de Lectura)',
         tokensUsed: 0,
         confidence: 0,
         extracted: null,
-        error: friendlyError
+        error: userFriendlyError
       };
     }
   }
 
   if (base64Data && (!geminiApiKey || geminiApiKey === 'tu_clave_gemini_ai_studio')) {
+    try {
+      const { recordGuardianAlert } = require('./systemGuardian');
+      await recordGuardianAlert(db, {
+        severity: 'WARNING',
+        source: 'ocr_engine',
+        category: 'OCR_CONFIG_MISSING',
+        message: 'GEMINI_API_KEY no configurada en el entorno del servidor para fotos sin QR.'
+      });
+    } catch {
+      // Ignorar si no hay db
+    }
     return {
-      mode: 'VNDE_UNPARSEABLE_DOCUMENT (GEMINI_API_KEY faltante · 0 Tokens)',
+      mode: 'VNDE_UNPARSEABLE_DOCUMENT (0 Tokens)',
       tokensUsed: 0,
       confidence: 0,
       extracted: null,
-      error: 'No se detectó código QR fiscal en la imagen y GEMINI_API_KEY no está configurada en el servidor para lectura OCR con IA. Complete los campos manualmente o configure GEMINI_API_KEY.'
+      error: 'No se detectó código QR ni texto embebido en el documento. Complete los campos manualmente o verifique la configuración del servicio de lectura en el Guardián.'
     };
   }
 
@@ -594,6 +720,7 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
 module.exports = {
   parseVenezuelanAmount,
   extractAllVenezuelanRifs,
+  extractTextFromPdfBase64,
   parseSeniatFiscalQr,
   parseSeniatRawText,
   repairFiscalDataWithMicroPrompt,

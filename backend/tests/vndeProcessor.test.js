@@ -156,7 +156,7 @@ test('VNDE: Pipeline Maestro processFiscalInvoiceVNDE con 0 Tokens', async () =>
   assert.equal(result.extracted.supplierRif, 'J-40549697-5');
 });
 
-test('VNDE Seguridad: No inyecta facturas falsas cuando el documento es ilegible y no hay API Key', async () => {
+test('VNDE Seguridad: No inyecta facturas falsas cuando el documento es ilegible y no hay API Key (ni expone marca externa)', async () => {
   const result = await processFiscalInvoiceVNDE({
     base64Data: 'AAECAwQF',
     fileName: 'imagen_borrosa.jpg'
@@ -165,6 +165,36 @@ test('VNDE Seguridad: No inyecta facturas falsas cuando el documento es ilegible
   assert.ok(result);
   assert.equal(result.extracted, null);
   assert.match(result.mode, /VNDE_UNPARSEABLE_DOCUMENT/);
+  assert.doesNotMatch(String(result.error || ''), /GEMINI_API_KEY/i);
+});
+
+test('VNDE Híbrido 0 Tokens: extrae y procesa PDF digital sin usar API Key', async () => {
+  const fakePdf = `%PDF-1.4
+1 0 obj << /Length 120 >> stream
+BT
+(DISTRIBUIDORA ORIENTE C.A.) Tj
+(RIF: J-40549697-5) Tj
+(FACTURA Nro: 00091234) Tj
+(CONTROL: 00-008812) Tj
+(BASE IMPONIBLE: 1000,00) Tj
+(IVA 16%: 160,00) Tj
+(TOTAL: 1160,00) Tj
+ET
+endstream endobj
+%%EOF`;
+  const pdfBase64 = Buffer.from(fakePdf, 'latin1').toString('base64');
+
+  const result = await processFiscalInvoiceVNDE({
+    base64Data: pdfBase64,
+    fileName: 'factura_digital.pdf'
+  });
+
+  assert.ok(result);
+  assert.equal(result.tokensUsed, 0);
+  assert.ok(result.extracted);
+  assert.equal(result.extracted.supplierRif, 'J-40549697-5');
+  assert.equal(result.extracted.invoiceNumber, '00091234');
+  assert.equal(result.extracted.totalOriginal, 1160);
 });
 
 test('SaaS Billing & Seguridad: Códigos Telegram 12-hex, Conciliación de Pagos y Cuotas por Plan', async () => {
