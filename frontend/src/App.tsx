@@ -5213,12 +5213,12 @@ export default function App() {
               </div>
             )}
 
-            {/* Contingency Alert Banner Arts. 6-7 */}
+            {/* Contingency Info Banner Arts. 6-7 (Prórroga 180 días hasta Abril 2027) */}
             {fiscalSummary.contingencyCount > 0 && (
-              <div className="ui-card p-4 border-rose-500/60 flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+              <div className="ui-card p-4 border-sky-500/50 flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
                 <div className="text-xs font-mono">
-                  <strong className="text-rose-400 uppercase">Alerta Talonario de Contingencia (Arts. 6-7 SNAT/2026/00093):</strong> Existen {fiscalSummary.contingencyCount} factura(s) emitidas en talonario físico de contingencia. Deben remitirse en PDF al SENIAT dentro de las 24 horas siguientes a su emisión.
+                  <strong className="text-sky-300 uppercase">Talonario de Contingencia Aceptado (Prórroga 180 días · Vigente hasta 30/04/2027):</strong> Existen {fiscalSummary.contingencyCount} factura(s) registradas en talonario físico de contingencia, plenamente válidas durante el período de adecuación de la Gaceta Oficial.
                 </div>
               </div>
             )}
@@ -5502,7 +5502,7 @@ export default function App() {
                   >
                     <option value="DIGITAL">DIGITAL (Imprenta / Portal)</option>
                     <option value="MAQUINA_FISCAL">MAQUINA_FISCAL (Ticket Z)</option>
-                    <option value="CONTINGENCIA">CONTINGENCIA (Talonario &lt;24h)</option>
+                    <option value="CONTINGENCIA">CONTINGENCIA (Talonario Físico · Aceptado hasta 30/04/2027)</option>
                   </select>
                 </div>
 
@@ -5655,8 +5655,14 @@ export default function App() {
               )}
 
               {ocrDraft.channel === 'CONTINGENCIA' && (
-                <div className="p-3 rounded bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-mono">
-                  [ARTS. 6-7 SNAT/2026/00093] Factura física de Contingencia detectada. El sistema activará el recordatorio obligatorio de envío PDF al SENIAT en menos de 24 horas.
+                <div className={`p-3 rounded text-xs font-mono border ${
+                  ocrDraft.emissionDate > '2027-04-30'
+                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                    : 'bg-sky-500/15 border-sky-500/40 text-sky-300'
+                }`}>
+                  {ocrDraft.emissionDate > '2027-04-30'
+                    ? '[ARTS. 6-7 SNAT/2026/00093] Período de transición vencido (30/04/2027). Esta factura de Contingencia requiere envío PDF al SENIAT en menos de 24 horas.'
+                    : '[PRÓRROGA 180 DÍAS · HASTA 30/04/2027] Factura de Talonario de Contingencia aceptada y válida durante el plazo de adecuación de la Gaceta Oficial (sin penalización por reporte <24h).'}
                 </div>
               )}
 

@@ -6,6 +6,8 @@ const { PARTITIONED_COLLECTION } = require('./workspaceStore');
 
 const GUARDIAN_ALERTS_COL = 'vt_guardian_alerts';
 const GUARDIAN_OCR_MEMORY_COL = 'vt_guardian_ocr_memory';
+// Período de transición de 180 días desde publicación en Gaceta Oficial (vigente hasta abril 2027)
+const CONTINGENCY_GRACE_DEADLINE = '2027-04-30';
 
 // Base normativa SENIAT Venezuela 2026 (reglas verificables)
 const SENIAT_LEGAL_RULES = [
@@ -23,9 +25,9 @@ const SENIAT_LEGAL_RULES = [
   },
   {
     code: 'SNAT_2026_00093_ART_6_7',
-    norm: 'Providencia SNAT/2026/00093 Arts. 6 y 7',
-    title: 'Factura de Contingencia (>24h sin reporte PDF)',
-    penalty: 'Sanción por incumplimiento de deberes formales de facturación digital.'
+    norm: 'Providencia SNAT/2026/00093 Arts. 6 y 7 (Prórroga 180 días)',
+    title: 'Talonario de Contingencia (Aceptado hasta 30/04/2027)',
+    penalty: 'Vigente sin penalización durante los 180 días de transición (hasta abril 2027); luego exige reporte PDF <24h.'
   },
   {
     code: 'COT_ART_101_RIF_MOD11',
@@ -95,18 +97,22 @@ function auditInvoiceSeniatCompliance(inv, tenant = {}) {
   }
 
   if (inv.channel === 'CONTINGENCIA' && inv.emissionDate) {
-    const issuedMs = Date.parse(inv.emissionDate);
-    if (!Number.isNaN(issuedMs) && Date.now() - issuedMs > 24 * 60 * 60 * 1000 && inv.status !== 'APROBADA') {
-      issues.push({
-        severity: 'CRITICAL',
-        ruleCode: 'SNAT_2026_00093_ART_6_7',
-        norm: 'SNAT/2026/00093 Arts. 6-7',
-        tenantId: inv.tenantId,
-        invoiceId: inv.id,
-        invoiceNumber: inv.invoiceNumber || 'SIN_NUMERO',
-        message: `Factura de Contingencia #${inv.invoiceNumber} supera 24h sin reporte/aprobación SENIAT.`,
-        autoFixable: false
-      });
+    const emissionStr = String(inv.emissionDate).slice(0, 10);
+    // Durante el período de adecuación de 180 días (hasta abril 2027) los talonarios de contingencia son plenamente aceptados
+    if (emissionStr > CONTINGENCY_GRACE_DEADLINE) {
+      const issuedMs = Date.parse(inv.emissionDate);
+      if (!Number.isNaN(issuedMs) && Date.now() - issuedMs > 24 * 60 * 60 * 1000 && inv.status !== 'APROBADA') {
+        issues.push({
+          severity: 'CRITICAL',
+          ruleCode: 'SNAT_2026_00093_ART_6_7',
+          norm: 'SNAT/2026/00093 Arts. 6-7',
+          tenantId: inv.tenantId,
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber || 'SIN_NUMERO',
+          message: `Factura de Contingencia #${inv.invoiceNumber} posterior al 30/04/2027 supera 24h sin reporte/aprobación SENIAT.`,
+          autoFixable: false
+        });
+      }
     }
   }
 
