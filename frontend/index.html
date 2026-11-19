@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#18181B" />
+    <meta name="theme-color" content="#0B0C0F" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -13,6 +13,112 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>VT Fiscal OS // Sistema Contable y Fiscal SENIAT</title>
+    <style>
+      html, body { background-color: #0B0C0F; }
+      #vt-launch-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 42%, #171920 0%, #0B0C0F 68%);
+        transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: opacity, transform;
+      }
+      #vt-launch-splash.vt-splash-exit {
+        opacity: 0;
+        transform: scale(1.03);
+        pointer-events: none;
+      }
+      .vt-splash-badge {
+        width: 108px;
+        height: 108px;
+        border-radius: 26px;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+        animation: vtBadgeIn 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .vt-splash-v {
+        transform-origin: 204px 250px;
+        animation: vtLetterSlide 560ms cubic-bezier(0.22, 1, 0.36, 1) 120ms both;
+      }
+      .vt-splash-t {
+        transform-origin: 345px 250px;
+        animation: vtLetterSlide 560ms cubic-bezier(0.22, 1, 0.36, 1) 210ms both;
+      }
+      .vt-splash-dot {
+        transform-origin: 394px 336px;
+        animation: vtDotPop 520ms cubic-bezier(0.34, 1.56, 0.64, 1) 360ms both;
+      }
+      .vt-splash-ring {
+        transform-origin: 394px 336px;
+        animation: vtRingPulse 900ms cubic-bezier(0.16, 1, 0.3, 1) 420ms both;
+      }
+      .vt-splash-sheen {
+        animation: vtSheenSweep 950ms cubic-bezier(0.4, 0, 0.2, 1) 320ms both;
+      }
+      .vt-splash-label {
+        margin-top: 22px;
+        font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.28em;
+        color: rgba(255, 255, 255, 0.86);
+        animation: vtFadeUp 500ms cubic-bezier(0.22, 1, 0.36, 1) 300ms both;
+      }
+      .vt-splash-bar-track {
+        margin-top: 14px;
+        width: 72px;
+        height: 2px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        animation: vtFadeUp 450ms ease 360ms both;
+      }
+      .vt-splash-bar-fill {
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, #0A84FF, #5AC8FA);
+        transform-origin: left center;
+        animation: vtBarFill 1050ms cubic-bezier(0.22, 1, 0.36, 1) 220ms both;
+      }
+      @keyframes vtBadgeIn {
+        0% { opacity: 0; transform: scale(0.84) translateY(10px); }
+        100% { opacity: 1; transform: scale(1) translateY(0); }
+      }
+      @keyframes vtLetterSlide {
+        0% { opacity: 0; transform: translateY(18px); }
+        100% { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes vtDotPop {
+        0% { opacity: 0; transform: scale(0); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes vtRingPulse {
+        0% { opacity: 0.75; transform: scale(0.9); }
+        100% { opacity: 0; transform: scale(2.8); }
+      }
+      @keyframes vtSheenSweep {
+        0% { transform: translateX(-520px); opacity: 0; }
+        20% { opacity: 0.55; }
+        100% { transform: translateX(520px); opacity: 0; }
+      }
+      @keyframes vtFadeUp {
+        0% { opacity: 0; transform: translateY(6px); }
+        100% { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes vtBarFill {
+        0% { transform: scaleX(0); }
+        100% { transform: scaleX(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .vt-splash-badge, .vt-splash-v, .vt-splash-t, .vt-splash-dot, .vt-splash-ring, .vt-splash-sheen, .vt-splash-label, .vt-splash-bar-fill {
+          animation: none !important;
+        }
+      }
+    </style>
     <!-- Open Graph para previsualizaciones impecables en WhatsApp y redes -->
     <meta property="og:title" content="VT Fiscal OS · Plataforma Contable & SENIAT" />
     <meta property="og:description" content="Acceso oficial a la plataforma de gestión contable, fiscal SENIAT y nómina cloud en Venezuela." />
@@ -26,7 +132,64 @@
     />
   </head>
   <body>
+    <!-- Splash Screen Animado de Lanzamiento PWA (0ms Instant Load) -->
+    <div id="vt-launch-splash" aria-hidden="true">
+      <div class="vt-splash-badge">
+        <svg viewBox="0 0 512 512" width="108" height="108" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="vtSplashBg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#1E2026" />
+              <stop offset="100%" stop-color="#0B0C0F" />
+            </linearGradient>
+            <linearGradient id="vtSplashMetal" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#FFFFFF" />
+              <stop offset="100%" stop-color="#D4D7DF" />
+            </linearGradient>
+            <linearGradient id="vtSplashSheenGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="rgba(255,255,255,0)" />
+              <stop offset="50%" stop-color="rgba(255,255,255,0.45)" />
+              <stop offset="100%" stop-color="rgba(255,255,255,0)" />
+            </linearGradient>
+            <clipPath id="vtMonogramClip">
+              <path d="M112 146 L154 146 L204 294 L254 146 L294 146 L224 352 L184 352 Z" />
+              <path d="M286 146 L404 146 L404 184 L365 184 L365 352 L325 352 L325 184 L286 184 Z" />
+            </clipPath>
+          </defs>
+          <rect x="0" y="0" width="512" height="512" fill="url(#vtSplashBg)" />
+          <rect x="18" y="18" width="476" height="476" rx="96" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2" />
+          <path class="vt-splash-v" d="M112 146 L154 146 L204 294 L254 146 L294 146 L224 352 L184 352 Z" fill="url(#vtSplashMetal)" />
+          <path class="vt-splash-t" d="M286 146 L404 146 L404 184 L365 184 L365 352 L325 352 L325 184 L286 184 Z" fill="url(#vtSplashMetal)" />
+          <g clip-path="url(#vtMonogramClip)">
+            <polygon class="vt-splash-sheen" points="80,100 200,100 120,420 0,420" fill="url(#vtSplashSheenGrad)" />
+          </g>
+          <circle class="vt-splash-ring" cx="394" cy="336" r="16" fill="none" stroke="#0A84FF" stroke-width="5" />
+          <circle class="vt-splash-dot" cx="394" cy="336" r="16" fill="#0A84FF" />
+        </svg>
+      </div>
+      <div class="vt-splash-label">FISCAL OS</div>
+      <div class="vt-splash-bar-track"><div class="vt-splash-bar-fill"></div></div>
+    </div>
     <div id="root"></div>
+    <script>
+      window.__vtSplashStart = Date.now();
+      window.__vtDismissSplash = function () {
+        var el = document.getElementById('vt-launch-splash');
+        if (!el || el.dataset.dismissed === '1') return;
+        el.dataset.dismissed = '1';
+        var elapsed = Date.now() - (window.__vtSplashStart || 0);
+        var wait = Math.max(0, 1250 - elapsed);
+        setTimeout(function () {
+          el.classList.add('vt-splash-exit');
+          setTimeout(function () {
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+          }, 440);
+        }, wait);
+      };
+      // Failsafe para evitar que el splash quede fijo si falla algun script
+      setTimeout(function () {
+        if (window.__vtDismissSplash) window.__vtDismissSplash();
+      }, 3200);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {

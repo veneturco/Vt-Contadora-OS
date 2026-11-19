@@ -8,3 +8,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
+
+if (typeof window !== 'undefined' && typeof (window as unknown as { __vtDismissSplash?: () => void }).__vtDismissSplash === 'function') {
+  (window as unknown as { __vtDismissSplash: () => void }).__vtDismissSplash();
+}
