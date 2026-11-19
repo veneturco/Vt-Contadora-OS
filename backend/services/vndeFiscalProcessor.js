@@ -502,6 +502,16 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
     }
   }
 
+  if (base64Data && (!geminiApiKey || geminiApiKey === 'tu_clave_gemini_ai_studio')) {
+    return {
+      mode: 'VNDE_UNPARSEABLE_DOCUMENT (GEMINI_API_KEY faltante · 0 Tokens)',
+      tokensUsed: 0,
+      confidence: 0,
+      extracted: null,
+      error: 'No se detectó código QR fiscal en la imagen y GEMINI_API_KEY no está configurada en el servidor para lectura OCR con IA. Complete los campos manualmente o configure GEMINI_API_KEY.'
+    };
+  }
+
   return {
     mode: 'VNDE_UNPARSEABLE_DOCUMENT (0 Tokens)',
     tokensUsed: 0,

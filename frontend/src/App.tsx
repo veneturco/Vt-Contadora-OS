@@ -520,6 +520,12 @@ export default function App() {
   const [mobileQuickCurrency, setMobileQuickCurrency] = useState<'USD' | 'VES'>('USD');
   const [mobileQuickSupplier, setMobileQuickSupplier] = useState<string>('Suministros Mayoristas C.A.');
   const [mobileQuickRif, setMobileQuickRif] = useState<string>('J-30918274-9');
+  const [mobileQuickInvoiceNumber, setMobileQuickInvoiceNumber] = useState<string>('');
+  const [mobileQuickControlNumber, setMobileQuickControlNumber] = useState<string>('');
+  const [mobileQuickExempt, setMobileQuickExempt] = useState<number>(0);
+  const [mobileUploadedFileName, setMobileUploadedFileName] = useState<string>('');
+  const [mobileScanning, setMobileScanning] = useState<boolean>(false);
+  const [mobileSending, setMobileSending] = useState<boolean>(false);
   const [mobileToast, setMobileToast] = useState<string | null>(null);
 
   // Tab 07: Security & Crypto Vault state
@@ -2132,9 +2138,15 @@ export default function App() {
 
   function handleFileUploadSimulation(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (file.size > 7.5 * 1024 * 1024) {
+      setOcrAlertMessage(`El archivo "${file.name}" supera el límite máximo de 7.5 MB. Comprima la imagen o PDF e intente nuevamente.`);
+      return;
+    }
     setOcrUploadedFileName(file.name);
     setOcrScanning(true);
+    setOcrAlertMessage(null);
 
     const reader = new FileReader();
     reader.onerror = () => {
@@ -2153,6 +2165,7 @@ export default function App() {
           extracted: {
             supplierRif?: string;
             supplierName?: string;
+            hasBuyerRifOnTicket?: boolean;
             invoiceNumber?: string;
             controlNumber?: string;
             emissionDate?: string;
@@ -2161,6 +2174,7 @@ export default function App() {
             currency?: 'VES' | 'USD';
             taxableBaseOriginal?: number;
             exemptOriginal?: number;
+            vatRate?: number;
             igtfOriginal?: number;
           };
         }>('/api/ocr', {
@@ -2172,7 +2186,7 @@ export default function App() {
             mimeType: file.type || 'image/jpeg',
             fileName: file.name
           }),
-          timeoutMs: 15000
+          timeoutMs: 25000
         });
 
         if (res.ok && res.data?.extracted) {
@@ -2181,6 +2195,7 @@ export default function App() {
             ...prev,
             supplierRif: ext.supplierRif || prev.supplierRif,
             supplierName: ext.supplierName || prev.supplierName,
+            hasBuyerRifOnTicket: typeof ext.hasBuyerRifOnTicket === 'boolean' ? ext.hasBuyerRifOnTicket : prev.hasBuyerRifOnTicket,
             invoiceNumber: ext.invoiceNumber || prev.invoiceNumber,
             controlNumber: ext.controlNumber || prev.controlNumber,
             emissionDate: ext.emissionDate || prev.emissionDate,
@@ -2189,15 +2204,16 @@ export default function App() {
             currency: ext.currency || prev.currency,
             taxableBaseOriginal: Number(ext.taxableBaseOriginal ?? prev.taxableBaseOriginal),
             exemptOriginal: Number(ext.exemptOriginal ?? prev.exemptOriginal),
+            vatRate: typeof ext.vatRate === 'number' ? ext.vatRate : prev.vatRate,
             igtfOriginal: Number(ext.igtfOriginal ?? prev.igtfOriginal),
             sourceChannel: 'WEB_OCR'
           }));
           const quotaText = res.data.quota
             ? ` · Cuota mes: ${res.data.quota.usedInvoices}/${res.data.quota.maxInvoicesMonthly}`
             : '';
-          setOcrAlertMessage(`Imagen "${file.name}" procesada vía Backend (${res.data.mode})${quotaText}.`);
+          setOcrAlertMessage(`Imagen "${file.name}" procesada vía Backend (${res.data.mode})${quotaText}. Verifique los datos y pulse "Indexar".`);
         } else {
-          setOcrAlertMessage(`Aviso OCR: ${res.error || 'El documento requiere mayor nitidez'}. Verifique los campos en el formulario.`);
+          setOcrAlertMessage(`Aviso OCR: ${res.error || 'El documento requiere mayor nitidez'}. Verifique o complete los campos en el formulario.`);
         }
       } catch {
         setOcrAlertMessage(`Error de red al procesar "${file.name}". Complete o verifique los campos manualmente.`);
@@ -2439,13 +2455,100 @@ export default function App() {
     );
   }
 
-  function handleMobileQuickSend() {
+  function handleMobileFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 7.5 * 1024 * 1024) {
+      setMobileToast(`El archivo "${file.name}" supera 7.5 MB. Reduce el tamaño e intenta de nuevo.`);
+      setTimeout(() => setMobileToast(null), 4500);
+      return;
+    }
+    setMobileUploadedFileName(file.name);
+    setMobileScanning(true);
+    setMobileToast(`Analizando "${file.name}" con motor OCR...`);
+
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setMobileScanning(false);
+      setMobileToast(`Error al leer "${file.name}".`);
+      setTimeout(() => setMobileToast(null), 4000);
+    };
+    reader.onload = async () => {
+      const dataUrl = String(reader.result || '');
+      const base64Data = dataUrl.split(',')[1] || '';
+      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(dataUrl) : undefined;
+      try {
+        const res = await safeApiRequest<{
+          mode: string;
+          extracted: {
+            supplierRif?: string;
+            supplierName?: string;
+            invoiceNumber?: string;
+            controlNumber?: string;
+            currency?: 'VES' | 'USD';
+            taxableBaseOriginal?: number;
+            exemptOriginal?: number;
+          };
+        }>('/api/ocr', {
+          method: 'POST',
+          body: JSON.stringify({
+            tenantId: activeTenant.id,
+            base64Data,
+            qrPayload: detectedQr,
+            mimeType: file.type || 'image/jpeg',
+            fileName: file.name
+          }),
+          timeoutMs: 25000
+        });
+
+        if (res.ok && res.data?.extracted) {
+          const ext = res.data.extracted;
+          if (ext.supplierRif) setMobileQuickRif(ext.supplierRif);
+          if (ext.supplierName) setMobileQuickSupplier(ext.supplierName);
+          if (ext.currency) setMobileQuickCurrency(ext.currency);
+          if (typeof ext.taxableBaseOriginal === 'number') setMobileQuickAmount(ext.taxableBaseOriginal);
+          if (typeof ext.exemptOriginal === 'number') setMobileQuickExempt(ext.exemptOriginal);
+          if (ext.invoiceNumber) setMobileQuickInvoiceNumber(ext.invoiceNumber);
+          if (ext.controlNumber) setMobileQuickControlNumber(ext.controlNumber);
+          setMobileToast(`Factura leída (${res.data.mode}). Verifica los datos y toca "Enviar Factura Ahora".`);
+        } else {
+          setMobileToast(`Aviso OCR: ${res.error || 'No se pudo leer automáticamente'}. Completa los datos y envía.`);
+        }
+      } catch {
+        setMobileToast(`Error de red al escanear "${file.name}". Completa los datos manualmente.`);
+      } finally {
+        setMobileScanning(false);
+        setTimeout(() => setMobileToast(null), 5500);
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function handleMobileQuickSend() {
+    if (mobileScanning || mobileSending) return;
     const rifCheck = validateVenezuelanRIF(mobileQuickRif);
-    const base = Number(mobileQuickAmount) || 100;
+    if (!rifCheck.valid) {
+      setMobileToast(`RIF inválido (Módulo 11): ${mobileQuickRif}. Corrige el RIF antes de enviar.`);
+      setTimeout(() => setMobileToast(null), 4500);
+      return;
+    }
+    if (activeTenant.subscriptionStatus === 'SUSPENDIDA') {
+      setMobileToast(`Licencia suspendida para ${activeTenant.name}. Contacta a tu contador.`);
+      setTimeout(() => setMobileToast(null), 4500);
+      return;
+    }
+    const base = Math.max(0, Number(mobileQuickAmount) || 0);
+    const exempt = Math.max(0, Number(mobileQuickExempt) || 0);
+    if (base <= 0 && exempt <= 0) {
+      setMobileToast('Ingresa una Base Imponible o Monto Exento mayor a 0.');
+      setTimeout(() => setMobileToast(null), 4000);
+      return;
+    }
     const vat = Number((base * 0.16).toFixed(2));
-    const total = Number((base + vat).toFixed(2));
-    const invNum = `M-${Math.floor(10000 + Math.random() * 89999)}`;
-    const ctrlNum = `00-00${Math.floor(100000 + Math.random() * 899999)}`;
+    const total = Number((base + exempt + vat).toFixed(2));
+    const invNum = mobileQuickInvoiceNumber.trim() || `M-${Math.floor(10000 + Math.random() * 89999)}`;
+    const ctrlNum = mobileQuickControlNumber.trim() || `00-00${Math.floor(100000 + Math.random() * 899999)}`;
     const newId = `inv_${Date.now()}`;
     const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
     const auditHash = computeDeterministicHash(lastHash, { newId, invNum, total });
@@ -2456,8 +2559,8 @@ export default function App() {
       bookType: 'COMPRA',
       docType: '01',
       channel: 'DIGITAL',
-      supplierRif: rifCheck.valid ? rifCheck.formatted : 'J-30123456-1',
-      supplierName: mobileQuickSupplier,
+      supplierRif: rifCheck.formatted,
+      supplierName: mobileQuickSupplier.trim() || `Proveedor (${rifCheck.formatted})`,
       hasBuyerRifOnTicket: true,
       invoiceNumber: invNum,
       controlNumber: ctrlNum,
@@ -2466,27 +2569,51 @@ export default function App() {
       currency: mobileQuickCurrency,
       bcvRateOnDate: bcvRate,
       taxableBaseOriginal: base,
-      exemptOriginal: 0,
-      vatRate: 16,
+      exemptOriginal: exempt,
+      vatRate: base > 0 ? 16 : 0,
       vatOriginal: vat,
       igtfOriginal: 0,
       totalOriginal: total,
       vatRetentionRate: activeTenant.regime === 'SPE' ? 75 : 0,
       islrRetentionRate: 2,
       status: 'BORRADOR_IA',
-      sourceChannel: 'TELEGRAM_BOT',
+      sourceChannel: 'WEB_OCR',
       auditHash
     };
 
-    setInvoices(prev => [newInv, ...prev]);
-    appendAuditLog(
-      'INGESTA_PORTAL_MOVIL_9_16',
-      `cliente_movil:${activeTenant.rif}`,
-      newId,
-      `Captura móvil 9:16 enviada por el cliente: Factura #${invNum} (${mobileQuickSupplier}) por ${mobileQuickCurrency} ${total.toFixed(2)}`
-    );
-    setMobileToast(`Factura #${invNum} enviada al Contador con sello SHA-256`);
-    setTimeout(() => setMobileToast(null), 3500);
+    setMobileSending(true);
+    try {
+      const syncRes = await safeApiRequest<{ ok: boolean }>('/api/invoices/client-upload', {
+        method: 'POST',
+        body: JSON.stringify({ tenantId: activeTenant.id, invoice: newInv }),
+        timeoutMs: 12000
+      });
+
+      if (!syncRes.ok && syncRes.status !== 0) {
+        setMobileToast(`Error al enviar al Contador: ${syncRes.error || 'No se pudo registrar'}`);
+        setTimeout(() => setMobileToast(null), 5000);
+        return;
+      }
+
+      setInvoices(prev => [newInv, ...prev]);
+      appendAuditLog(
+        'INGESTA_PORTAL_MOVIL_9_16',
+        `cliente_movil:${activeTenant.rif}`,
+        newId,
+        `Captura móvil 9:16 enviada por el cliente: Factura #${invNum} (${newInv.supplierName}) por ${mobileQuickCurrency} ${total.toFixed(2)}`
+      );
+      setMobileQuickInvoiceNumber('');
+      setMobileQuickControlNumber('');
+      setMobileUploadedFileName('');
+      setMobileToast(
+        syncRes.ok
+          ? `Factura #${invNum} enviada en vivo al Contador con sello SHA-256`
+          : `Sin red: Factura #${invNum} guardada localmente con sello SHA-256`
+      );
+      setTimeout(() => setMobileToast(null), 4000);
+    } finally {
+      setMobileSending(false);
+    }
   }
 
   function handleDownloadFile(filename: string, content: string, mime: string) {
@@ -5126,10 +5253,10 @@ export default function App() {
                     Clasificación automática SNAT/2026/00093 · Validación Módulo 11 · Bloqueo de Facturas Duplicadas
                   </p>
                 </div>
-                <label className="ui-btn-primary px-3 py-2 text-xs cursor-pointer flex items-center gap-1.5">
+                <label className={`ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5 ${ocrScanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
                   <Upload className="w-3.5 h-3.5" />
-                  Subir Foto / PDF Factura
-                  <input type="file" accept="image/*,application/pdf" onChange={handleFileUploadSimulation} className="hidden" />
+                  {ocrScanning ? 'Procesando Factura...' : 'Subir Foto / PDF Factura'}
+                  <input type="file" accept="image/*,application/pdf" disabled={ocrScanning} onChange={handleFileUploadSimulation} className="hidden" />
                 </label>
               </div>
 
@@ -5351,7 +5478,8 @@ export default function App() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => handleRegisterOcrInvoice('WEB_OCR')}
-                    className="ui-btn-primary px-4 py-2 text-xs flex items-center gap-1.5"
+                    disabled={ocrScanning}
+                    className="ui-btn-primary px-4 py-2 text-xs flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     Indexar en Bandeja Contable (Web OCR)
@@ -6519,13 +6647,33 @@ export default function App() {
 
                 {mobileSubTab === 'camera' && (
                   <div className="space-y-3">
-                    <div className="p-3 rounded bg-[var(--bg-elevated)] border border-dashed border-[var(--accent-primary)] text-center space-y-2">
+                    <label
+                      className={`block p-3 rounded bg-[var(--bg-elevated)] border border-dashed border-[var(--accent-primary)] text-center space-y-2 transition hover:bg-white/5 ${
+                        mobileScanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'
+                      }`}
+                    >
                       <Camera className="w-7 h-7 mx-auto text-[var(--accent-primary)]" />
-                      <div className="font-bold">Captura Rápida Cero-Fricción</div>
+                      <div className="font-bold">
+                        {mobileScanning ? 'Escaneando Factura con IA...' : 'Tocar para Tomar Foto o Subir PDF'}
+                      </div>
                       <p className="text-[10px] opacity-75">
-                        Toma la foto del soporte físico o digital y envíalo directo a la bóveda de tu contador.
+                        {mobileUploadedFileName
+                          ? `Archivo: ${mobileUploadedFileName}`
+                          : 'Toma la foto del soporte físico o selecciona una imagen/PDF para enviarlo a tu contador.'}
                       </p>
-                    </div>
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--accent-primary)]/15 text-[var(--accent-primary)] text-[10px] font-bold">
+                        <Upload className="w-3 h-3" />
+                        {mobileScanning ? 'Procesando...' : 'Cámara / Galería / PDF'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        capture="environment"
+                        disabled={mobileScanning}
+                        onChange={handleMobileFileUpload}
+                        className="hidden"
+                      />
+                    </label>
 
                     <div>
                       <label className="block mb-1 text-[10px] opacity-75">RIF Proveedor</label>
@@ -6533,7 +6681,9 @@ export default function App() {
                         type="text"
                         value={mobileQuickRif}
                         onChange={e => setMobileQuickRif(e.target.value)}
-                        className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                        className={`w-full p-2 rounded bg-[var(--bg-elevated)] border ${
+                          validateVenezuelanRIF(mobileQuickRif).valid ? 'border-emerald-500/50' : 'border-rose-500'
+                        }`}
                       />
                     </div>
 
@@ -6545,6 +6695,29 @@ export default function App() {
                         onChange={e => setMobileQuickSupplier(e.target.value)}
                         className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
                       />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block mb-1 text-[10px] opacity-75">Nº Factura (opcional)</label>
+                        <input
+                          type="text"
+                          placeholder="Auto / OCR"
+                          value={mobileQuickInvoiceNumber}
+                          onChange={e => setMobileQuickInvoiceNumber(e.target.value)}
+                          className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block mb-1 text-[10px] opacity-75">Nº Control (opcional)</label>
+                        <input
+                          type="text"
+                          placeholder="00-000000"
+                          value={mobileQuickControlNumber}
+                          onChange={e => setMobileQuickControlNumber(e.target.value)}
+                          className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
+                        />
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
@@ -6570,8 +6743,12 @@ export default function App() {
                       </div>
                     </div>
 
-                    <button onClick={handleMobileQuickSend} className="ui-btn-primary w-full py-2.5 text-xs">
-                      Enviar Factura Ahora
+                    <button
+                      onClick={handleMobileQuickSend}
+                      disabled={mobileScanning || mobileSending}
+                      className="ui-btn-primary w-full py-2.5 text-xs disabled:opacity-50"
+                    >
+                      {mobileSending ? 'Enviando al Contador...' : 'Enviar Factura Ahora'}
                     </button>
                   </div>
                 )}

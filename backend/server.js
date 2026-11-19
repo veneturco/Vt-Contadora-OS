@@ -50,7 +50,8 @@ const {
 } = require('./security/cryptoVault');
 const {
   readWorkspaceState,
-  writeWorkspaceState
+  writeWorkspaceState,
+  appendTenantInvoice
 } = require('./services/workspaceStore');
 
 // Lightweight In-Memory Firestore Fallback when GOOGLE_APPLICATION_CREDENTIALS is not configured
@@ -297,7 +298,7 @@ app.use(cors({
     return callback(new Error('Origen no autorizado por política CORS de VT Fiscal OS'));
   }
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '12mb' }));
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -628,6 +629,42 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
         maxInvoicesMonthly: quotaCheck.maxInvoicesMonthly || 3000
       }
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Registro directo de facturas enviadas desde el Portal Móvil de Usuarios/Clientes
+app.post('/api/invoices/client-upload', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+  try {
+    const { tenantId, invoice } = req.body || {};
+    if (!tenantId || !invoice || typeof invoice !== 'object') {
+      return res.status(400).json({ error: 'Se requiere tenantId y el objeto invoice para registrar la factura.' });
+    }
+    const rifCheck = validateVenezuelanRIF(invoice.supplierRif);
+    if (!rifCheck.valid) {
+      return res.status(400).json({ error: `RIF de proveedor inválido (Módulo 11): ${invoice.supplierRif || 'vacío'}` });
+    }
+    const quotaCheck = await checkTenantPlanQuota(db, tenantId);
+    if (!quotaCheck.allowed) {
+      return res.status(quotaCheck.status || 429).json({ error: quotaCheck.error });
+    }
+    const sanitizedInvoice = {
+      ...invoice,
+      id: String(invoice.id || `inv_${Date.now()}`),
+      tenantId: String(tenantId),
+      supplierRif: rifCheck.formatted,
+      status: 'BORRADOR_IA'
+    };
+    const saved = await appendTenantInvoice(
+      db,
+      tenantId,
+      sanitizedInvoice,
+      req.user?.email || req.user?.uid || 'client'
+    );
+    await incrementTenantInvoiceUsage(db, tenantId);
+    broadcastInvoiceEvent(tenantId, sanitizedInvoice);
+    return res.status(201).json(saved);
   } catch (err) {
     next(err);
   }

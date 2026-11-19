@@ -1,5 +1,5 @@
 // VeneTurco Fiscal OS v3.3 - Service Worker PWA (Offline Resilient)
-const CACHE_NAME = 'veneturco-cache-v3.3.0';
+const CACHE_NAME = 'veneturco-cache-v3.3.1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const {
   PARTITIONED_COLLECTION,
   readWorkspaceState,
-  writeWorkspaceState
+  writeWorkspaceState,
+  appendTenantInvoice
 } = require('../services/workspaceStore');
 
 function createMockDb() {
@@ -115,4 +116,24 @@ test('WorkspaceStore: retrocompatibilidad automática leyendo legacy vt_workspac
   assert.equal(res.partitioned, false);
   assert.equal(res.state.tenants.length, 1);
   assert.equal(res.state.tenants[0].id, 't_legacy');
+});
+
+test('WorkspaceStore: appendTenantInvoice persiste facturas de clientes y bloquea duplicados (409)', async () => {
+  const db = createMockDb();
+  const inv = {
+    id: 'inv_m1',
+    tenantId: 'tenant_a',
+    supplierRif: 'J-30918274-9',
+    invoiceNumber: '00045123',
+    totalOriginal: 116
+  };
+
+  const first = await appendTenantInvoice(db, 'tenant_a', inv, 'cliente@a.com');
+  assert.equal(first.ok, true);
+  assert.equal(first.totalInvoices, 1);
+
+  await assert.rejects(
+    () => appendTenantInvoice(db, 'tenant_a', inv, 'cliente@a.com'),
+    err => err.status === 409
+  );
 });

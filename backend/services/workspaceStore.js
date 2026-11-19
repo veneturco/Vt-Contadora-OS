@@ -153,8 +153,50 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
   };
 }
 
+async function appendTenantInvoice(db, tenantId, invoice, actorEmail = 'client') {
+  const tid = String(tenantId || '').trim();
+  if (!tid || !invoice || typeof invoice !== 'object') {
+    const err = new Error('tenantId y datos de factura son requeridos.');
+    err.status = 400;
+    throw err;
+  }
+
+  const docRef = db.collection(PARTITIONED_COLLECTION).doc(tid);
+  const snap = await docRef.get();
+  const existing = snap && snap.exists ? (snap.data() || {}) : {};
+  const currentInvoices = Array.isArray(existing.invoices) ? existing.invoices : [];
+
+  const invNumNorm = String(invoice.invoiceNumber || '').trim().toUpperCase();
+  const rifNorm = String(invoice.supplierRif || '').trim().toUpperCase();
+  const isDuplicate = currentInvoices.some(
+    inv =>
+      String(inv?.supplierRif || '').trim().toUpperCase() === rifNorm &&
+      String(inv?.invoiceNumber || '').trim().toUpperCase() === invNumNorm
+  );
+  if (isDuplicate) {
+    const err = new Error(`La factura #${invoice.invoiceNumber} del RIF ${invoice.supplierRif} ya fue registrada previamente.`);
+    err.status = 409;
+    throw err;
+  }
+
+  const nowIso = new Date().toISOString();
+  const updatedInvoices = [invoice, ...currentInvoices];
+  await docRef.set(
+    {
+      tenantId: tid,
+      invoices: updatedInvoices,
+      updatedAt: nowIso,
+      updatedBy: actorEmail
+    },
+    { merge: true }
+  );
+
+  return { ok: true, invoice, totalInvoices: updatedInvoices.length, updatedAt: nowIso };
+}
+
 module.exports = {
   PARTITIONED_COLLECTION,
   readWorkspaceState,
-  writeWorkspaceState
+  writeWorkspaceState,
+  appendTenantInvoice
 };
