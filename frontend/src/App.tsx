@@ -46,6 +46,7 @@ import { safeApiRequest } from './services/apiClient';
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
 import { AppleEmptyState } from './components/AppleEmptyState';
 import { ConfirmDialog, ConfirmDialogState } from './components/ConfirmDialog';
+import { SkinMenuPopover } from './components/SkinMenuPopover';
 import {
   SKINS,
   INITIAL_TENANTS,
@@ -3047,6 +3048,9 @@ export default function App() {
                 <Smartphone className="w-3.5 h-3.5" />
               </button>
             )}
+
+            {/* Selector Discreto de Apariencia / Tema (Desktop & Móvil) */}
+            <SkinMenuPopover skin={skin} onSelectSkin={setSkin} />
 
             {/* Indicador Sutil de Red */}
             <div
