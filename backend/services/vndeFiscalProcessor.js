@@ -466,27 +466,23 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
     if (detResult) return detResult;
   }
 
-  if (geminiApiKey && base64Data) {
+  if (geminiApiKey && base64Data && geminiApiKey !== 'tu_clave_gemini_ai_studio') {
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const mimeType = detectMimeTypeFromBase64(base64Data, fileName);
+    let learnedHintsBlock = '';
     try {
-      const genAI = new GoogleGenerativeAI(geminiApiKey);
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
-      });
-      const mimeType = detectMimeTypeFromBase64(base64Data, fileName);
-      let learnedHintsBlock = '';
-      try {
-        const { getOcrLearnedHints } = require('./systemGuardian');
-        const hints = await getOcrLearnedHints(db, 8);
-        if (hints.length > 0) {
-          learnedHintsBlock = `\n      MEMORIA OCR APRENDIDA DE PROVEEDORES FRECUENTES:\n      ${hints
-            .map(h => `- ${h.supplierRif} (${h.supplierName || 'Proveedor'}): canal=${h.preferredChannel || 'AUTO'}, moneda=${h.preferredCurrency || 'AUTO'}, notas=[${(h.qualityNotes || []).join(', ')}]`)
-            .join('\n      ')}`;
-        }
-      } catch {
-        learnedHintsBlock = '';
+      const { getOcrLearnedHints } = require('./systemGuardian');
+      const hints = await getOcrLearnedHints(db, 8);
+      if (hints.length > 0) {
+        learnedHintsBlock = `\n      MEMORIA OCR APRENDIDA DE PROVEEDORES FRECUENTES:\n      ${hints
+          .map(h => `- ${h.supplierRif} (${h.supplierName || 'Proveedor'}): canal=${h.preferredChannel || 'AUTO'}, moneda=${h.preferredCurrency || 'AUTO'}, notas=[${(h.qualityNotes || []).join(', ')}]`)
+          .join('\n      ')}`;
       }
-      const prompt = `Analiza esta factura o ticket fiscal venezolano bajo la Providencia SNAT/2026/00093 y extrae en JSON puro.
+    } catch {
+      learnedHintsBlock = '';
+    }
+
+    const basePrompt = `Analiza esta factura o ticket fiscal venezolano bajo la Providencia SNAT/2026/00093 (G.O. 43.484) y extrae en JSON puro.
       REGLAS ESTRICTAS:
       - Ignora tachaduras, firmas, resaltadores, dobleces, rayas, manchas o montos escritos a mano con bolígrafo sobre el papel; lee solo el texto impreso.
       - Si la imagen está borrosa, inclinada o doblada, reconstruye el RIF validando Módulo 11 y verifica la consistencia matemática Base + Exento + IVA + IGTF = Total.
@@ -497,21 +493,82 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
       Devuelve exactamente este JSON:
       { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
 
-      const aiResult = await model.generateContent([
-        prompt,
-        { inlineData: { data: base64Data, mimeType } }
-      ]);
-      const extracted = JSON.parse(aiResult.response.text().replace(/```json|```/g, '').trim());
-      const normalized = validateAndNormalizeAiExtraction(extracted);
+    const modelFallbackChain = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let lastVisionError = null;
+    let bestCandidate = null;
 
+    for (const modelName of modelFallbackChain) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+        });
+        const aiResult = await model.generateContent([
+          basePrompt,
+          { inlineData: { data: base64Data, mimeType } }
+        ]);
+        const rawJsonText = aiResult.response.text().replace(/```json|```/g, '').trim();
+        const extracted = JSON.parse(rawJsonText);
+        let normalized = validateAndNormalizeAiExtraction(extracted);
+
+        // Doble pasada correctiva si falla la matemática o el RIF Módulo 11
+        if ((!normalized.mathValid || !normalized.rifValid) && modelName === modelFallbackChain[0]) {
+          try {
+            const verifyPrompt = `Revisa cuidadosamente los números y el RIF de esta factura porque la primera lectura tuvo un descuadre (RIF leído: "${normalized.supplierRif}", Base=${normalized.taxableBaseOriginal}, Exento=${normalized.exemptOriginal}, IVA=${normalized.vatOriginal}, Total=${normalized.totalOriginal}). Corrige cualquier dígito mal leído asegurando Base + Exento + IVA + IGTF = Total y devuelve el JSON exacto:
+            { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
+            const retryRes = await model.generateContent([
+              verifyPrompt,
+              { inlineData: { data: base64Data, mimeType } }
+            ]);
+            const retryParsed = JSON.parse(retryRes.response.text().replace(/```json|```/g, '').trim());
+            const retryNorm = validateAndNormalizeAiExtraction(retryParsed);
+            if (retryNorm.mathValid || retryNorm.rifValid) {
+              normalized = retryNorm;
+            }
+          } catch {
+            // Mantener primera lectura si la doble pasada falla
+          }
+        }
+
+        const candidate = {
+          mode: `VNDE_TIER_3_GEMINI_VISION (${modelName} · ${mimeType})`,
+          tokensUsed: 1950,
+          confidence: normalized.mathValid && normalized.rifValid ? 0.99 : 0.82,
+          extracted: normalized
+        };
+
+        if (normalized.mathValid && normalized.rifValid) {
+          return candidate;
+        }
+        bestCandidate = bestCandidate || candidate;
+      } catch (visErr) {
+        lastVisionError = visErr?.message || String(visErr);
+        console.warn(`Fallo visión multimodal (${modelName}):`, lastVisionError);
+      }
+    }
+
+    if (bestCandidate) {
+      return bestCandidate;
+    }
+
+    // Diagnóstico transparente: nunca mentir que la foto está borrosa si el fallo fue de API/cuota/red
+    if (lastVisionError) {
+      const lower = lastVisionError.toLowerCase();
+      let friendlyError = `Error técnico del motor de lectura documental: ${lastVisionError.slice(0, 180)}`;
+      if (lower.includes('api_key') || lower.includes('api key') || lower.includes('401') || lower.includes('403')) {
+        friendlyError = 'La clave de acceso al motor de lectura (GEMINI_API_KEY) es inválida o no tiene permisos en el servidor.';
+      } else if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
+        friendlyError = 'El motor de lectura alcanzó temporalmente su límite de solicitudes por minuto. Espere unos segundos y reintente.';
+      } else if (lower.includes('timeout') || lower.includes('network') || lower.includes('fetch')) {
+        friendlyError = 'Error de conexión temporal con el motor de lectura documental. Reintente en unos segundos.';
+      }
       return {
-        mode: `VNDE_TIER_3_GEMINI_VISION (${mimeType})`,
-        tokensUsed: 1950,
-        confidence: normalized.mathValid ? 0.99 : 0.78,
-        extracted: normalized
+        mode: 'VNDE_UNPARSEABLE_DOCUMENT (Error de Motor)',
+        tokensUsed: 0,
+        confidence: 0,
+        extracted: null,
+        error: friendlyError
       };
-    } catch (visErr) {
-      console.warn('Fallo visión multimodal, aplicando simulación determinista:', visErr.message);
     }
   }
 

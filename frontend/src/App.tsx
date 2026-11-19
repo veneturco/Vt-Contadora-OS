@@ -41,6 +41,7 @@ import {
 } from './utils/seniatEngine';
 import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
+import { enhanceDocumentForOcr } from './utils/documentEnhancer';
 import { safeApiRequest } from './services/apiClient';
 
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
@@ -515,7 +516,19 @@ export default function App() {
   const [ocrDraft, setOcrDraft] = useState(createEmptyOcrDraft);
   const [ocrScanning, setOcrScanning] = useState(false);
   const [ocrUploadedFileName, setOcrUploadedFileName] = useState<string>('Ningún archivo cargado');
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
   const [ocrAlertMessage, setOcrAlertMessage] = useState<string | null>(null);
+  const [batchQueue, setBatchQueue] = useState<
+    {
+      id: string;
+      fileName: string;
+      status: 'pending' | 'processing' | 'indexed' | 'review' | 'error';
+      detail: string;
+      previewUrl?: string;
+      extracted?: Record<string, unknown>;
+    }[]
+  >([]);
+  const [batchRunning, setBatchRunning] = useState(false);
   const [telegramSimMessages, setTelegramSimMessages] = useState<
     { id: string; sender: 'user' | 'bot'; text: string; time: string }[]
   >([
@@ -2236,6 +2249,7 @@ export default function App() {
   function handleClearOcrDraft() {
     setOcrDraft(createEmptyOcrDraft());
     setOcrUploadedFileName('Ningún archivo cargado');
+    setOcrPreviewUrl(null);
     setOcrAlertMessage('Formulario limpio y en blanco. Listo para subir una nueva factura.');
     setTimeout(() => setOcrAlertMessage(null), 3500);
   }
@@ -2263,12 +2277,12 @@ export default function App() {
     });
   }
 
-  function handleFileUploadSimulation(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileUploadSimulation(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 7.5 * 1024 * 1024) {
-      setOcrAlertMessage(`El archivo "${file.name}" supera el límite máximo de 7.5 MB. Comprima la imagen o PDF e intente nuevamente.`);
+    if (file.size > 15 * 1024 * 1024) {
+      setOcrAlertMessage(`El archivo "${file.name}" supera 15 MB. Comprima el archivo e intente nuevamente.`);
       return;
     }
     setOcrDraft(createEmptyOcrDraft());
@@ -2276,21 +2290,113 @@ export default function App() {
     setOcrScanning(true);
     setOcrAlertMessage(null);
 
-    const reader = new FileReader();
-    reader.onerror = () => {
+    try {
+      const enhanced = await enhanceDocumentForOcr(file);
+      if (file.type.startsWith('image/')) {
+        setOcrPreviewUrl(enhanced.dataUrl);
+      } else {
+        setOcrPreviewUrl(null);
+      }
+      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
+      const res = await safeApiRequest<{
+        mode: string;
+        tokensUsed?: number;
+        quota?: { usedInvoices: number; maxInvoicesMonthly: number };
+        extracted: {
+          supplierRif?: string;
+          supplierName?: string;
+          hasBuyerRifOnTicket?: boolean;
+          invoiceNumber?: string;
+          controlNumber?: string;
+          emissionDate?: string;
+          emissionTime?: string;
+          channel?: 'DIGITAL' | 'MAQUINA_FISCAL' | 'CONTINGENCIA';
+          currency?: 'VES' | 'USD';
+          taxableBaseOriginal?: number;
+          exemptOriginal?: number;
+          vatRate?: number;
+          igtfOriginal?: number;
+        };
+      }>('/api/ocr', {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId: activeTenant.id,
+          base64Data: enhanced.base64Data,
+          qrPayload: detectedQr,
+          mimeType: enhanced.mimeType,
+          fileName: file.name
+        }),
+        timeoutMs: 30000
+      });
+
+      if (res.ok && res.data?.extracted) {
+        const ext = res.data.extracted;
+        setOcrDraft(prev => ({
+          ...prev,
+          supplierRif: ext.supplierRif || prev.supplierRif,
+          supplierName: ext.supplierName || prev.supplierName,
+          hasBuyerRifOnTicket: typeof ext.hasBuyerRifOnTicket === 'boolean' ? ext.hasBuyerRifOnTicket : prev.hasBuyerRifOnTicket,
+          invoiceNumber: ext.invoiceNumber || prev.invoiceNumber,
+          controlNumber: ext.controlNumber || prev.controlNumber,
+          emissionDate: ext.emissionDate || prev.emissionDate,
+          emissionTime: ext.emissionTime || prev.emissionTime,
+          channel: ext.channel || prev.channel,
+          currency: ext.currency || prev.currency,
+          taxableBaseOriginal: Number(ext.taxableBaseOriginal ?? prev.taxableBaseOriginal),
+          exemptOriginal: Number(ext.exemptOriginal ?? prev.exemptOriginal),
+          vatRate: typeof ext.vatRate === 'number' ? ext.vatRate : prev.vatRate,
+          igtfOriginal: Number(ext.igtfOriginal ?? prev.igtfOriginal),
+          sourceChannel: 'WEB_OCR'
+        }));
+        const quotaText = res.data.quota
+          ? ` · Cuota mes: ${res.data.quota.usedInvoices}/${res.data.quota.maxInvoicesMonthly}`
+          : '';
+        const optInfo = enhanced.enhanced
+          ? ` · Optimizada ${Math.round(enhanced.optimizedBytes / 1024)} KB`
+          : '';
+        setOcrAlertMessage(`Documento "${file.name}" procesado por el Núcleo de Validación Documental${optInfo}${quotaText}. Verifique los datos y pulse "Indexar".`);
+      } else {
+        setOcrAlertMessage(`Aviso de Lectura: ${res.error || 'No se pudieron extraer los campos automáticamente'}. Complete o verifique los datos en el formulario.`);
+      }
+    } catch {
+      setOcrAlertMessage(`Error de red al procesar "${file.name}". Complete o verifique los campos manualmente.`);
+    } finally {
       setOcrScanning(false);
-      setOcrAlertMessage(`Error al leer el archivo "${file.name}".`);
-    };
-    reader.onload = async () => {
-      const dataUrl = String(reader.result || '');
-      const base64Data = dataUrl.split(',')[1] || '';
-      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(dataUrl) : undefined;
+    }
+  }
+
+  async function handleBatchBurstUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const fileList = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (fileList.length === 0 || batchRunning) return;
+
+    const initialItems = fileList.map((f, idx) => ({
+      id: `burst_${Date.now()}_${idx}`,
+      fileName: f.name,
+      status: 'pending' as const,
+      detail: 'En cola...'
+    }));
+    setBatchQueue(initialItems);
+    setBatchRunning(true);
+    setOcrAlertMessage(`Modo Ráfaga iniciado: procesando ${fileList.length} documento(s) con filtro de nitidez documental...`);
+
+    let autoIndexedCount = 0;
+    let reviewCount = 0;
+    const seenBatchKeys = new Set(
+      invoices
+        .filter(inv => inv.tenantId === activeTenant.id)
+        .map(inv => `${inv.supplierRif}|${inv.invoiceNumber.toUpperCase()}`)
+    );
+
+    const processSingle = async (file: File, itemId: string) => {
+      setBatchQueue(prev =>
+        prev.map(it => (it.id === itemId ? { ...it, status: 'processing', detail: 'Mejorando nitidez y leyendo...' } : it))
+      );
       try {
+        const enhanced = await enhanceDocumentForOcr(file);
+        const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
         const res = await safeApiRequest<{
-          mode: string;
-          tokensUsed?: number;
-          quota?: { usedInvoices: number; maxInvoicesMonthly: number };
-          extracted: {
+          extracted?: {
             supplierRif?: string;
             supplierName?: string;
             hasBuyerRifOnTicket?: boolean;
@@ -2304,52 +2410,136 @@ export default function App() {
             exemptOriginal?: number;
             vatRate?: number;
             igtfOriginal?: number;
+            mathValid?: boolean;
+            rifValid?: boolean;
           };
         }>('/api/ocr', {
           method: 'POST',
           body: JSON.stringify({
             tenantId: activeTenant.id,
-            base64Data,
+            base64Data: enhanced.base64Data,
             qrPayload: detectedQr,
-            mimeType: file.type || 'image/jpeg',
+            mimeType: enhanced.mimeType,
             fileName: file.name
           }),
-          timeoutMs: 25000
+          timeoutMs: 30000
         });
 
-        if (res.ok && res.data?.extracted) {
-          const ext = res.data.extracted;
-          setOcrDraft(prev => ({
-            ...prev,
-            supplierRif: ext.supplierRif || prev.supplierRif,
-            supplierName: ext.supplierName || prev.supplierName,
-            hasBuyerRifOnTicket: typeof ext.hasBuyerRifOnTicket === 'boolean' ? ext.hasBuyerRifOnTicket : prev.hasBuyerRifOnTicket,
-            invoiceNumber: ext.invoiceNumber || prev.invoiceNumber,
-            controlNumber: ext.controlNumber || prev.controlNumber,
-            emissionDate: ext.emissionDate || prev.emissionDate,
-            emissionTime: ext.emissionTime || prev.emissionTime,
-            channel: ext.channel || prev.channel,
-            currency: ext.currency || prev.currency,
-            taxableBaseOriginal: Number(ext.taxableBaseOriginal ?? prev.taxableBaseOriginal),
-            exemptOriginal: Number(ext.exemptOriginal ?? prev.exemptOriginal),
-            vatRate: typeof ext.vatRate === 'number' ? ext.vatRate : prev.vatRate,
-            igtfOriginal: Number(ext.igtfOriginal ?? prev.igtfOriginal),
-            sourceChannel: 'WEB_OCR'
-          }));
-          const quotaText = res.data.quota
-            ? ` · Cuota mes: ${res.data.quota.usedInvoices}/${res.data.quota.maxInvoicesMonthly}`
-            : '';
-          setOcrAlertMessage(`Documento "${file.name}" procesado por el Núcleo de Validación Documental${quotaText}. Verifique los datos y pulse "Indexar".`);
+        if (!res.ok || !res.data?.extracted) {
+          reviewCount += 1;
+          setBatchQueue(prev =>
+            prev.map(it =>
+              it.id === itemId
+                ? {
+                    ...it,
+                    status: 'review',
+                    detail: res.error || 'Requiere revisión manual',
+                    previewUrl: file.type.startsWith('image/') ? enhanced.dataUrl : undefined
+                  }
+                : it
+            )
+          );
+          return;
+        }
+
+        const ext = res.data.extracted;
+        const rifCheck = validateVenezuelanRIF(ext.supplierRif || '');
+        const base = Number(ext.taxableBaseOriginal || 0);
+        const exempt = Number(ext.exemptOriginal || 0);
+        const vatRate = typeof ext.vatRate === 'number' ? ext.vatRate : base > 0 ? 16 : 0;
+        const vatOrig = Number(((base * vatRate) / 100).toFixed(2));
+        const igtfOrig = Number(ext.igtfOriginal || 0);
+        const totalOrig = Number((base + exempt + vatOrig + igtfOrig).toFixed(2));
+        const invNum = String(ext.invoiceNumber || '').trim() || `R-${Math.floor(10000 + Math.random() * 89999)}`;
+        const dupKey = `${rifCheck.formatted}|${invNum.toUpperCase()}`;
+
+        if (rifCheck.valid && totalOrig > 0 && !seenBatchKeys.has(dupKey)) {
+          seenBatchKeys.add(dupKey);
+          const newId = `inv_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
+          const auditHash = computeDeterministicHash(lastHash, { newId, rif: rifCheck.formatted, invNum, totalOrig });
+
+          const createdInvoice: FiscalInvoice = {
+            id: newId,
+            tenantId: activeTenant.id,
+            bookType: ocrDraft.bookType,
+            docType: '01',
+            channel: ext.channel || 'DIGITAL',
+            supplierRif: rifCheck.formatted,
+            supplierName: ext.supplierName || `Proveedor (${rifCheck.formatted})`,
+            hasBuyerRifOnTicket: typeof ext.hasBuyerRifOnTicket === 'boolean' ? ext.hasBuyerRifOnTicket : true,
+            invoiceNumber: invNum,
+            controlNumber: ext.controlNumber || '00-000000',
+            emissionDate: ext.emissionDate || new Date().toISOString().slice(0, 10),
+            emissionTime: ext.emissionTime || '12:00:00',
+            currency: ext.currency || 'VES',
+            bcvRateOnDate: bcvRate,
+            taxableBaseOriginal: base,
+            exemptOriginal: exempt,
+            vatRate,
+            vatOriginal: vatOrig,
+            igtfOriginal: igtfOrig,
+            totalOriginal: totalOrig,
+            vatRetentionRate: activeTenant.regime === 'SPE' && ocrDraft.bookType === 'COMPRA' && vatOrig > 0 ? 75 : 0,
+            islrRetentionRate: 0,
+            status: 'BORRADOR_IA',
+            sourceChannel: 'WEB_OCR',
+            auditHash
+          };
+
+          setInvoices(prev => [createdInvoice, ...prev]);
+          autoIndexedCount += 1;
+          setBatchQueue(prev =>
+            prev.map(it =>
+              it.id === itemId
+                ? {
+                    ...it,
+                    status: 'indexed',
+                    detail: `Auto-indexada #${invNum} · ${createdInvoice.currency} ${totalOrig.toFixed(2)}`
+                  }
+                : it
+            )
+          );
         } else {
-          setOcrAlertMessage(`Aviso OCR: ${res.error || 'El documento requiere mayor nitidez'}. Verifique o complete los campos en el formulario.`);
+          reviewCount += 1;
+          setBatchQueue(prev =>
+            prev.map(it =>
+              it.id === itemId
+                ? {
+                    ...it,
+                    status: 'review',
+                    detail: seenBatchKeys.has(dupKey)
+                      ? `Posible duplicado (#${invNum})`
+                      : 'Tocar para revisar RIF/montos en formulario',
+                    previewUrl: file.type.startsWith('image/') ? enhanced.dataUrl : undefined,
+                    extracted: ext as Record<string, unknown>
+                  }
+                : it
+            )
+          );
         }
       } catch {
-        setOcrAlertMessage(`Error de red al procesar "${file.name}". Complete o verifique los campos manualmente.`);
-      } finally {
-        setOcrScanning(false);
+        reviewCount += 1;
+        setBatchQueue(prev =>
+          prev.map(it => (it.id === itemId ? { ...it, status: 'error', detail: 'Error de red en este archivo' } : it))
+        );
       }
     };
-    reader.readAsDataURL(file);
+
+    // Procesamiento paralelo controlado (2 en paralelo para máxima velocidad sin saturar el servidor)
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(2, fileList.length) }, async () => {
+      while (cursor < fileList.length) {
+        const idx = cursor++;
+        await processSingle(fileList[idx], initialItems[idx].id);
+      }
+    });
+    await Promise.all(workers);
+
+    setBatchRunning(false);
+    setOcrAlertMessage(
+      `Modo Ráfaga finalizado: ${autoIndexedCount} factura(s) auto-indexadas en bandeja y ${reviewCount} marcada(s) para revisión rápida.`
+    );
   }
 
   function handleRegisterOcrInvoice(origin: 'WEB_OCR' | 'TELEGRAM_BOT') {
@@ -2624,74 +2814,64 @@ export default function App() {
     );
   }
 
-  function handleMobileFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleMobileFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 7.5 * 1024 * 1024) {
-      setMobileToast(`El archivo "${file.name}" supera 7.5 MB. Reduce el tamaño e intenta de nuevo.`);
+    if (file.size > 15 * 1024 * 1024) {
+      setMobileToast(`El archivo "${file.name}" supera 15 MB. Reduce el tamaño e intenta de nuevo.`);
       setTimeout(() => setMobileToast(null), 4500);
       return;
     }
     setMobileUploadedFileName(file.name);
     setMobileScanning(true);
-    setMobileToast(`Analizando "${file.name}" con motor OCR...`);
+    setMobileToast(`Optimizando nitidez y leyendo "${file.name}"...`);
 
-    const reader = new FileReader();
-    reader.onerror = () => {
-      setMobileScanning(false);
-      setMobileToast(`Error al leer "${file.name}".`);
-      setTimeout(() => setMobileToast(null), 4000);
-    };
-    reader.onload = async () => {
-      const dataUrl = String(reader.result || '');
-      const base64Data = dataUrl.split(',')[1] || '';
-      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(dataUrl) : undefined;
-      try {
-        const res = await safeApiRequest<{
-          mode: string;
-          extracted: {
-            supplierRif?: string;
-            supplierName?: string;
-            invoiceNumber?: string;
-            controlNumber?: string;
-            currency?: 'VES' | 'USD';
-            taxableBaseOriginal?: number;
-            exemptOriginal?: number;
-          };
-        }>('/api/ocr', {
-          method: 'POST',
-          body: JSON.stringify({
-            tenantId: activeTenant.id,
-            base64Data,
-            qrPayload: detectedQr,
-            mimeType: file.type || 'image/jpeg',
-            fileName: file.name
-          }),
-          timeoutMs: 25000
-        });
+    try {
+      const enhanced = await enhanceDocumentForOcr(file);
+      const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
+      const res = await safeApiRequest<{
+        mode: string;
+        extracted: {
+          supplierRif?: string;
+          supplierName?: string;
+          invoiceNumber?: string;
+          controlNumber?: string;
+          currency?: 'VES' | 'USD';
+          taxableBaseOriginal?: number;
+          exemptOriginal?: number;
+        };
+      }>('/api/ocr', {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId: activeTenant.id,
+          base64Data: enhanced.base64Data,
+          qrPayload: detectedQr,
+          mimeType: enhanced.mimeType,
+          fileName: file.name
+        }),
+        timeoutMs: 30000
+      });
 
-        if (res.ok && res.data?.extracted) {
-          const ext = res.data.extracted;
-          if (ext.supplierRif) setMobileQuickRif(ext.supplierRif);
-          if (ext.supplierName) setMobileQuickSupplier(ext.supplierName);
-          if (ext.currency) setMobileQuickCurrency(ext.currency);
-          if (typeof ext.taxableBaseOriginal === 'number') setMobileQuickAmount(ext.taxableBaseOriginal);
-          if (typeof ext.exemptOriginal === 'number') setMobileQuickExempt(ext.exemptOriginal);
-          if (ext.invoiceNumber) setMobileQuickInvoiceNumber(ext.invoiceNumber);
-          if (ext.controlNumber) setMobileQuickControlNumber(ext.controlNumber);
-          setMobileToast(`Factura leída (${res.data.mode}). Verifica los datos y toca "Enviar Factura Ahora".`);
-        } else {
-          setMobileToast(`Aviso OCR: ${res.error || 'No se pudo leer automáticamente'}. Completa los datos y envía.`);
-        }
-      } catch {
-        setMobileToast(`Error de red al escanear "${file.name}". Completa los datos manualmente.`);
-      } finally {
-        setMobileScanning(false);
-        setTimeout(() => setMobileToast(null), 5500);
+      if (res.ok && res.data?.extracted) {
+        const ext = res.data.extracted;
+        if (ext.supplierRif) setMobileQuickRif(ext.supplierRif);
+        if (ext.supplierName) setMobileQuickSupplier(ext.supplierName);
+        if (ext.currency) setMobileQuickCurrency(ext.currency);
+        if (typeof ext.taxableBaseOriginal === 'number') setMobileQuickAmount(ext.taxableBaseOriginal);
+        if (typeof ext.exemptOriginal === 'number') setMobileQuickExempt(ext.exemptOriginal);
+        if (ext.invoiceNumber) setMobileQuickInvoiceNumber(ext.invoiceNumber);
+        if (ext.controlNumber) setMobileQuickControlNumber(ext.controlNumber);
+        setMobileToast(`Factura procesada (${Math.round(enhanced.optimizedBytes / 1024)} KB). Verifica y toca "Enviar Factura Ahora".`);
+      } else {
+        setMobileToast(`Aviso de Lectura: ${res.error || 'No se pudo leer automáticamente'}. Completa los datos y envía.`);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setMobileToast(`Error de red al escanear "${file.name}". Completa los datos manualmente.`);
+    } finally {
+      setMobileScanning(false);
+      setTimeout(() => setMobileToast(null), 5500);
+    }
   }
 
   async function handleMobileQuickSend() {
@@ -5423,15 +5603,20 @@ export default function App() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className={`ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5 ${ocrScanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+                  <label className={`ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5 ${ocrScanning || batchRunning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
                     <Upload className="w-3.5 h-3.5" />
-                    {ocrScanning ? 'Procesando Factura...' : 'Subir Foto / PDF Factura'}
-                    <input type="file" accept="image/*,application/pdf" disabled={ocrScanning} onChange={handleFileUploadSimulation} className="hidden" />
+                    {ocrScanning ? 'Procesando Factura...' : 'Subir Foto / PDF'}
+                    <input type="file" accept="image/*,application/pdf" disabled={ocrScanning || batchRunning} onChange={handleFileUploadSimulation} className="hidden" />
+                  </label>
+                  <label className={`px-3 py-2 text-xs font-semibold rounded-lg border border-sky-400/40 bg-sky-500/15 hover:bg-sky-500/25 text-sky-200 transition flex items-center gap-1.5 ${ocrScanning || batchRunning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+                    <Layers className="w-3.5 h-3.5" />
+                    {batchRunning ? 'Ráfaga en curso...' : 'Modo Ráfaga / Lote'}
+                    <input type="file" accept="image/*,application/pdf" multiple disabled={ocrScanning || batchRunning} onChange={handleBatchBurstUpload} className="hidden" />
                   </label>
                   <button
                     type="button"
                     onClick={handleClearOcrDraft}
-                    disabled={ocrScanning}
+                    disabled={ocrScanning || batchRunning}
                     className="px-3 py-2 text-xs font-mono rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-white/80 hover:text-white transition flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -5441,7 +5626,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={handleClearTenantInvoices}
-                      disabled={ocrScanning}
+                      disabled={ocrScanning || batchRunning}
                       className="px-3 py-2 text-xs font-mono rounded-lg border border-rose-500/35 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 transition flex items-center gap-1.5 disabled:opacity-50"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -5470,6 +5655,87 @@ export default function App() {
                   <span>{ocrAlertMessage}</span>
                   <button onClick={() => setOcrAlertMessage(null)} className="opacity-70 hover:opacity-100">
                     [X]
+                  </button>
+                </div>
+              )}
+
+              {/* Cola en Vivo del Modo Ráfaga / Lote */}
+              {batchQueue.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-[var(--bg-elevated)] border border-sky-500/30 space-y-2.5 text-xs font-mono">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sky-300">
+                      Cola Modo Ráfaga ({batchQueue.filter(i => i.status === 'indexed' || i.status === 'review' || i.status === 'error').length}/{batchQueue.length})
+                    </span>
+                    {!batchRunning && (
+                      <button
+                        type="button"
+                        onClick={() => setBatchQueue([])}
+                        className="text-[10px] text-white/60 hover:text-white"
+                      >
+                        Ocultar cola
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5">
+                    {batchQueue.map(item => (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          if (item.status === 'review') {
+                            setOcrUploadedFileName(item.fileName);
+                            if (item.previewUrl) setOcrPreviewUrl(item.previewUrl);
+                            if (item.extracted) {
+                              const ext = item.extracted;
+                              setOcrDraft(prev => ({
+                                ...prev,
+                                supplierRif: String(ext.supplierRif || prev.supplierRif),
+                                supplierName: String(ext.supplierName || prev.supplierName),
+                                invoiceNumber: String(ext.invoiceNumber || prev.invoiceNumber),
+                                controlNumber: String(ext.controlNumber || prev.controlNumber),
+                                taxableBaseOriginal: Number(ext.taxableBaseOriginal ?? prev.taxableBaseOriginal),
+                                exemptOriginal: Number(ext.exemptOriginal ?? prev.exemptOriginal)
+                              }));
+                            }
+                          }
+                        }}
+                        className={`p-2 rounded-lg border flex items-center justify-between gap-2 ${
+                          item.status === 'indexed'
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : item.status === 'review'
+                            ? 'bg-amber-500/10 border-amber-500/35 text-amber-200 cursor-pointer hover:bg-amber-500/20'
+                            : item.status === 'error'
+                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                            : 'bg-white/5 border-white/10 text-white/75'
+                        }`}
+                      >
+                        <span className="truncate max-w-[45%]">{item.fileName}</span>
+                        <span className="text-[10px] truncate">{item.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Vista previa optimizada de la factura cargada (si es imagen) */}
+              {ocrPreviewUrl && (
+                <div className="p-2.5 rounded-xl bg-black/30 border border-white/10 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={ocrPreviewUrl}
+                      alt="Vista previa optimizada"
+                      className="w-16 h-16 object-cover rounded-lg border border-white/15 shrink-0"
+                    />
+                    <div className="text-[11px] font-mono min-w-0">
+                      <div className="font-bold text-white truncate">Soporte optimizado (Filtro de Nitidez Documental)</div>
+                      <div className="text-white/60 truncate">{ocrUploadedFileName}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOcrPreviewUrl(null)}
+                    className="text-[10px] font-mono px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white/75"
+                  >
+                    Ocultar
                   </button>
                 </div>
               )}
