@@ -1,6 +1,7 @@
 const axios = require('axios');
 const https = require('https');
 const { computeAuditHash } = require('../security/cryptoVault');
+const { DEFAULT_CURRENT_BCV_USD, DEFAULT_CURRENT_BCV_EUR } = require('./bcvConstants');
 
 // Agente HTTPS para requests directos a BCV
 const bcvHttpsAgent = new https.Agent({
@@ -11,9 +12,6 @@ const bcvHttpsAgent = new https.Agent({
 let cachedBcvResult = null;
 let lastBcvFetchTime = 0;
 const CACHE_COOLDOWN_MS = 2 * 60 * 1000; // 2 minutos de enfriamiento mínimo
-
-const DEFAULT_CURRENT_BCV_USD = 914.02;
-const DEFAULT_CURRENT_BCV_EUR = 1010.56;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));

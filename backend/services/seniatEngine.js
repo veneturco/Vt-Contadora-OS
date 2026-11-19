@@ -68,6 +68,15 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+function resolveIslrConceptCode(r) {
+  if (r.conceptCode) return r.conceptCode;
+  const rate = Number(r.islrRate || 2);
+  if (rate === 5) return '055';
+  if (rate === 3) return '004';
+  if (rate === 1) return '054';
+  return '053';
+}
+
 function generateIslrDecreto1808Xml(agentRif, periodYYYYMM, retentions) {
   const cleanAgent = escapeXml(String(agentRif || '').replace(/-/g, '').toUpperCase());
   const cleanPeriod = escapeXml(String(periodYYYYMM || '').replace(/[^0-9]/g, '').slice(0, 6));
@@ -76,7 +85,7 @@ function generateIslrDecreto1808Xml(agentRif, periodYYYYMM, retentions) {
     <NumeroFactura>${escapeXml(r.invoiceNumber)}</NumeroFactura>
     <NumeroControl>${escapeXml(r.controlNumber)}</NumeroControl>
     <FechaOperacion>${escapeXml(r.emissionDate)}</FechaOperacion>
-    <CodigoConcepto>${escapeXml(r.conceptCode || '001')}</CodigoConcepto>
+    <CodigoConcepto>${escapeXml(resolveIslrConceptCode(r))}</CodigoConcepto>
     <MontoOperacion>${Number(r.taxableBaseBs).toFixed(2)}</MontoOperacion>
     <PorcentajeRetencion>${Number(r.islrRate || 2).toFixed(2)}</PorcentajeRetencion>
   </DetalleRetencion>`).join('\n');

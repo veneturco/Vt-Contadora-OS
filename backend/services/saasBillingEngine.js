@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { computeAuditHash } = require('../security/cryptoVault');
+const { DEFAULT_CURRENT_BCV_USD } = require('./bcvConstants');
 
 const SAAS_PLANS = {
   COMERCIO_PRO: { id: 'COMERCIO_PRO', name: 'Comercio & PyME Pro', priceUsdMonthly: 29.99, maxInvoicesMonthly: 500, includesPayroll: false },
@@ -29,9 +30,9 @@ async function registerSubscriptionPayment(db, { tenantId, planId, paymentMethod
 
   // Tomar el precio en USD exclusivamente del catálogo oficial del servidor (previene manipulación de montos en cliente)
   const officialAmountUsd = plan.priceUsdMonthly;
-  const safeBcvRate = Number(bcvRate) > 0 ? Number(bcvRate) : 47.05;
+  const safeBcvRate = Number(bcvRate) > 0 ? Number(bcvRate) : DEFAULT_CURRENT_BCV_USD;
   const amountBs = Number((officialAmountUsd * safeBcvRate).toFixed(2));
-  const isAutoVerified = actorRole === 'admin';
+  const isAutoVerified = actorRole === 'superadmin';
   const paymentStatus = isAutoVerified ? 'VERIFICADO' : 'PENDIENTE_VERIFICACION';
 
   const nextDueDate = new Date();

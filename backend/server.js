@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 require('dotenv').config();
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const express = require('express');
@@ -47,6 +48,10 @@ const {
   decryptSensitiveField,
   computeAuditHash
 } = require('./security/cryptoVault');
+const {
+  readWorkspaceState,
+  writeWorkspaceState
+} = require('./services/workspaceStore');
 
 // Lightweight In-Memory Firestore Fallback when GOOGLE_APPLICATION_CREDENTIALS is not configured
 function createInMemoryFirestore() {
@@ -251,15 +256,18 @@ try {
   db = createInMemoryFirestore();
 }
 
-// Cron Job diario BCV (09:05 AM y 01:15 PM hora Caracas)
-cron.schedule('5 9,13 * * 1-5', async () => {
-  await syncOfficialBcvRate(db);
-}, { timezone: 'America/Caracas' });
+// En entornos serverless (Vercel) las tareas programadas se ejecutan vía Vercel Crons (vercel.json)
+if (!process.env.VERCEL) {
+  // Cron Job diario BCV (09:05 AM y 01:15 PM hora Caracas)
+  cron.schedule('5 9,13 * * 1-5', async () => {
+    await syncOfficialBcvRate(db);
+  }, { timezone: 'America/Caracas' });
 
-// Cron Job diario de Morosidad SaaS (12:05 AM hora Caracas)
-cron.schedule('5 0 * * *', async () => {
-  await suspendExpiredSubscriptions(db);
-}, { timezone: 'America/Caracas' });
+  // Cron Job diario de Morosidad SaaS (12:05 AM hora Caracas)
+  cron.schedule('5 0 * * *', async () => {
+    await suspendExpiredSubscriptions(db);
+  }, { timezone: 'America/Caracas' });
+}
 
 const app = express();
 app.use(helmet({
@@ -379,7 +387,7 @@ function requireSuperAdmin(req, res, next) {
 function requireTenantAccess(req, res, next) {
   const user = req.user;
   if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
-  if (user.role === 'admin' || user.role === 'superadmin') return next();
+  if (user.role === 'superadmin') return next();
   const tenantId = req.body?.tenantId || req.params?.tenantId || req.query?.tenantId;
   if (!tenantId) {
     return res.status(400).json({ error: 'Identificador tenantId requerido para esta operación' });
@@ -410,6 +418,29 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// Tickets efímeros de un solo uso (30s) para autenticar conexiones SSE sin exponer el JWT en query strings
+const sseTickets = new Map();
+const SSE_TICKET_TTL_MS = 30 * 1000;
+
+function issueSseTicket(user, tenantId) {
+  const now = Date.now();
+  // Limpieza oportunista de tickets vencidos
+  for (const [k, v] of sseTickets.entries()) {
+    if (v.expiresAt <= now) sseTickets.delete(k);
+  }
+  const ticket = crypto.randomBytes(24).toString('hex');
+  sseTickets.set(ticket, { user, tenantId, expiresAt: now + SSE_TICKET_TTL_MS });
+  return ticket;
+}
+
+function consumeSseTicket(ticket) {
+  if (!ticket || typeof ticket !== 'string') return null;
+  const entry = sseTickets.get(ticket);
+  sseTickets.delete(ticket); // Un solo uso estricto
+  if (!entry || entry.expiresAt <= Date.now()) return null;
+  return entry;
+}
+
 // Pool de conexiones Server-Sent Events (SSE) para recepción de facturas en tiempo real
 const sseInvoiceClients = new Set();
 
@@ -422,8 +453,37 @@ function broadcastInvoiceEvent(tenantId, invoice) {
   }
 }
 
-app.get('/api/events/invoices', verifyFirebaseToken, (req, res) => {
-  const requestedTenant = String(req.query.tenantId || 'all');
+app.post('/api/events/ticket', verifyFirebaseToken, (req, res) => {
+  const requestedTenant = String(req.body?.tenantId || 'all');
+  const isSuper = req.user?.role === 'superadmin';
+  const allowedIds = Array.isArray(req.user?.tenantIds) ? req.user.tenantIds : [];
+  if (!isSuper) {
+    if (requestedTenant === 'all' || !allowedIds.includes(requestedTenant)) {
+      return res.status(403).json({ error: 'Acceso denegado al canal SSE de esta empresa.' });
+    }
+  }
+  const ticket = issueSseTicket(req.user, requestedTenant);
+  return res.json({ ok: true, ticket, expiresInSeconds: SSE_TICKET_TTL_MS / 1000 });
+});
+
+app.get('/api/events/invoices', async (req, res, next) => {
+  const ticketParam = typeof req.query?.ticket === 'string' ? req.query.ticket.trim() : '';
+  if (ticketParam) {
+    const ticketData = consumeSseTicket(ticketParam);
+    if (!ticketData) {
+      return res.status(401).json({ error: 'Ticket SSE inválido o expirado.' });
+    }
+    const active = await isUserActiveInDb(db, ticketData.user?.email);
+    if (!active) {
+      return res.status(403).json({ error: 'Cuenta suspendida o revocada.' });
+    }
+    req.user = ticketData.user;
+    req.sseValidatedTenantId = ticketData.tenantId;
+    return next();
+  }
+  return verifyFirebaseToken(req, res, next);
+}, (req, res) => {
+  const requestedTenant = req.sseValidatedTenantId || String(req.query.tenantId || 'all');
   const isSuper = req.user?.role === 'superadmin';
   const allowedIds = Array.isArray(req.user?.tenantIds) ? req.user.tenantIds : [];
   if (!isSuper) {
@@ -482,11 +542,46 @@ app.get('/api/bcv/latest', bcvSyncLimiter, async (_req, res, next) => {
   }
 });
 
-// Sincronización explícita del oráculo BCV
-app.post('/api/bcv/sync-now', bcvSyncLimiter, async (_req, res, next) => {
+// Verificación opcional de Vercel Cron Secret para endpoints invocados por cron
+function verifyCronSecretIfConfigured(req, res, next) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && req.method === 'GET') {
+    const authHeader = req.headers.authorization || '';
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ error: 'CRON_SECRET inválido o ausente.' });
+    }
+  }
+  return next();
+}
+
+// Sincronización explícita del oráculo BCV (GET para Vercel Cron + POST para sincronización manual)
+async function handleBcvSyncNow(_req, res, next) {
   try {
     const result = await syncOfficialBcvRate(db);
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+app.get('/api/bcv/sync-now', bcvSyncLimiter, verifyCronSecretIfConfigured, handleBcvSyncNow);
+app.post('/api/bcv/sync-now', bcvSyncLimiter, handleBcvSyncNow);
+
+// Barrido diario de suscripciones vencidas (Vercel Cron GET o disparo manual Super-Admin POST)
+app.get('/api/saas/suspend-expired', verifyCronSecretIfConfigured, async (req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && !process.env.CRON_SECRET) {
+    return res.status(503).json({ error: 'CRON_SECRET requerido en producción para ejecutar este cron.' });
+  }
+  try {
+    const result = await suspendExpiredSubscriptions(db);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+app.post('/api/saas/suspend-expired', verifyFirebaseToken, requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const result = await suspendExpiredSubscriptions(db);
+    res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
   }
@@ -589,11 +684,8 @@ app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess,
   }
 });
 
-app.post('/api/saas/approve-payment', verifyFirebaseToken, async (req, res, next) => {
+app.post('/api/saas/approve-payment', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
   try {
-    if (req.user?.role !== 'admin') {
-      return res.status(403).json({ error: 'Solo el Super-Administrador puede conciliar y aprobar pagos SaaS.' });
-    }
     const { tenantId, paymentId } = req.body;
     if (!tenantId || !paymentId) {
       return res.status(400).json({ error: 'tenantId y paymentId son obligatorios para conciliar el pago.' });
@@ -885,35 +977,13 @@ app.delete('/api/accountants/:id', verifyFirebaseToken, requireSuperAdmin, async
 });
 
 // =========================================================================
-// SINCRONIZACIÓN CLOUD FIRESTORE MULTI-DISPOSITIVO (Tenants, Facturas, Nómina)
+// SINCRONIZACIÓN CLOUD FIRESTORE MULTI-DISPOSITIVO (Particionada por Tenant)
 // =========================================================================
 
 app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   try {
-    const docSnap = await db.collection('vt_workspace').doc('shared_state').get();
-    if (!docSnap.exists) {
-      return res.json({ ok: true, empty: true, state: null });
-    }
-    const raw = docSnap.data() || {};
-    if (req.user.role === 'superadmin') {
-      return res.json({ ok: true, empty: false, state: raw });
-    }
-    const allowedIds = new Set(Array.isArray(req.user.tenantIds) ? req.user.tenantIds : []);
-    const tenants = Array.isArray(raw.tenants)
-      ? raw.tenants.filter(t => allowedIds.has(t.id))
-      : [];
-    const effectiveIds = new Set(tenants.map(t => t.id));
-    return res.json({
-      ok: true,
-      empty: false,
-      state: {
-        tenants,
-        invoices: Array.isArray(raw.invoices) ? raw.invoices.filter(i => effectiveIds.has(i.tenantId)) : [],
-        employees: Array.isArray(raw.employees) ? raw.employees.filter(e => effectiveIds.has(e.tenantId)) : [],
-        payments: Array.isArray(raw.payments) ? raw.payments.filter(p => effectiveIds.has(p.tenantId)) : [],
-        updatedAt: raw.updatedAt || null
-      }
-    });
+    const result = await readWorkspaceState(db, req.user);
+    return res.json({ ok: true, empty: result.empty, partitioned: result.partitioned, state: result.state });
   } catch (err) {
     next(err);
   }
@@ -921,52 +991,9 @@ app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
 
 app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   try {
-    if (req.user.role !== 'superadmin' && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Acceso denegado: solo contadores o Super-Admin pueden sincronizar el espacio de trabajo.' });
-    }
     const { tenants, invoices, employees, payments } = req.body || {};
-    const nowIso = new Date().toISOString();
-
-    if (req.user.role === 'superadmin') {
-      const payload = {
-        tenants: Array.isArray(tenants) ? tenants : [],
-        invoices: Array.isArray(invoices) ? invoices : [],
-        employees: Array.isArray(employees) ? employees : [],
-        payments: Array.isArray(payments) ? payments : [],
-        updatedAt: nowIso,
-        updatedBy: req.user.email
-      };
-      await db.collection('vt_workspace').doc('shared_state').set(payload, { merge: true });
-      return res.json({ ok: true, updatedAt: nowIso });
-    }
-
-    // Para contadores: solo permite actualizar empresas autorizadas en req.user.tenantIds del token
-    const docRef = db.collection('vt_workspace').doc('shared_state');
-    const snap = await docRef.get();
-    const existing = snap.exists ? (snap.data() || {}) : {};
-    const allowedIds = new Set(Array.isArray(req.user.tenantIds) ? req.user.tenantIds : []);
-
-    const incomingTenants = Array.isArray(tenants) ? tenants : [];
-    const ownTenantIds = new Set(
-      incomingTenants.filter(t => allowedIds.has(t.id)).map(t => t.id)
-    );
-
-    const mergeByTenant = (prevArr = [], nextArr = [], idField = 'id') => {
-      const preserved = (Array.isArray(prevArr) ? prevArr : []).filter(item => !allowedIds.has(item.tenantId || item[idField]));
-      const own = (Array.isArray(nextArr) ? nextArr : []).filter(item => ownTenantIds.has(item.tenantId || item[idField]));
-      return [...own, ...preserved];
-    };
-
-    const merged = {
-      tenants: mergeByTenant(existing.tenants, incomingTenants, 'id'),
-      invoices: mergeByTenant(existing.invoices, invoices, 'tenantId'),
-      employees: mergeByTenant(existing.employees, employees, 'tenantId'),
-      payments: mergeByTenant(existing.payments, payments, 'tenantId'),
-      updatedAt: nowIso,
-      updatedBy: req.user.email
-    };
-    await docRef.set(merged, { merge: true });
-    return res.json({ ok: true, updatedAt: nowIso });
+    const result = await writeWorkspaceState(db, req.user, { tenants, invoices, employees, payments });
+    return res.json(result);
   } catch (err) {
     next(err);
   }

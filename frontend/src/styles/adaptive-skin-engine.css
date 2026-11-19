@@ -3,63 +3,301 @@
 @tailwind utilities;
 
 /* ==========================================================================
-   VeneTurco Fiscal OS — Apple Pro Design System
-   Inspirado en iOS 18 / macOS Sequoia Human Interface Guidelines.
-   Diseño sobrio, serio, elegante y perfectamente adaptado a móviles.
+   VeneTurco Fiscal OS — Private Wealth & Adaptive Skin Engine
+   Edición Principal: Obsidian Champagne (Private Banking / Apple Titanium)
+   Edición Clara: Swiss Ivory (Banca Privada Suiza / Papel Arquitectónico)
    ========================================================================== */
 
 :root,
-[data-skin="apple-craft-pro"],
-[data-skin="obsidian-linear"],
-[data-skin="mercury-sovereign"],
-[data-skin="spatial-titanium"],
-[data-skin="tactile-bento"],
-[data-skin="hyperframe-tactical"],
-[data-skin="kinetic-studio"],
-[data-skin="neo-brutal"] {
-  --bg-base: #000000;
-  --bg-surface: #1C1C1E;
-  --bg-elevated: #2C2C2E;
-  --bg-glass: rgba(28, 28, 30, 0.85);
-  --text-primary: #FFFFFF;
-  --text-secondary: #8E8E93;
-  --text-muted: #636366;
-  --accent-primary: #0A84FF;
-  --accent-secondary: #30D158;
-  --accent-contrast: #FFFFFF;
-  --border-subtle: rgba(255, 255, 255, 0.09);
-  --border-highlight: rgba(255, 255, 255, 0.22);
-  --radius-card: 14px;
+[data-skin="obsidian-champagne"] {
+  --bg-base: #07080A;
+  --bg-ambient: radial-gradient(920px 440px at 56% -12%, rgba(216, 183, 120, 0.085), transparent 70%),
+                radial-gradient(640px 380px at 14% 16%, rgba(255, 255, 255, 0.028), transparent 65%);
+  --bg-surface: #111318;
+  --bg-elevated: #191C24;
+  --bg-glass: linear-gradient(180deg, rgba(22, 24, 30, 0.94) 0%, rgba(14, 16, 20, 0.98) 100%);
+  --text-primary: #F5F3EE;
+  --text-secondary: #A5A8B3;
+  --text-muted: #6D7280;
+  --muted-foreground: #A5A8B3;
+  --accent-primary: #D8B778;
+  --accent-primary-bg: linear-gradient(180deg, #E9CE96 0%, #C8A15A 100%);
+  --accent-secondary: #34D399;
+  --accent-contrast: #0A0B0E;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-top: rgba(255, 255, 255, 0.16);
+  --border-highlight: rgba(216, 183, 120, 0.36);
+  --radius-card: 16px;
   --radius-control: 10px;
   --border-width: 1px;
-  --shadow-surface: 0 4px 16px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --shadow-surface: 0 24px 48px -20px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
   --spring-easing: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-skin="swiss-ivory"] {
+  --bg-base: #F3F1EC;
+  --bg-ambient: radial-gradient(840px 380px at 64% -12%, rgba(154, 116, 50, 0.09), transparent 70%);
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #ECE9E2;
+  --bg-glass: linear-gradient(180deg, #FFFFFF 0%, #FCFBF9 100%);
+  --text-primary: #121417;
+  --text-secondary: #4B505A;
+  --text-muted: #7A808C;
+  --muted-foreground: #4B505A;
+  --accent-primary: #9A7432;
+  --accent-primary-bg: linear-gradient(180deg, #1E2128 0%, #0D0F13 100%);
+  --accent-secondary: #047857;
+  --accent-contrast: #F6F4EF;
+  --border-subtle: rgba(20, 22, 26, 0.09);
+  --border-top: rgba(255, 255, 255, 0.92);
+  --border-highlight: rgba(154, 116, 50, 0.36);
+  --radius-card: 14px;
+  --radius-control: 9px;
+  --border-width: 1px;
+  --shadow-surface: 0 12px 32px -12px rgba(18, 20, 23, 0.08), 0 1px 2px rgba(18, 20, 23, 0.04);
+}
+
+[data-skin="apple-craft-pro"] {
+  --bg-base: #000000;
+  --bg-ambient: none;
+  --bg-surface: #1C1C1E;
+  --bg-elevated: #2C2C2E;
+  --bg-glass: rgba(28, 28, 30, 0.84);
+  --text-primary: #FFFFFF;
+  --text-secondary: #A1A1AA;
+  --text-muted: #71717A;
+  --muted-foreground: #A1A1AA;
+  --accent-primary: #0A84FF;
+  --accent-primary-bg: #0A84FF;
+  --accent-secondary: #30D158;
+  --accent-contrast: #FFFFFF;
+  --border-subtle: rgba(255, 255, 255, 0.10);
+  --border-top: rgba(255, 255, 255, 0.14);
+  --border-highlight: rgba(255, 255, 255, 0.24);
+  --radius-card: 14px;
+  --radius-control: 10px;
+  --shadow-surface: 0 8px 28px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+[data-skin="obsidian-linear"] {
+  --bg-base: #08090A;
+  --bg-ambient: none;
+  --bg-surface: #111317;
+  --bg-elevated: #1A1D24;
+  --bg-glass: rgba(17, 19, 23, 0.92);
+  --accent-primary: #5E6AD2;
+  --accent-primary-bg: #FAFAFA;
+  --accent-contrast: #09090B;
+  --accent-secondary: #26B5CE;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-top: rgba(255, 255, 255, 0.12);
+  --radius-card: 10px;
+  --radius-control: 8px;
+}
+
+[data-skin="mercury-sovereign"] {
+  --bg-base: #070B14;
+  --bg-ambient: none;
+  --bg-surface: #0F172A;
+  --bg-elevated: #1E293B;
+  --bg-glass: rgba(15, 23, 42, 0.90);
+  --accent-primary: #38BDF8;
+  --accent-primary-bg: #38BDF8;
+  --accent-contrast: #070B14;
+  --accent-secondary: #34D399;
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --radius-card: 12px;
+}
+
+[data-skin="spatial-titanium"] {
+  --bg-base: #121316;
+  --bg-ambient: none;
+  --bg-surface: #1E2025;
+  --bg-elevated: #2A2D34;
+  --bg-glass: rgba(30, 32, 37, 0.86);
+  --accent-primary: #64D2FF;
+  --accent-primary-bg: #64D2FF;
+  --accent-contrast: #0B0D10;
+  --accent-secondary: #30D158;
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --radius-card: 18px;
+  --radius-control: 12px;
+}
+
+[data-skin="tactile-bento"] {
+  --bg-base: #0F0F10;
+  --bg-ambient: none;
+  --bg-surface: #18181B;
+  --bg-elevated: #27272A;
+  --bg-glass: rgba(24, 24, 27, 0.95);
+  --accent-primary: #F59E0B;
+  --accent-primary-bg: #F59E0B;
+  --accent-contrast: #09090B;
+  --accent-secondary: #10B981;
+  --radius-card: 16px;
+}
+
+[data-skin="hyperframe-tactical"] {
+  --bg-base: #05080A;
+  --bg-ambient: none;
+  --bg-surface: #0B1116;
+  --bg-elevated: #131D26;
+  --bg-glass: rgba(11, 17, 22, 0.94);
+  --accent-primary: #10B981;
+  --accent-primary-bg: #10B981;
+  --accent-contrast: #05080A;
+  --accent-secondary: #F59E0B;
+  --border-subtle: rgba(16, 185, 129, 0.20);
+  --border-highlight: rgba(16, 185, 129, 0.42);
+  --radius-card: 4px;
+  --radius-control: 4px;
+}
+
+[data-skin="kinetic-studio"] {
+  --bg-base: #0D0B14;
+  --bg-ambient: none;
+  --bg-surface: #161322;
+  --bg-elevated: #231F35;
+  --bg-glass: rgba(22, 19, 34, 0.88);
+  --accent-primary: #A78BFA;
+  --accent-primary-bg: #A78BFA;
+  --accent-contrast: #0D0B14;
+  --accent-secondary: #34D399;
+  --radius-card: 14px;
+}
+
+[data-skin="neo-brutal"] {
+  --bg-base: #000000;
+  --bg-ambient: none;
+  --bg-surface: #121212;
+  --bg-elevated: #1F1F1F;
+  --bg-glass: #121212;
+  --accent-primary: #FACC15;
+  --accent-primary-bg: #FACC15;
+  --accent-secondary: #4ADE80;
+  --accent-contrast: #000000;
+  --border-subtle: rgba(255, 255, 255, 0.35);
+  --border-highlight: #FACC15;
+  --border-width: 2px;
+  --radius-card: 4px;
+  --radius-control: 4px;
+  --shadow-surface: 4px 4px 0 rgba(255, 255, 255, 0.22);
 }
 
 [data-skin="editorial-swiss"] {
   --bg-base: #F2F2F7;
+  --bg-ambient: none;
   --bg-surface: #FFFFFF;
   --bg-elevated: #E5E5EA;
-  --bg-glass: rgba(255, 255, 255, 0.9);
-  --text-primary: #000000;
-  --text-secondary: #6C6C70;
-  --text-muted: #8E8E93;
-  --accent-primary: #007AFF;
-  --accent-secondary: #34C759;
+  --bg-glass: rgba(255, 255, 255, 0.94);
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
+  --muted-foreground: #475569;
+  --accent-primary: #0066CC;
+  --accent-primary-bg: #0F172A;
+  --accent-secondary: #15803D;
   --accent-contrast: #FFFFFF;
-  --border-subtle: rgba(60, 60, 67, 0.12);
-  --border-highlight: rgba(60, 60, 67, 0.28);
-  --radius-card: 14px;
-  --radius-control: 10px;
+  --border-subtle: rgba(15, 23, 42, 0.12);
+  --border-top: rgba(255, 255, 255, 0.9);
+  --border-highlight: rgba(15, 23, 42, 0.28);
+  --radius-card: 12px;
+  --radius-control: 8px;
   --border-width: 1px;
-  --shadow-surface: 0 2px 10px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
-  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'JetBrains Mono', monospace;
-  --spring-easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-surface: 0 2px 12px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+
+[data-skin="eink-auditor"] {
+  --bg-base: #F8F7F4;
+  --bg-ambient: none;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #ECEAE4;
+  --bg-glass: #FFFFFF;
+  --text-primary: #111111;
+  --text-secondary: #3F3F46;
+  --text-muted: #52525B;
+  --muted-foreground: #3F3F46;
+  --accent-primary: #18181B;
+  --accent-primary-bg: #18181B;
+  --accent-secondary: #27272A;
+  --accent-contrast: #FFFFFF;
+  --border-subtle: rgba(17, 17, 17, 0.22);
+  --border-top: rgba(17, 17, 17, 0.22);
+  --border-highlight: #111111;
+  --radius-card: 6px;
+  --radius-control: 6px;
+  --border-width: 1px;
+  --shadow-surface: none;
+}
+
+/* Contraste automático verificado para temas claros (Swiss Ivory, Editorial Swiss, E-Ink) */
+[data-skin="swiss-ivory"] .text-white,
+[data-skin="editorial-swiss"] .text-white,
+[data-skin="eink-auditor"] .text-white {
+  color: var(--text-primary);
+}
+[data-skin="swiss-ivory"] .ui-btn-primary,
+[data-skin="editorial-swiss"] .ui-btn-primary,
+[data-skin="eink-auditor"] .ui-btn-primary,
+[data-skin="swiss-ivory"] .bg-blue-600,
+[data-skin="editorial-swiss"] .bg-blue-600,
+[data-skin="eink-auditor"] .bg-blue-600,
+[data-skin="swiss-ivory"] .bg-rose-600,
+[data-skin="editorial-swiss"] .bg-rose-600,
+[data-skin="eink-auditor"] .bg-rose-600,
+[data-skin="swiss-ivory"] .bg-emerald-600,
+[data-skin="editorial-swiss"] .bg-emerald-600,
+[data-skin="eink-auditor"] .bg-emerald-600 {
+  color: #FFFFFF;
+}
+[data-skin="swiss-ivory"] .text-white\/60,
+[data-skin="swiss-ivory"] .text-white\/70,
+[data-skin="swiss-ivory"] .text-white\/80,
+[data-skin="editorial-swiss"] .text-white\/60,
+[data-skin="editorial-swiss"] .text-white\/70,
+[data-skin="editorial-swiss"] .text-white\/80,
+[data-skin="eink-auditor"] .text-white\/60,
+[data-skin="eink-auditor"] .text-white\/70,
+[data-skin="eink-auditor"] .text-white\/80 {
+  color: var(--text-secondary);
+}
+[data-skin="swiss-ivory"] .border-white\/10,
+[data-skin="swiss-ivory"] .border-white\/15,
+[data-skin="swiss-ivory"] .border-white\/20,
+[data-skin="editorial-swiss"] .border-white\/10,
+[data-skin="editorial-swiss"] .border-white\/15,
+[data-skin="editorial-swiss"] .border-white\/20,
+[data-skin="eink-auditor"] .border-white\/10,
+[data-skin="eink-auditor"] .border-white\/15,
+[data-skin="eink-auditor"] .border-white\/20 {
+  border-color: var(--border-subtle);
+}
+[data-skin="swiss-ivory"] .bg-white\/\[0\.02\],
+[data-skin="swiss-ivory"] .bg-white\/\[0\.03\],
+[data-skin="swiss-ivory"] .bg-white\/\[0\.04\],
+[data-skin="swiss-ivory"] .bg-white\/5,
+[data-skin="editorial-swiss"] .bg-white\/\[0\.02\],
+[data-skin="editorial-swiss"] .bg-white\/\[0\.03\],
+[data-skin="editorial-swiss"] .bg-white\/\[0\.04\],
+[data-skin="editorial-swiss"] .bg-white\/5,
+[data-skin="eink-auditor"] .bg-white\/\[0\.02\],
+[data-skin="eink-auditor"] .bg-white\/\[0\.03\],
+[data-skin="eink-auditor"] .bg-white\/\[0\.04\],
+[data-skin="eink-auditor"] .bg-white\/5 {
+  background-color: rgba(18, 20, 23, 0.04);
+}
+[data-skin="swiss-ivory"] .ui-btn-secondary:hover,
+[data-skin="editorial-swiss"] .ui-btn-secondary:hover,
+[data-skin="eink-auditor"] .ui-btn-secondary:hover {
+  background-color: rgba(18, 20, 23, 0.08);
+}
+[data-skin="swiss-ivory"] ::-webkit-scrollbar-thumb,
+[data-skin="editorial-swiss"] ::-webkit-scrollbar-thumb,
+[data-skin="eink-auditor"] ::-webkit-scrollbar-thumb {
+  background: rgba(18, 20, 23, 0.22);
 }
 
 html {
@@ -71,26 +309,34 @@ html {
 
 body {
   background-color: var(--bg-base);
+  background-image: var(--bg-ambient);
+  background-attachment: fixed;
   color: var(--text-primary);
   font-family: var(--font-sans);
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.22s ease, color 0.22s ease;
   max-width: 100vw;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Accesibilidad de teclado global (WCAG 2.1 Focus Visible) */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 /* Reglas estrictas para evitar zoom forzado en móviles iOS / Android */
 @media (max-width: 768px) {
   input, select, textarea {
-    font-size: 16px !important; /* Previene auto-zoom molesto en Safari y Chrome móvil */
+    font-size: 16px !important;
   }
 }
 
 /* Tipografía de precisión */
 .ui-heading {
   font-family: var(--font-display);
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   font-weight: 600;
 }
 
@@ -102,27 +348,55 @@ body {
   letter-spacing: -0.02em;
 }
 
-/* Tarjetas estilo Apple Pro Liquid Glass (iOS 18 / macOS Sequoia 2026) */
+/* Tarjetas arquitectónicas con bisel superior de 1px y sombra física */
 .ui-card {
   position: relative;
-  background-color: rgba(28, 28, 30, 0.78);
-  border: var(--border-width) solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-glass);
+  border: var(--border-width) solid var(--border-subtle);
+  border-top-color: var(--border-top);
   border-radius: var(--radius-card);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37), inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow-surface);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .ui-card:hover {
-  border-color: rgba(255, 255, 255, 0.18);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+  border-color: var(--border-highlight);
 }
 
-/* Botones con jerarquía Apple */
+/* Tarjeta Metálica de Identidad Fiscal (Private Wealth / Apple Titanium) */
+.metal-vault-card {
+  position: relative;
+  background: linear-gradient(135deg, #21242C 0%, #111318 46%, #1B1813 100%);
+  border: 1px solid rgba(216, 183, 120, 0.34);
+  border-radius: 18px;
+  box-shadow: 0 28px 60px -18px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  color: #F5F3EE;
+  overflow: hidden;
+}
+
+.metal-vault-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 22%, rgba(233, 206, 150, 0.11) 44%, rgba(255, 255, 255, 0.04) 50%, transparent 66%);
+  pointer-events: none;
+}
+
+/* Optimización GPU en móviles y usuarios con reducción de movimiento */
+@media (max-width: 768px), (prefers-reduced-motion: reduce) {
+  .ui-card {
+    background: var(--bg-surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Botones ejecutivos Private Wealth */
 .ui-btn-primary {
-  background-color: #0A84FF;
-  color: #FFFFFF;
+  background: var(--accent-primary-bg);
+  color: var(--accent-contrast);
   border-radius: var(--radius-control);
   font-family: var(--font-sans);
   font-weight: 600;
@@ -133,16 +407,16 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  transition: opacity 0.15s ease, transform 0.1s ease;
-  box-shadow: 0 2px 8px rgba(10, 132, 255, 0.28);
+  transition: filter 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 
 .ui-btn-primary:hover {
-  opacity: 0.92;
+  filter: brightness(1.06);
 }
 
 .ui-btn-primary:active {
-  transform: scale(0.98);
+  transform: scale(0.985);
 }
 
 .ui-btn-secondary {
@@ -167,11 +441,22 @@ body {
   border-color: var(--border-highlight);
 }
 
+/* Toast flotante Private Wealth */
+.sonner-toast-pill {
+  background-color: rgba(17, 19, 24, 0.96);
+  color: #F5F3EE;
+  border: 1px solid rgba(216, 183, 120, 0.34);
+  border-radius: 9999px;
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 /* Badges e indicadores contables sobrios */
 .ui-badge-emerald {
-  background-color: rgba(48, 209, 88, 0.12);
-  color: #30D158;
-  border: 1px solid rgba(48, 209, 88, 0.25);
+  background-color: rgba(52, 211, 153, 0.11);
+  color: #34D399;
+  border: 1px solid rgba(52, 211, 153, 0.25);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   font-weight: 600;
@@ -181,7 +466,7 @@ body {
 }
 
 .ui-badge-zinc {
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
   font-family: var(--font-mono);
@@ -211,23 +496,23 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(216, 183, 120, 0.22);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(216, 183, 120, 0.40);
 }
 
 /* ==========================================================================
-   Apple Squircle Jewel Icons & Tactile Micro-Interactions (macOS Sequoia / iOS 18)
+   Apple Squircle Jewel Icons & Tactile Micro-Interactions
    ========================================================================== */
 .apple-icon-jewel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.35), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.28), 0 6px 14px -4px rgba(0, 0, 0, 0.5);
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -236,32 +521,31 @@ body {
 }
 
 .apple-icon-jewel-blue {
-  background: linear-gradient(145deg, rgba(10, 132, 255, 0.34), rgba(10, 132, 255, 0.12));
-  border: 1px solid rgba(10, 132, 255, 0.45);
-  color: #64D2FF;
+  background: linear-gradient(145deg, rgba(216, 183, 120, 0.28), rgba(216, 183, 120, 0.08));
+  border: 1px solid rgba(216, 183, 120, 0.42);
+  color: #E9CE96;
 }
 
 .apple-icon-jewel-emerald {
-  background: linear-gradient(145deg, rgba(48, 209, 88, 0.34), rgba(48, 209, 88, 0.12));
-  border: 1px solid rgba(48, 209, 88, 0.45);
-  color: #30D158;
+  background: linear-gradient(145deg, rgba(52, 211, 153, 0.28), rgba(52, 211, 153, 0.08));
+  border: 1px solid rgba(52, 211, 153, 0.40);
+  color: #34D399;
 }
 
 .apple-icon-jewel-amber {
-  background: linear-gradient(145deg, rgba(255, 159, 10, 0.35), rgba(255, 159, 10, 0.12));
-  border: 1px solid rgba(255, 159, 10, 0.45);
-  color: #FFD60A;
+  background: linear-gradient(145deg, rgba(245, 158, 11, 0.30), rgba(245, 158, 11, 0.10));
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  color: #FBBF24;
 }
 
 .apple-icon-jewel-rose {
-  background: linear-gradient(145deg, rgba(255, 69, 58, 0.35), rgba(255, 69, 58, 0.12));
-  border: 1px solid rgba(255, 69, 58, 0.45);
-  color: #FF6961;
+  background: linear-gradient(145deg, rgba(244, 63, 94, 0.28), rgba(244, 63, 94, 0.08));
+  border: 1px solid rgba(244, 63, 94, 0.42);
+  color: #FB7185;
 }
 
 .apple-icon-jewel-purple {
-  background: linear-gradient(145deg, rgba(191, 90, 242, 0.35), rgba(191, 90, 242, 0.12));
-  border: 1px solid rgba(191, 90, 242, 0.45);
-  color: #DA8FFF;
+  background: linear-gradient(145deg, rgba(167, 139, 250, 0.28), rgba(167, 139, 250, 0.08));
+  border: 1px solid rgba(167, 139, 250, 0.40);
+  color: #C4B5FD;
 }
-

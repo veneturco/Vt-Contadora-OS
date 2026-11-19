@@ -2,6 +2,7 @@
 // VeneTurco Fiscal OS v3.1 // Cumplimiento SENIAT 2026
 require('dotenv').config();
 const admin = require('firebase-admin');
+const { SAAS_PLANS } = require('../services/saasBillingEngine');
 
 async function seed() {
   console.log('--- INICIALIZADOR DE BOVEDA CLOUD FIRESTORE ---');
@@ -28,36 +29,27 @@ async function seed() {
   const db = admin.firestore();
   console.log('Conexión con Cloud Firestore establecida con éxito.');
 
-  // Sembrar Catálogo de Planes SaaS
+  // Sembrar Catálogo de Planes SaaS (desde fuente única de verdad en saasBillingEngine.js)
   const plans = [
     {
-      id: 'COMERCIO_PRO',
-      name: 'Comercio Autónomo Pro',
-      priceUsdMonthly: 49.00,
-      maxInvoicesMonthly: 400,
+      ...SAAS_PLANS.COMERCIO_PRO,
       hasGeminiOcr: true,
       hasTelegramBot: true,
-      hasLotttPayroll: false,
+      hasLotttPayroll: SAAS_PLANS.COMERCIO_PRO.includesPayroll,
       description: 'Ideal para comercios minoristas y panaderías con libro de compras automatizado.'
     },
     {
-      id: 'EMPRESA_MAX',
-      name: 'Empresa & SPE Max (Sujeto Pasivo Especial)',
-      priceUsdMonthly: 79.00,
-      maxInvoicesMonthly: 1800,
+      ...SAAS_PLANS.EMPRESA_MAX,
       hasGeminiOcr: true,
       hasTelegramBot: true,
-      hasLotttPayroll: true,
+      hasLotttPayroll: SAAS_PLANS.EMPRESA_MAX.includesPayroll,
       description: 'Retenciones IVA 75%/100%, generación de comprobantes 14D y nómina LOTTT completa.'
     },
     {
-      id: 'FIRMA_CONTABLE',
-      name: 'Firma Contable Multiempresa',
-      priceUsdMonthly: 139.00,
-      maxInvoicesMonthly: 10000,
+      ...SAAS_PLANS.FIRMA_CONTABLE,
       hasGeminiOcr: true,
       hasTelegramBot: true,
-      hasLotttPayroll: true,
+      hasLotttPayroll: SAAS_PLANS.FIRMA_CONTABLE.includesPayroll,
       description: 'Multi-tenant ilimitado, bóveda criptográfica SHA-256 y exportaciones TXT/XML para SENIAT.'
     }
   ];

@@ -27,8 +27,8 @@ jobs:
       - name: Ejecutar Suite de Pruebas Fiscales (SENIAT + LOTTT + Motor VNDE + Anti-IDOR)
         run: npm test
 
-      - name: Compilar Frontend Producción (Vite)
-        run: npm run build
+      - name: Compilar Frontend Producción (TypeScript + Vite)
+        run: npm run build && (cd frontend && npx tsc --noEmit)
 
       - name: Verificar Integridad del Servidor Express
         run: |

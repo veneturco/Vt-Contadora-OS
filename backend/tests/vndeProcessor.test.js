@@ -58,6 +58,7 @@ test('VNDE: Procesamiento Determinista Muestra 1 - Maxi Embutidos (Forma Libre, 
   assert.equal(parsed.extracted.totalOriginal, 435475.58);
   assert.equal(parsed.extracted.exemptOriginal, 435475.58);
   assert.equal(parsed.extracted.vatOriginal, 0);
+  assert.equal(parsed.extracted.channel, 'DIGITAL');
   assert.equal(parsed.extracted.mathValid, true);
 });
 
@@ -175,6 +176,18 @@ test('SaaS Billing & Seguridad: Códigos Telegram 12-hex, Conciliación de Pagos
   });
   assert.equal(pendingRes.paymentStatus, 'PENDIENTE_VERIFICACION');
   assert.equal(pendingRes.amountUsd, 29.99);
+
+  // 1b. Contador aliado (role: 'admin') tampoco puede auto-aprobarse pagos SaaS
+  const accountantPayRes = await registerSubscriptionPayment(mockDb, {
+    tenantId: 'tenant_test',
+    planId: 'COMERCIO_PRO',
+    paymentMethod: 'PAGO_MOVIL',
+    referenceNumber: '0134-11223344',
+    bcvRate: 914.02,
+    actorUid: 'user_contador',
+    actorRole: 'admin'
+  });
+  assert.equal(accountantPayRes.paymentStatus, 'PENDIENTE_VERIFICACION');
 
   // 2. Super-Admin aprueba el pago -> activa el tenant y marca VERIFICADO
   const approvedRes = await approveSubscriptionPayment(mockDb, {

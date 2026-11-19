@@ -81,7 +81,7 @@ test('Flujo completo: Super-Admin crea contador -> contador ingresa con clave te
   // 1. Login Super-Admin
   const adminLogin = await authenticateUser(db, null, {
     email: 'moucharrafiepc@gmail.com',
-    password: process.env.SUPER_ADMIN_PASSWORD || '*036Yasir'
+    password: process.env.SUPER_ADMIN_PASSWORD || 'DEV_SUPERADMIN_LOCAL_2026#'
   });
   assert.equal(adminLogin.ok, true);
   assert.equal(adminLogin.user.role, 'superadmin');
@@ -189,7 +189,7 @@ test('Seguridad 2FA en Servidor: login con TOTP activo NO emite token hasta veri
 
   await authenticateUser(db, null, {
     email: 'moucharrafiepc@gmail.com',
-    password: process.env.SUPER_ADMIN_PASSWORD || '*036Yasir'
+    password: process.env.SUPER_ADMIN_PASSWORD || 'DEV_SUPERADMIN_LOCAL_2026#'
   });
 
   const secret = generateTotpSecretNode(20);
@@ -206,9 +206,14 @@ test('Seguridad 2FA en Servidor: login con TOTP activo NO emite token hasta veri
   const enabled = await enableUser2fa(db, 'moucharrafiepc@gmail.com', secret, code);
   assert.equal(enabled.ok, true);
 
+  // Verificar que totpSecret se almacena cifrado con AES-256-GCM (iv:tag:cipher) y NO en texto plano
+  const storedUser = (await db.collection('vt_users').doc('moucharrafiepc@gmail.com').get()).data();
+  assert.notEqual(storedUser.totpSecret, secret);
+  assert.equal(storedUser.totpSecret.split(':').length, 3);
+
   const step1 = await authenticateUser(db, null, {
     email: 'moucharrafiepc@gmail.com',
-    password: process.env.SUPER_ADMIN_PASSWORD || '*036Yasir'
+    password: process.env.SUPER_ADMIN_PASSWORD || 'DEV_SUPERADMIN_LOCAL_2026#'
   });
   assert.equal(step1.ok, true);
   assert.equal(step1.requires2fa, true);
@@ -223,9 +228,21 @@ test('Seguridad 2FA en Servidor: login con TOTP activo NO emite token hasta veri
   const good2fa = await verifyPending2faLogin(db, step1.pending2faToken, code);
   assert.equal(good2fa.ok, true);
   assert.ok(verifySessionToken(good2fa.token));
+
+  // Bloqueo anti-fuerza bruta en 2FA tras 5 intentos fallidos
+  const step2 = await authenticateUser(db, null, {
+    email: 'moucharrafiepc@gmail.com',
+    password: process.env.SUPER_ADMIN_PASSWORD || 'DEV_SUPERADMIN_LOCAL_2026#'
+  });
+  let lastRes;
+  for (let i = 0; i < 5; i++) {
+    lastRes = await verifyPending2faLogin(db, step2.pending2faToken, '000000');
+  }
+  assert.equal(lastRes.ok, false);
+  assert.equal(lastRes.status, 429);
 });
 
-test('Seguridad Estado Vivo: usuario suspendido/eliminado pierde acceso aunque tenga token previo', async () => {
+test('Seguridad Estado Vivo: usuario suspendido/eliminado pierde acceso inmediatamente (caché invalidado)', async () => {
   const db = makeMockDb();
   const created = await upsertAccountantAccount(db, null, {
     name: 'Lic. Revocable',
@@ -234,7 +251,8 @@ test('Seguridad Estado Vivo: usuario suspendido/eliminado pierde acceso aunque t
   });
   assert.equal(await isUserActiveInDb(db, 'revocable@firma.com'), true);
   await disableAccountant(db, null, created.accountant.id);
-  // Invalidar manualmente si quedó en cache o verificar directo
+  // Debe devolver false de inmediato sin esperar TTL de caché
+  assert.equal(await isUserActiveInDb(db, 'revocable@firma.com'), false);
   const userSnap = await db.collection('vt_users').doc('revocable@firma.com').get();
   assert.equal(userSnap.data().status, 'ELIMINADO');
 });

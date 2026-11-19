@@ -32,6 +32,11 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   const url = new URL(req.url);
 
+  // Ignorar peticiones no-GET y esquemas externos (ej. chrome-extension://) para evitar errores en cache.put
+  if (req.method !== 'GET' || !url.protocol.startsWith('http')) {
+    return;
+  }
+
   // Bypass API calls from cache, let apiClient handle timeouts/offline
   if (url.pathname.startsWith('/api') || url.pathname.startsWith('/webhooks')) {
     return;

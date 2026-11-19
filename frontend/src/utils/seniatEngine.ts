@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { encodeQrMatrix } from './qrEncoder';
 
 export interface FiscalInvoice {
   id: string;
@@ -378,7 +379,7 @@ export function calculateLotttFullBreakdown(baseSalaryBs: number, cestaticketBs:
   };
 }
 
-export function getSeniatSpeCalendarByRif(rif: string): {
+export function getSeniatSpeCalendarByRif(rif: string, referenceDate: Date = new Date()): {
   terminalDigit: string;
   quincena1Deadline: string;
   quincena2Deadline: string;
@@ -387,25 +388,44 @@ export function getSeniatSpeCalendarByRif(rif: string): {
 } {
   const clean = String(rif || '').replace(/[^0-9]/g, '');
   const lastDigit = clean.length > 0 ? clean[clean.length - 1] : '0';
-  const scheduleMap: Record<string, { q1: string; q2: string }> = {
-    '0': { q1: '18 Nov 2026', q2: '03 Dic 2026' },
-    '1': { q1: '19 Nov 2026', q2: '04 Dic 2026' },
-    '2': { q1: '20 Nov 2026', q2: '05 Dic 2026' },
-    '3': { q1: '21 Nov 2026', q2: '06 Dic 2026' },
-    '4': { q1: '22 Nov 2026', q2: '07 Dic 2026' },
-    '5': { q1: '18 Nov 2026', q2: '03 Dic 2026' },
-    '6': { q1: '19 Nov 2026', q2: '04 Dic 2026' },
-    '7': { q1: '20 Nov 2026', q2: '05 Dic 2026' },
-    '8': { q1: '21 Nov 2026', q2: '06 Dic 2026' },
-    '9': { q1: '22 Nov 2026', q2: '07 Dic 2026' }
+
+  // Calendario dinámico de Sujetos Pasivos Especiales (SPE) según terminal de RIF:
+  // 1ra quincena vence entre los días 18–22 del mes en curso; 2da quincena entre los días 3–7 del mes siguiente.
+  const dayOffsetByDigit: Record<string, number> = {
+    '0': 0, '5': 0,
+    '1': 1, '6': 1,
+    '2': 2, '7': 2,
+    '3': 3, '8': 3,
+    '4': 4, '9': 4
   };
-  const dates = scheduleMap[lastDigit] || scheduleMap['0'];
+  const offset = dayOffsetByDigit[lastDigit] ?? 0;
+
+  const year = referenceDate.getFullYear();
+  const month = referenceDate.getMonth();
+  const q1Date = new Date(year, month, 18 + offset);
+  const q2Date = new Date(year, month + 1, 3 + offset);
+
+  const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  const fmt = (d: Date) =>
+    `${String(d.getDate()).padStart(2, '0')} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+
+  const todayMidnight = new Date(year, month, referenceDate.getDate()).getTime();
+  const nextDeadlineMs = todayMidnight <= q1Date.getTime() ? q1Date.getTime() : q2Date.getTime();
+  const daysRemaining = Math.ceil((nextDeadlineMs - todayMidnight) / 86400000);
+
+  let statusLabel = 'EN PLAZO LEGAL (SIN MORA)';
+  if (daysRemaining <= 0) {
+    statusLabel = 'VENCE HOY — DECLARAR EN PORTAL SENIAT';
+  } else if (daysRemaining <= 3) {
+    statusLabel = `PRÓXIMO A VENCER (${daysRemaining} DÍA${daysRemaining === 1 ? '' : 'S'})`;
+  }
+
   return {
     terminalDigit: lastDigit,
-    quincena1Deadline: dates.q1,
-    quincena2Deadline: dates.q2,
-    igtfDeadline: dates.q1,
-    statusLabel: 'EN PLAZO LEGAL (SIN MORA)'
+    quincena1Deadline: fmt(q1Date),
+    quincena2Deadline: fmt(q2Date),
+    igtfDeadline: fmt(q1Date),
+    statusLabel
   };
 }
 
@@ -512,42 +532,27 @@ export function openPrintablePaystub(companyName: string, companyRif: string, em
   }
 }
 
-// Generador de Matriz QR Vectorial en PDF
-function drawVectorQr(doc: jsPDF, x: number, y: number, size: number, seedStr: string) {
-  const modules = 21;
-  const cellSize = size / modules;
+// Generador de Código QR Vectorial Real ISO/IEC 18004 (Nivel M) en PDF con zona de silencio (quiet zone)
+function drawVectorQr(doc: jsPDF, x: number, y: number, size: number, payload: string) {
+  const matrix = encodeQrMatrix(payload);
+  const count = matrix.length;
+  const quiet = 2; // 2 módulos de margen blanco para escaneo confiable en móviles
+  const cellSize = size / (count + quiet * 2);
+
   doc.setFillColor(255, 255, 255);
   doc.rect(x, y, size, size, 'F');
   doc.setFillColor(15, 23, 42);
 
-  function drawFinderPattern(fx: number, fy: number) {
-    doc.rect(fx, fy, cellSize * 7, cellSize * 7, 'F');
-    doc.setFillColor(255, 255, 255);
-    doc.rect(fx + cellSize, fy + cellSize, cellSize * 5, cellSize * 5, 'F');
-    doc.setFillColor(15, 23, 42);
-    doc.rect(fx + cellSize * 2, fy + cellSize * 2, cellSize * 3, cellSize * 3, 'F');
-  }
-
-  drawFinderPattern(x, y);
-  drawFinderPattern(x + (modules - 7) * cellSize, y);
-  drawFinderPattern(x, y + (modules - 7) * cellSize);
-
-  let hashVal = 0;
-  for (let i = 0; i < seedStr.length; i++) {
-    hashVal = ((hashVal << 5) - hashVal) + seedStr.charCodeAt(i);
-    hashVal |= 0;
-  }
-
-  for (let r = 0; r < modules; r++) {
-    for (let c = 0; c < modules; c++) {
-      const inTopLeft = r < 7 && c < 7;
-      const inTopRight = r < 7 && c >= modules - 7;
-      const inBottomLeft = r >= modules - 7 && c < 7;
-      if (!inTopLeft && !inTopRight && !inBottomLeft) {
-        const bit = ((hashVal ^ (r * 31 + c * 17)) >>> ((r + c) % 16)) & 1;
-        if (bit === 1) {
-          doc.rect(x + c * cellSize, y + r * cellSize, cellSize, cellSize, 'F');
-        }
+  for (let r = 0; r < count; r++) {
+    for (let c = 0; c < count; c++) {
+      if (matrix[r][c]) {
+        doc.rect(
+          x + (c + quiet) * cellSize,
+          y + (r + quiet) * cellSize,
+          cellSize + 0.04,
+          cellSize + 0.04,
+          'F'
+        );
       }
     }
   }
@@ -876,7 +881,7 @@ export function downloadPdfIslrRetentionVoucher(
   doc.text(inv.supplierName, 152.5, sigY + 9, { align: 'center' });
   doc.setFontSize(7.5);
   doc.setTextColor(100, 116, 139);
-  doc.text('C.I. / RIF: ___________________ Fecha: ___/___/2026', 152.5, sigY + 14, { align: 'center' });
+  doc.text(`C.I. / RIF: ___________________ Fecha: ___/___/${new Date().getFullYear()}`, 152.5, sigY + 14, { align: 'center' });
 
   doc.setFontSize(7.5);
   doc.setTextColor(148, 163, 184);
@@ -1016,16 +1021,58 @@ export interface BankMovement {
 }
 
 export function parseVenezuelanAmount(val: unknown): number {
-  if (typeof val === 'number') return val;
-  const clean = String(val || '').trim().replace(/\s/g, '');
+  if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+  const raw = String(val || '').trim();
+  if (!raw) return 0;
+  const isNegative = raw.startsWith('-') || (raw.startsWith('(') && raw.endsWith(')'));
+  let clean = raw.replace(/[^0-9.,]/g, '');
   if (!clean) return 0;
-  if (clean.includes(',') && clean.includes('.')) {
-    return parseFloat(clean.replace(/\./g, '').replace(',', '.'));
+
+  const lastComma = clean.lastIndexOf(',');
+  const lastDot = clean.lastIndexOf('.');
+
+  if (lastComma > lastDot) {
+    // Formato venezolano/europeo: "1.250,50" -> "1250.50"
+    clean = clean.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot > lastComma) {
+    // Formato anglosajón (Zelle / Mercury / Banesco Panamá): "1,250.50" -> "1250.50"
+    const dotCount = (clean.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      clean = clean.replace(/\.(?=.*\.)/g, '');
+    } else {
+      clean = clean.replace(/,/g, '');
+    }
+  } else if (lastComma !== -1 && lastDot === -1) {
+    clean = clean.replace(',', '.');
   }
-  if (clean.includes(',')) {
-    return parseFloat(clean.replace(',', '.'));
+
+  const parsed = parseFloat(clean);
+  if (Number.isNaN(parsed)) return 0;
+  return isNegative ? -Math.abs(parsed) : parsed;
+}
+
+function splitCsvLine(line: string, delim: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === delim && !inQuotes) {
+      out.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
   }
-  return parseFloat(clean) || 0;
+  out.push(cur.trim());
+  return out;
 }
 
 export function parseBankStatementCsv(
@@ -1075,7 +1122,7 @@ export function parseBankStatementCsv(
   const results: BankMovement[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(delim).map(c => c.trim().replace(/^["']|["']$/g, ''));
+    const cols = splitCsvLine(lines[i], delim).map(c => c.replace(/^["']|["']$/g, ''));
     if (cols.length <= Math.max(dateIdx, descIdx)) continue;
 
     const rawDate = cols[dateIdx] || new Date().toISOString().slice(0, 10);
@@ -1250,6 +1297,7 @@ export function runDeterministicBankReconciliation(
     if (!matchedInvoice && m.amountBs > 0) {
       matchedInvoice = invoices.find(inv => {
         const invTotalBs = inv.currency === 'USD' ? (inv.totalOriginal * currentBcvRate) : inv.totalOriginal;
+        if (invTotalBs <= 0) return false;
         const diff = Math.abs(invTotalBs - m.amountBs);
         return diff < 5 || (diff / invTotalBs) < 0.005;
       });

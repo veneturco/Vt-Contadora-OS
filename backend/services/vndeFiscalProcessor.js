@@ -184,7 +184,8 @@ function parseSeniatRawText(rawText) {
   }
 
   // 2. Canal de Emisión, Número de Factura, Control y Serial de Máquina Fiscal
-  let channel = 'FORMA_LIBRE';
+  // Providencia SNAT/2026/00093: solo DIGITAL, MAQUINA_FISCAL o CONTINGENCIA
+  let channel = /talonario|contingencia|manual/i.test(fullText) ? 'CONTINGENCIA' : 'DIGITAL';
   let invoiceNumber = '';
   let controlNumber = '';
   let machineSerial = '';

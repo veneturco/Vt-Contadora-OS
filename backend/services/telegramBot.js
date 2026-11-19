@@ -2,6 +2,8 @@ const axios = require('axios');
 const { computeAuditHash } = require('../security/cryptoVault');
 const { validateVenezuelanRIF } = require('./seniatEngine');
 const { processFiscalInvoiceVNDE } = require('./vndeFiscalProcessor');
+const { DEFAULT_CURRENT_BCV_USD, DEFAULT_CURRENT_BCV_EUR } = require('./bcvConstants');
+const { checkTenantPlanQuota, incrementTenantInvoiceUsage } = require('./saasBillingEngine');
 
 async function processTelegramReceiptUpdate(update, db) {
   const message = update.message;
@@ -39,8 +41,8 @@ async function processTelegramReceiptUpdate(update, db) {
   if (text === '/tasa') {
     try {
       const bcvSnap = await db.collection('bcv_rates').doc('latest').get();
-      const bcvData = bcvSnap.exists ? bcvSnap.data() : { usdVes: 47.05, eurVes: 50.80, syncedAt: new Date().toISOString() };
-      const usdVal = Number(bcvData.usdVes ?? bcvData.officialRate ?? 47.05).toFixed(4);
+      const bcvData = bcvSnap.exists ? bcvSnap.data() : { usdVes: DEFAULT_CURRENT_BCV_USD, eurVes: DEFAULT_CURRENT_BCV_EUR, syncedAt: new Date().toISOString() };
+      const usdVal = Number(bcvData.usdVes ?? bcvData.officialRate ?? DEFAULT_CURRENT_BCV_USD).toFixed(4);
       const eurVal = Number(bcvData.eurVes ?? (Number(usdVal) * 1.08)).toFixed(4);
       const syncDate = (bcvData.syncedAt || bcvData.scrapedAt || new Date().toISOString()).slice(0, 19).replace('T', ' ');
       await sendTelegramMessage(
@@ -53,7 +55,7 @@ async function processTelegramReceiptUpdate(update, db) {
       );
       return { status: 'rate_displayed' };
     } catch {
-      await sendTelegramMessage(chatId, `🏛 *TASA OFICIAL BCV*\n\n• 1 USD = *Bs. 47.0500* (Tasa de referencia)`);
+      await sendTelegramMessage(chatId, `🏛 *TASA OFICIAL BCV*\n\n• 1 USD = *Bs. ${DEFAULT_CURRENT_BCV_USD.toFixed(4)}* (Tasa de referencia)`);
       return { status: 'rate_fallback' };
     }
   }
@@ -123,10 +125,10 @@ async function processTelegramReceiptUpdate(update, db) {
   }
 
   const { tenantId, companyName } = chatBinding.data();
-  const tenantDoc = await db.collection('tenants').doc(tenantId).get();
-  if (tenantDoc.exists && tenantDoc.data().subscriptionStatus === 'SUSPENDIDA') {
-    await sendTelegramMessage(chatId, `AVISO DE LICENCIA: La suscripcion de *${companyName}* presenta saldo vencido. Contacta a tu firma contable para reactivar la recepcion automatica.`);
-    return { status: 'license_suspended' };
+  const quotaCheck = await checkTenantPlanQuota(db, tenantId);
+  if (!quotaCheck.allowed) {
+    await sendTelegramMessage(chatId, `AVISO DE LICENCIA / CUOTA (*${companyName}*): ${quotaCheck.error}`);
+    return { status: quotaCheck.status === 402 ? 'license_suspended' : 'quota_exceeded' };
   }
 
   const photos = message.photo;
@@ -194,7 +196,8 @@ async function processTelegramReceiptUpdate(update, db) {
   const invRef = db.collection(`tenants/${tenantId}/invoices`).doc();
   const auditHash = computeAuditHash('TELEGRAM_INGEST_VNDE', { invoiceId: invRef.id, dupKey, total: extracted.totalAmount || extracted.totalOriginal });
 
-  await invRef.set({
+  const savedInvoice = {
+    id: invRef.id,
     ...extracted,
     supplierRif: rifCheck.formatted,
     rifValid: rifCheck.valid,
@@ -206,7 +209,9 @@ async function processTelegramReceiptUpdate(update, db) {
     status: extracted.status || 'BORRADOR_IA',
     auditHash,
     createdAt: new Date().toISOString()
-  });
+  };
+  await invRef.set(savedInvoice);
+  await incrementTenantInvoiceUsage(db, tenantId);
 
   await db.collection(`tenants/${tenantId}/audit_logs`).add({
     action: 'INGESTA_TELEGRAM_VNDE',
@@ -230,7 +235,7 @@ async function processTelegramReceiptUpdate(update, db) {
     `• *Estatus:* ${extracted.mathValid ? '✅ Conciliada Matemáticamente (100% Exacta)' : '📝 Enviada a Auditoría de Contador'}`
   );
 
-  return { status: 'processed', invoiceId: invRef.id, vndeMode: vndeResult.mode, tokensUsed: vndeResult.tokensUsed };
+  return { status: 'processed', invoiceId: invRef.id, tenantId, invoice: savedInvoice, vndeMode: vndeResult.mode, tokensUsed: vndeResult.tokensUsed };
 }
 
 function sleep(ms) {

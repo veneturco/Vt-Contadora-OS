@@ -1,8 +1,10 @@
 const crypto = require('crypto');
+const { encryptSensitiveField, decryptSensitiveField } = require('../security/cryptoVault');
 
 const TOKEN_TTL_SECONDS = 12 * 60 * 60; // 12 horas
 const PENDING_2FA_TTL_SECONDS = 5 * 60; // 5 minutos
 const MAX_FAILED_ATTEMPTS = 5;
+const MAX_2FA_ATTEMPTS = 5;
 const LOCKOUT_MS = 30 * 60 * 1000; // 30 minutos
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -10,8 +12,13 @@ const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const userStatusCache = new Map();
 const STATUS_CACHE_TTL_MS = 15 * 1000;
 
+// Control de intentos fallidos por token 2FA pendiente (previene fuerza bruta sobre códigos de 6 dígitos)
+const pending2faAttempts = new Map();
+
 const SUPER_ADMIN_EMAIL = (process.env.SUPER_ADMIN_EMAIL || 'moucharrafiepc@gmail.com').trim().toLowerCase();
-const SUPER_ADMIN_BOOTSTRAP_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || '*036Yasir';
+const SUPER_ADMIN_BOOTSTRAP_PASSWORD =
+  process.env.SUPER_ADMIN_PASSWORD ||
+  (process.env.NODE_ENV === 'production' ? null : 'DEV_SUPERADMIN_LOCAL_2026#');
 
 function getSigningSecret() {
   const secret =
@@ -250,6 +257,9 @@ async function ensureSuperAdminSeeded(db, adminSdk) {
     }
     return existing;
   }
+  if (!SUPER_ADMIN_BOOTSTRAP_PASSWORD) {
+    throw new Error('CONFIGURACIÓN CRÍTICA FALTANTE: Defina SUPER_ADMIN_PASSWORD en producción para inicializar el Super-Admin.');
+  }
   const nowIso = new Date().toISOString();
   const superAdminDoc = {
     uid: 'superadmin_vt_os',
@@ -389,11 +399,27 @@ async function authenticateUser(db, adminSdk, { email, password }) {
   return { ok: true, status: 200, token, user: publicUser };
 }
 
+function resolveStoredTotpSecret(storedSecret) {
+  if (!storedSecret || typeof storedSecret !== 'string') return null;
+  if (storedSecret.includes(':')) {
+    return decryptSensitiveField(storedSecret);
+  }
+  // Retrocompatibilidad con secretos Base32 guardados antes del cifrado AES-256-GCM
+  return storedSecret;
+}
+
 async function verifyPending2faLogin(db, pending2faToken, code) {
   const pending = verifySessionToken(pending2faToken, 'pending_2fa');
   if (!pending || !pending.email) {
     return { ok: false, status: 401, error: 'Sesión 2FA expirada. Ingresa tu correo y contraseña nuevamente.' };
   }
+  const attemptKey = crypto.createHash('sha256').update(String(pending2faToken)).digest('hex');
+  const nowMs = Date.now();
+  const attemptRecord = pending2faAttempts.get(attemptKey);
+  if (attemptRecord && attemptRecord.expiresAt > nowMs && attemptRecord.count >= MAX_2FA_ATTEMPTS) {
+    return { ok: false, status: 429, error: 'Demasiados intentos 2FA fallidos. Inicia sesión nuevamente.' };
+  }
+
   const userRef = db.collection('vt_users').doc(normalizeEmail(pending.email));
   const snap = await userRef.get();
   if (!snap.exists) {
@@ -403,12 +429,22 @@ async function verifyPending2faLogin(db, pending2faToken, code) {
   if (userDoc.status === 'SUSPENDIDA' || userDoc.status === 'ELIMINADO') {
     return { ok: false, status: 403, error: 'Cuenta suspendida.' };
   }
-  if (!userDoc.totpEnabled || !userDoc.totpSecret) {
+  const plainSecret = resolveStoredTotpSecret(userDoc.totpSecret);
+  if (!userDoc.totpEnabled || !plainSecret) {
     return { ok: false, status: 400, error: '2FA no está activo para esta cuenta.' };
   }
-  if (!verifyTotpCodeNode(userDoc.totpSecret, code)) {
+  if (!verifyTotpCodeNode(plainSecret, code)) {
+    const nextCount = (attemptRecord && attemptRecord.expiresAt > nowMs ? attemptRecord.count : 0) + 1;
+    pending2faAttempts.set(attemptKey, {
+      count: nextCount,
+      expiresAt: (pending.exp || Math.floor(nowMs / 1000) + PENDING_2FA_TTL_SECONDS) * 1000
+    });
+    if (nextCount >= MAX_2FA_ATTEMPTS) {
+      return { ok: false, status: 429, error: 'Demasiados intentos 2FA fallidos. Inicia sesión nuevamente.' };
+    }
     return { ok: false, status: 401, error: 'Código 2FA inválido o expirado. Verifica tu app autenticadora.' };
   }
+  pending2faAttempts.delete(attemptKey);
   const publicUser = toPublicUser(userDoc);
   const token = signSessionToken(publicUser);
   return { ok: true, status: 200, token, user: publicUser };
@@ -423,10 +459,14 @@ async function enableUser2fa(db, email, secret, code) {
   const userRef = db.collection('vt_users').doc(cleanEmail);
   const snap = await userRef.get();
   if (!snap.exists) return { ok: false, status: 404, error: 'Usuario no encontrado.' };
+  const encryptedSecret = encryptSensitiveField(cleanSecret);
+  if (!encryptedSecret) {
+    return { ok: false, status: 500, error: 'No se pudo cifrar el secreto 2FA en la bóveda criptográfica.' };
+  }
   const updated = {
     ...snap.data(),
     totpEnabled: true,
-    totpSecret: cleanSecret,
+    totpSecret: encryptedSecret,
     updatedAt: new Date().toISOString()
   };
   await userRef.set(updated, { merge: true });
@@ -683,6 +723,7 @@ async function disableAccountant(db, adminSdk, accountantId) {
       { status: 'ELIMINADO', updatedAt: nowIso },
       { merge: true }
     );
+    invalidateUserStatusCache(cleanEmail);
     await syncFirebaseAuthUser(adminSdk, {
       email: cleanEmail,
       displayName: acc.name,
