@@ -377,6 +377,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
+  const [bankMovements, setBankMovements] = useState<BankMovement[]>(() => safeGetStorage('vt_bank_moves_v32', INITIAL_BANK_MOVEMENTS));
 
   // Telemetría automática de errores en tiempo real hacia el Guardián del Sistema
   useEffect(() => {
@@ -448,7 +449,6 @@ export default function App() {
   const [accFormPayout, setAccFormPayout] = useState<string>('');
 
   // Bank Reconciliation States (VEN-NIF NIC 21 & Art. 177 COT)
-  const [bankMovements, setBankMovements] = useState<BankMovement[]>(() => safeGetStorage('vt_bank_moves_v32', INITIAL_BANK_MOVEMENTS));
   const [selectedBankFilter, setSelectedBankFilter] = useState<'TODOS' | 'BANESCO' | 'BDV' | 'MERCANTIL' | 'BANCAMIGA'>('TODOS');
   const [reconcileSearchQuery, setReconcileSearchQuery] = useState<string>('');
   const [inspectedBankMove, setInspectedBankMove] = useState<BankMovement | null>(() => INITIAL_BANK_MOVEMENTS[0]);
