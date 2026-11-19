@@ -596,9 +596,15 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
       Devuelve exactamente este JSON:
       { "supplierRif": "J-00000000-0", "supplierName": "", "invoiceNumber": "00000000", "controlNumber": "00-00000000", "emissionDate": "YYYY-MM-DD", "emissionTime": "HH:MM:SS", "channel": "DIGITAL|MAQUINA_FISCAL|CONTINGENCIA", "hasBuyerRifOnTicket": true, "currency": "VES|USD", "taxableBaseOriginal": 0, "exemptOriginal": 0, "vatRate": 16, "vatOriginal": 0, "igtfOriginal": 0, "totalOriginal": 0, "confidence": 0.99 }`;
 
-    const modelFallbackChain = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const modelFallbackChain = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
     let lastVisionError = null;
     let bestCandidate = null;
+
+    const parseJsonSafely = raw => {
+      const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      return JSON.parse(match ? match[0] : cleaned);
+    };
 
     for (const modelName of modelFallbackChain) {
       try {
@@ -610,8 +616,7 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
           basePrompt,
           { inlineData: { data: base64Data, mimeType } }
         ]);
-        const rawJsonText = aiResult.response.text().replace(/```json|```/g, '').trim();
-        const extracted = JSON.parse(rawJsonText);
+        const extracted = parseJsonSafely(aiResult.response.text());
         let normalized = validateAndNormalizeAiExtraction(extracted);
 
         // Doble pasada correctiva si falla la matemática o el RIF Módulo 11
@@ -623,7 +628,7 @@ async function processFiscalInvoiceVNDE({ base64Data, rawText, qrPayload, fileNa
               verifyPrompt,
               { inlineData: { data: base64Data, mimeType } }
             ]);
-            const retryParsed = JSON.parse(retryRes.response.text().replace(/```json|```/g, '').trim());
+            const retryParsed = parseJsonSafely(retryRes.response.text());
             const retryNorm = validateAndNormalizeAiExtraction(retryParsed);
             if (retryNorm.mathValid || retryNorm.rifValid) {
               normalized = retryNorm;

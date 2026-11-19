@@ -9142,20 +9142,19 @@ export default function App() {
           }).catch(() => {});
         }}
       />
-      {/* Emil Kowalski / OpenDesign Sonner Floating Toast Pill */}
-      {(subPayToast || mobileToast) && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto" role="status" aria-live="polite">
-          <div className="sonner-toast-pill px-4 py-2.5 flex items-center gap-3 text-xs font-medium text-white shadow-2xl">
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-            <span className="tracking-tight">{subPayToast || mobileToast}</span>
+      {/* Floating Toast (solo subPayToast; mobileToast ya se muestra limpio dentro de la tarjeta móvil) */}
+      {subPayToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto w-[92vw] max-w-md" role="status" aria-live="polite">
+          <div className="px-4 py-2.5 rounded-2xl bg-[#161820]/95 backdrop-blur-xl border border-white/15 flex items-center justify-between gap-3 text-xs font-medium text-white shadow-2xl">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+              <span className="tracking-tight break-words">{subPayToast}</span>
+            </div>
             <button
               type="button"
               aria-label="Cerrar notificación"
-              onClick={() => {
-                setSubPayToast(null);
-                setMobileToast(null);
-              }}
-              className="p-1 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors ml-1"
+              onClick={() => setSubPayToast(null)}
+              className="p-1 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors shrink-0"
             >
               <X className="w-3.5 h-3.5" />
             </button>
