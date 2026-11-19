@@ -328,13 +328,40 @@ async function getSpanishOcrWorker(): Promise<TesseractWorkerLike> {
       if (typeof createWorker !== 'function') {
         throw new Error('createWorker no disponible en tesseract.js');
       }
-      // Usar CDN jsDelivr con modelo 4.0.0_fast (más liviano y con CORS estable en móviles)
-      const worker = await createWorker('spa', 1, {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
-        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.0',
-        langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/spa/4.0.0_fast'
-      });
-      return worker;
+
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const localBasePath = `${origin}/tesseract`;
+
+      // 1. Prioridad: Servidor local propio (100% Same-Origin · Sin bloqueo de CDN en Venezuela · 0 Tokens)
+      try {
+        const worker = await createWorker('spa', 1, {
+          workerPath: `${localBasePath}/worker.min.js`,
+          corePath: `${localBasePath}/tesseract-core-simd-lstm.wasm.js`,
+          langPath: localBasePath,
+          workerBlob: false
+        });
+        return worker;
+      } catch (localErr) {
+        console.warn('Reintentando worker local con workerBlob=true...', localErr);
+        try {
+          const worker = await createWorker('spa', 1, {
+            workerPath: `${localBasePath}/worker.min.js`,
+            corePath: `${localBasePath}/tesseract-core-simd-lstm.wasm.js`,
+            langPath: localBasePath,
+            workerBlob: true
+          });
+          return worker;
+        } catch (blobErr) {
+          console.warn('Fallo worker local, recurriendo a CDN de respaldo...', blobErr);
+          // Fallback a CDN con naptha/tessdata para spa
+          const worker = await createWorker('spa', 1, {
+            workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+            corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.0',
+            langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast'
+          });
+          return worker;
+        }
+      }
     })().catch(err => {
       tesseractWorkerPromise = null;
       throw err;
