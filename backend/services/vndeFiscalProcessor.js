@@ -6,7 +6,14 @@ const zlib = require('zlib');
 const { validateVenezuelanRIF } = require('./seniatEngine');
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-const DEFAULT_VISION_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+// Priorizamos modelos flash-lite y 2.0-flash junto a 2.5-flash para esquivar picos HTTP 503 de alta demanda
+const DEFAULT_VISION_MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-pro'
+];
 const GEMINI_SAFETY_NONE = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
   { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -14,8 +21,10 @@ const GEMINI_SAFETY_NONE = [
   { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
 ];
 
-// Caché de modelo descubierto dinámicamente si el catálogo del proyecto cambia (30 min)
-let discoveredModelCache = { model: null, expiresAt: 0 };
+// Caché de modelos descubiertos dinámicamente del proyecto (30 min)
+let discoveredModelCache = { model: null, models: [], expiresAt: 0 };
+
+const sleepMs = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Memoria de firmas y plantillas de proveedores frecuentes (Vendor Fingerprinting)
 const vendorFingerprintCache = new Map();
@@ -104,6 +113,15 @@ async function callGeminiRestApi({ apiKey, modelName, parts, jsonMode = true, ti
   try {
     return await execCall(jsonMode);
   } catch (err) {
+    // Reintento automático breve ante picos transitorios HTTP 503/500 de Google
+    if (err.httpStatus === 503 || err.httpStatus === 500) {
+      await sleepMs(900);
+      try {
+        return await execCall(jsonMode);
+      } catch (retry503Err) {
+        throw retry503Err;
+      }
+    }
     // Si el modelo rechazó thinkingConfig o responseMimeType (HTTP 400), reintentar con payload mínimo
     if (err.httpStatus === 400 && jsonMode && /thinking|responseMimeType|json|generationConfig/i.test(err.apiMessage || '')) {
       const url = `${GEMINI_API_BASE}/models/${encodeURIComponent(modelName)}:generateContent`;
@@ -161,7 +179,7 @@ async function discoverGeminiFlashModel(apiKey) {
       null;
 
     if (preferred) {
-      discoveredModelCache = { model: preferred, expiresAt: Date.now() + 30 * 60 * 1000 };
+      discoveredModelCache = { model: preferred, models: usable, expiresAt: Date.now() + 30 * 60 * 1000 };
     }
     return preferred;
   } catch {
@@ -182,6 +200,7 @@ async function diagnoseOcrEngine(rawApiKey) {
       maskedKey: null,
       activeModel: null,
       availableModels: [],
+      attempts: [],
       latencyMs: Date.now() - startedAt,
       error: 'GEMINI_API_KEY no está configurada en las variables de entorno del servidor.'
     };
@@ -203,7 +222,7 @@ async function diagnoseOcrEngine(rawApiKey) {
         .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
         .map(m => String(m.name || '').replace(/^models\//, ''))
         .filter(n => /^gemini-/i.test(n) && !/embedding|tts|imagen|veo|audio/i.test(n))
-        .slice(0, 12);
+        .slice(0, 15);
     }
   } catch (err) {
     listError = err.message;
@@ -216,12 +235,14 @@ async function diagnoseOcrEngine(rawApiKey) {
       maskedKey,
       activeModel: null,
       availableModels: [],
+      attempts: [],
       latencyMs: Date.now() - startedAt,
       error: listError
     };
   }
 
-  const candidateModels = [...new Set([...DEFAULT_VISION_MODELS, ...availableModels])].slice(0, 5);
+  const candidateModels = [...new Set([...DEFAULT_VISION_MODELS, ...availableModels])].slice(0, 8);
+  const attempts = [];
   let lastErr = null;
   for (const modelName of candidateModels) {
     try {
@@ -233,17 +254,22 @@ async function diagnoseOcrEngine(rawApiKey) {
         timeoutMs: 12000
       });
       parseJsonSafely(pingText);
+      attempts.push({ model: modelName, status: 'OK' });
+      // Guardar en caché el modelo que sí respondió OK para usarlo de primero en las fotos reales
+      discoveredModelCache = { model: modelName, models: availableModels, expiresAt: Date.now() + 30 * 60 * 1000 };
       return {
         ok: true,
         apiKeyConfigured: true,
         maskedKey,
         activeModel: modelName,
         availableModels,
+        attempts,
         latencyMs: Date.now() - startedAt,
         error: null
       };
     } catch (err) {
       lastErr = err.message;
+      attempts.push({ model: modelName, status: err.httpStatus || 'ERR', detail: String(err.apiMessage || err.message).slice(0, 90) });
     }
   }
 
@@ -253,6 +279,7 @@ async function diagnoseOcrEngine(rawApiKey) {
     maskedKey,
     activeModel: null,
     availableModels,
+    attempts,
     latencyMs: Date.now() - startedAt,
     error: lastErr || 'Ningún modelo respondió al ping de diagnóstico.'
   };
@@ -972,24 +999,39 @@ Devuelve exactamente este JSON:
     for (const modelName of modelChain) {
       try {
         const candidate = await tryVisionModel(modelName);
+        // Recordar el modelo que respondió con éxito para priorizarlo en las siguientes fotos
+        discoveredModelCache = {
+          model: modelName,
+          models: discoveredModelCache.models || [],
+          expiresAt: Date.now() + 30 * 60 * 1000
+        };
         if (candidate.extracted.mathValid && candidate.extracted.rifValid) {
           return candidate;
         }
         bestCandidate = bestCandidate || candidate;
       } catch (visErr) {
         lastVisionError = visErr?.message || String(visErr);
-        if (visErr?.httpStatus === 404) saw404 = true;
+        if (visErr?.httpStatus === 404 || visErr?.httpStatus === 503 || visErr?.httpStatus === 429) saw404 = true;
         console.warn(`Fallo visión REST (${modelName}):`, lastVisionError);
         if (visErr?.httpStatus === 401 || visErr?.httpStatus === 403) break;
       }
     }
 
-    // Auto-Discovery si los modelos fijos devolvieron 404
+    // Auto-Discovery si los modelos fijos devolvieron 404/503/429 (busca modelos alternativos menos congestionados)
     if (!bestCandidate && saw404) {
-      const discovered = await discoverGeminiFlashModel(cleanKey);
-      if (discovered && !modelChain.includes(discovered)) {
+      await discoverGeminiFlashModel(cleanKey);
+      const extraModels = (discoveredModelCache.models || []).filter(m => !modelChain.includes(m)).slice(0, 3);
+      for (const altModel of extraModels) {
         try {
-          bestCandidate = await tryVisionModel(discovered);
+          bestCandidate = await tryVisionModel(altModel);
+          if (bestCandidate) {
+            discoveredModelCache = {
+              model: altModel,
+              models: discoveredModelCache.models,
+              expiresAt: Date.now() + 30 * 60 * 1000
+            };
+            break;
+          }
         } catch (discErr) {
           lastVisionError = discErr?.message || String(discErr);
         }
@@ -1011,6 +1053,9 @@ Devuelve exactamente este JSON:
       } else if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted')) {
         guardianMsg = `Cuota temporal alcanzada (HTTP 429): ${lastVisionError.slice(0, 180)}`;
         userFriendlyError = 'Alta demanda temporal en el servicio de lectura automática. Espere unos segundos e intente nuevamente.';
+      } else if (lower.includes('503') || lower.includes('high demand') || lower.includes('unavailable')) {
+        guardianMsg = `Congestión temporal en servidores cloud (HTTP 503): ${lastVisionError.slice(0, 180)}`;
+        userFriendlyError = 'Los servidores de lectura automática están experimentando alta demanda temporal. Reintente en unos segundos o complete manualmente.';
       }
       try {
         const { recordGuardianAlert } = require('./systemGuardian');

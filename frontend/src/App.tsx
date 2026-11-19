@@ -2299,7 +2299,7 @@ export default function App() {
       }
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
       const localRawText = !detectedQr && file.type.startsWith('image/')
-        ? await runLocalBrowserOcr(enhanced.dataUrl, 12000)
+        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
         : undefined;
       const res = await safeApiRequest<{
         mode: string;
@@ -2845,7 +2845,7 @@ export default function App() {
       const enhanced = await enhanceDocumentForOcr(file);
       const detectedQr = file.type.startsWith('image/') ? await decodeQrFromDataUrl(enhanced.dataUrl) : undefined;
       const localRawText = !detectedQr && file.type.startsWith('image/')
-        ? await runLocalBrowserOcr(enhanced.dataUrl, 12000)
+        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
         : undefined;
       const res = await safeApiRequest<{
         mode: string;

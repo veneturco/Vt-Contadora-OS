@@ -9,9 +9,12 @@ import {
   Brain,
   Scale,
   Activity,
-  Sparkles
+  Sparkles,
+  Camera,
+  Upload
 } from 'lucide-react';
 import { safeApiRequest } from '../services/apiClient';
+import { enhanceDocumentForOcr, runLocalBrowserOcr } from '../utils/documentEnhancer';
 
 export interface GuardianInfraFinding {
   severity: 'CRITICAL' | 'WARNING' | 'INFO';
@@ -86,6 +89,23 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     maskedKey: string | null;
     activeModel: string | null;
     latencyMs: number;
+    attempts?: { model: string; status: string | number; detail?: string }[];
+    error: string | null;
+  } | null>(null);
+  const [labRunning, setLabRunning] = useState(false);
+  const [labResult, setLabResult] = useState<{
+    fileName: string;
+    previewUrl: string | null;
+    originalKb: number;
+    optimizedKb: number;
+    localOcrMs: number;
+    localOcrText: string;
+    serverMs: number;
+    ok: boolean;
+    mode: string;
+    tokensUsed: number;
+    confidence: number;
+    extracted: Record<string, unknown> | null;
     error: string | null;
   } | null>(null);
   const [report, setReport] = useState<GuardianReport | null>(null);
@@ -111,6 +131,67 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
     const interval = setInterval(fetchStatus, 180000);
     return () => clearInterval(interval);
   }, [isSuperAdmin, fetchStatus]);
+
+  async function handleGuardianCameraTest(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || labRunning) return;
+    setLabRunning(true);
+    setToast(`Procesando "${file.name}" en Laboratorio OCR (sin guardar en libros)...`);
+    try {
+      const enhanced = await enhanceDocumentForOcr(file);
+      const localStart = performance.now();
+      const localOcrText = file.type.startsWith('image/')
+        ? await runLocalBrowserOcr(enhanced.dataUrl, 16000)
+        : '';
+      const localOcrMs = Math.round(performance.now() - localStart);
+
+      const res = await safeApiRequest<{
+        ok: boolean;
+        durationMs: number;
+        mode: string;
+        tokensUsed: number;
+        confidence: number;
+        extracted: Record<string, unknown> | null;
+        error: string | null;
+      }>('/api/ocr/test-lab', {
+        method: 'POST',
+        body: JSON.stringify({
+          base64Data: enhanced.base64Data,
+          rawText: localOcrText || undefined,
+          mimeType: enhanced.mimeType,
+          fileName: file.name
+        }),
+        timeoutMs: 45000
+      });
+
+      const d = res.data;
+      setLabResult({
+        fileName: file.name,
+        previewUrl: file.type.startsWith('image/') ? enhanced.dataUrl : null,
+        originalKb: Math.max(1, Math.round(enhanced.originalBytes / 1024)),
+        optimizedKb: Math.max(1, Math.round(enhanced.optimizedBytes / 1024)),
+        localOcrMs,
+        localOcrText,
+        serverMs: d?.durationMs ?? 0,
+        ok: Boolean(res.ok && d?.ok && d?.extracted),
+        mode: d?.mode || 'ERROR_RED',
+        tokensUsed: d?.tokensUsed ?? 0,
+        confidence: d?.confidence ?? 0,
+        extracted: d?.extracted || null,
+        error: d?.error || (res.ok ? null : res.error || 'Sin respuesta del servidor')
+      });
+      setToast(
+        res.ok && d?.ok && d?.extracted
+          ? `Prueba OCR exitosa (${d.tokensUsed === 0 ? '0 Tokens' : `${d.tokensUsed} tokens`} · ${d.durationMs}ms).`
+          : `Prueba OCR incompleta: ${d?.error || res.error || 'ver detalle en laboratorio'}`
+      );
+    } catch {
+      setToast(`Error ejecutando prueba OCR con "${file.name}".`);
+    } finally {
+      setLabRunning(false);
+    }
+  }
 
   async function handleTestOcrDiagnostics() {
     if (testingOcr) return;
@@ -366,6 +447,76 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                 {ocrDiag.ok
                   ? `✅ OCR Cloud Activo · Modelo: ${ocrDiag.activeModel} · Latencia: ${ocrDiag.latencyMs}ms · Clave: ${ocrDiag.maskedKey}`
                   : `❌ OCR Cloud con fallo (${ocrDiag.maskedKey || 'sin clave'}): ${ocrDiag.error}`}
+                {Array.isArray(ocrDiag.attempts) && ocrDiag.attempts.length > 0 && (
+                  <div className="mt-1 text-[10px] opacity-80">
+                    Intentos: {ocrDiag.attempts.map(a => `${a.model} [${a.status}]`).join(' · ')}
+                  </div>
+                )}
+              </div>
+            )}
+            {labResult && (
+              <div className="mx-4 mt-3 p-3 rounded-2xl bg-[#181B24] border border-indigo-400/30 text-[11px] space-y-2.5 max-h-72 overflow-y-auto">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-bold ${labResult.ok ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                      {labResult.ok ? 'LECTURA OK' : 'FALLO'}
+                    </span>
+                    <span className="font-mono text-white/80 truncate">{labResult.fileName}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLabResult(null)}
+                    className="text-white/50 hover:text-white p-0.5"
+                    aria-label="Cerrar prueba"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  {labResult.previewUrl && (
+                    <img
+                      src={labResult.previewUrl}
+                      alt="Vista previa optimizada"
+                      className="w-16 h-20 object-cover rounded-lg border border-white/15 shrink-0 bg-black"
+                    />
+                  )}
+                  <div className="font-mono text-[10px] text-white/75 space-y-0.5 min-w-0">
+                    <div>Imagen: {labResult.originalKb} KB → <span className="text-emerald-300">{labResult.optimizedKb} KB</span></div>
+                    <div>OCR Local: {labResult.localOcrText.length} chars ({labResult.localOcrMs}ms)</div>
+                    <div>Servidor: <span className="text-sky-300">{labResult.mode}</span> ({labResult.serverMs}ms)</div>
+                    <div>Consumo: <span className={labResult.tokensUsed === 0 ? 'text-emerald-300 font-bold' : 'text-amber-300'}>{labResult.tokensUsed} tokens</span> · Confianza: {Math.round(labResult.confidence * 100)}%</div>
+                  </div>
+                </div>
+
+                {labResult.extracted ? (
+                  <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] bg-black/30 p-2 rounded-xl border border-white/10">
+                    <div><span className="text-white/50">RIF:</span> <strong className="text-white">{String(labResult.extracted.supplierRif || '—')}</strong></div>
+                    <div><span className="text-white/50">Factura:</span> <strong className="text-white">{String(labResult.extracted.invoiceNumber || '—')}</strong></div>
+                    <div className="col-span-2 truncate"><span className="text-white/50">Proveedor:</span> <strong className="text-white">{String(labResult.extracted.supplierName || '—')}</strong></div>
+                    <div><span className="text-white/50">Control:</span> {String(labResult.extracted.controlNumber || '—')}</div>
+                    <div><span className="text-white/50">Fecha:</span> {String(labResult.extracted.emissionDate || '—')}</div>
+                    <div><span className="text-white/50">Base:</span> {String(labResult.extracted.taxableBaseOriginal ?? 0)}</div>
+                    <div><span className="text-white/50">Exento:</span> {String(labResult.extracted.exemptOriginal ?? 0)}</div>
+                    <div><span className="text-white/50">IVA:</span> {String(labResult.extracted.vatOriginal ?? 0)}</div>
+                    <div><span className="text-white/50">Total ({String(labResult.extracted.currency || 'VES')}):</span> <strong className="text-emerald-300">{String(labResult.extracted.totalOriginal ?? 0)}</strong></div>
+                    <div><span className="text-white/50">RIF Mód.11:</span> {labResult.extracted.rifValid ? '✅' : '⚠️'}</div>
+                    <div><span className="text-white/50">Cuadre Mat.:</span> {labResult.extracted.mathValid ? '✅' : '⚠️'}</div>
+                  </div>
+                ) : (
+                  <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-400/25 text-rose-200 font-mono text-[10px]">
+                    {labResult.error || 'Sin datos extraídos.'}
+                  </div>
+                )}
+
+                {labResult.localOcrText && (
+                  <details className="text-[10px] font-mono text-white/65">
+                    <summary className="cursor-pointer hover:text-white">Ver texto OCR local crudo ({labResult.localOcrText.length} caracteres)</summary>
+                    <pre className="mt-1 p-2 rounded-lg bg-black/40 whitespace-pre-wrap break-words max-h-28 overflow-y-auto text-[9px] text-white/75">
+                      {labResult.localOcrText}
+                    </pre>
+                  </details>
+                )}
               </div>
             )}
             <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
@@ -388,6 +539,29 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                   <Activity className={`w-3.5 h-3.5 ${testingOcr ? 'animate-pulse' : ''}`} />
                   <span>{testingOcr ? 'Probando OCR...' : 'Probar OCR'}</span>
                 </button>
+                <label className={`px-3 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/35 text-indigo-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${labRunning ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{labRunning ? 'Escaneando...' : 'Cámara Test'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    disabled={labRunning}
+                    onChange={handleGuardianCameraTest}
+                    className="hidden"
+                  />
+                </label>
+                <label className={`px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white/85 text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${labRunning ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Archivo</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    disabled={labRunning}
+                    onChange={handleGuardianCameraTest}
+                    className="hidden"
+                  />
+                </label>
                 <button
                   type="button"
                   onClick={() => handleRunAudit(true)}

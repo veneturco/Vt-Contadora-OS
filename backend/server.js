@@ -664,6 +664,45 @@ app.get('/api/ocr/diagnostics', verifyFirebaseToken, requireSuperAdmin, async (_
   }
 });
 
+// Laboratorio de Pruebas OCR con Cámara/Archivo (solo Super-Admin · no consume cuota ni guarda en libros)
+app.post('/api/ocr/test-lab', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  const startedAt = Date.now();
+  try {
+    const { base64Data, mimeType = 'image/jpeg', fileName = 'prueba_guardian.jpg', rawText, qrPayload } = req.body || {};
+    if (!base64Data && !rawText && !qrPayload) {
+      return res.status(400).json({ ok: false, error: 'Se requiere imagen, PDF, texto o QR para ejecutar la prueba.' });
+    }
+    if (mimeType && !ALLOWED_OCR_MIMES.includes(mimeType)) {
+      return res.status(415).json({ ok: false, error: `Formato no admitido (${mimeType}).` });
+    }
+    if (base64Data && String(base64Data).length > 11 * 1024 * 1024) {
+      return res.status(413).json({ ok: false, error: 'El archivo de prueba supera 8 MB.' });
+    }
+
+    const result = await processFiscalInvoiceVNDE({
+      base64Data,
+      mimeType,
+      fileName: String(fileName || 'prueba_guardian.jpg').slice(0, 120),
+      rawText: rawText ? String(rawText).slice(0, 15000) : undefined,
+      qrPayload: qrPayload ? String(qrPayload).slice(0, 1024) : undefined,
+      geminiApiKey: process.env.GEMINI_API_KEY,
+      db
+    });
+
+    return res.json({
+      ok: Boolean(result && result.extracted),
+      durationMs: Date.now() - startedAt,
+      mode: result?.mode || 'VNDE_UNPARSEABLE_DOCUMENT',
+      tokensUsed: result?.tokensUsed ?? 0,
+      confidence: result?.confidence ?? 0,
+      extracted: result?.extracted || null,
+      error: result?.error || null
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
   const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload } = req.body;
   try {
