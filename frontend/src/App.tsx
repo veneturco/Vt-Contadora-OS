@@ -6,7 +6,7 @@ import {
   Building2, Scale, Hash, Eye, EyeOff, Camera, Upload, KeyRound,
   Check, Copy, ArrowUpRight, QrCode, Search, Calendar, X, Terminal,
   Printer, LogOut, Wifi, WifiOff, MessageSquare, Clock,
-  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers, Trash2
+  DollarSign, Briefcase, Edit3, MapPin, Mail, Layers, Trash2, BookOpen
 } from 'lucide-react';
 import {
   FiscalInvoice,
@@ -50,6 +50,7 @@ import { AppleEmptyState } from './components/AppleEmptyState';
 import { ConfirmDialog, ConfirmDialogState } from './components/ConfirmDialog';
 import { SkinMenuPopover } from './components/SkinMenuPopover';
 import { SystemGuardianDrawer } from './components/SystemGuardianDrawer';
+import { AccountantHelpDrawer } from './components/AccountantHelpDrawer';
 import {
   SKINS,
   INITIAL_TENANTS,
@@ -127,6 +128,7 @@ export default function App() {
   ]);
   const [skin, setSkin] = useState<SkinId>(() => safeGetStorage<SkinId>('ui_active_skin_v4', 'obsidian-champagne'));
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [helpDrawerOpen, setHelpDrawerOpen] = useState<boolean>(false);
 
   // Super-Admin 2FA (TOTP) States (validación real en servidor)
   const [pending2faUser, setPending2faUser] = useState<{
@@ -3603,6 +3605,17 @@ export default function App() {
                 <Smartphone className="w-3.5 h-3.5" />
               </button>
             )}
+
+            {/* Guía Interactiva Contadora OS */}
+            <button
+              type="button"
+              onClick={() => setHelpDrawerOpen(true)}
+              className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/10 hover:border-[var(--accent-primary)] text-[var(--text-secondary)] hover:text-[var(--accent-primary)] transition flex items-center gap-1.5 text-xs font-medium"
+              title="Guía Interactiva Contadora OS"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Guía</span>
+            </button>
 
             {/* Selector Discreto de Apariencia / Tema (Desktop & Móvil) */}
             <SkinMenuPopover skin={skin} onSelectSkin={setSkin} />
@@ -9237,6 +9250,14 @@ export default function App() {
         </div>
       )}
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+      <AccountantHelpDrawer
+        open={helpDrawerOpen}
+        onClose={() => setHelpDrawerOpen(false)}
+        onNavigate={(tab, step) => {
+          setActiveTab(tab);
+          if (step) setOperationStep(step);
+        }}
+      />
       <SystemGuardianDrawer
         isSuperAdmin={currentUser?.role === 'superadmin'}
         onRepairedRefresh={() => {
