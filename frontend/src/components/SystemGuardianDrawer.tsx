@@ -11,7 +11,8 @@ import {
   Activity,
   Sparkles,
   Camera,
-  Upload
+  Upload,
+  Copy
 } from 'lucide-react';
 import { safeApiRequest } from '../services/apiClient';
 import { enhanceDocumentForOcr, runLocalBrowserOcrDetailed } from '../utils/documentEnhancer';
@@ -607,6 +608,28 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                 >
                   <Wrench className="w-3.5 h-3.5" />
                   <span>{repairing ? 'Reparando...' : 'Auto-Reparar Borradores'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!report) return;
+                    const diagnosticPayload = {
+                      exportedAt: new Date().toISOString(),
+                      checkedAt: report.checkedAt,
+                      summary: report.summary,
+                      alerts: report.alerts || [],
+                      infraFindings: report.infraFindings || [],
+                      seniatFindings: report.seniatFindings || []
+                    };
+                    navigator.clipboard?.writeText(JSON.stringify(diagnosticPayload, null, 2));
+                    setToast('Reporte JSON de errores copiado al portapapeles. Pégalo en tu chat para analizar y corregir.');
+                  }}
+                  disabled={!report}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                  title="Copia todos los errores y hallazgos en formato JSON para pegarlos al asistente"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar Reporte JSON</span>
                 </button>
               </div>
               {report?.checkedAt && (

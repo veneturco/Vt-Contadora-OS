@@ -287,7 +287,49 @@ async function recordGuardianAlert(db, { severity = 'WARNING', source = 'fronten
   };
 
   await ref.set(alertDoc, { merge: true });
+  notifyAdminTelegramAlert(alertDoc).catch(() => {});
   return alertDoc;
+}
+
+/**
+ * Envía el fallo estructurado en JSON al Telegram del Administrador si está configurado
+ */
+async function notifyAdminTelegramAlert(alertDoc) {
+  const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const chatId = String(process.env.ADMIN_TELEGRAM_CHAT_ID || '').trim();
+  if (!token || !chatId || !alertDoc) return;
+  // Evita spam si ocurre en bucle: notifica la primera vez y cada 10 repeticiones
+  if (alertDoc.occurrences > 1 && alertDoc.occurrences % 10 !== 0) return;
+
+  const payloadJson = JSON.stringify(
+    {
+      id: alertDoc.id,
+      severity: alertDoc.severity,
+      source: alertDoc.source,
+      category: alertDoc.category,
+      tenantId: alertDoc.tenantId,
+      userEmail: alertDoc.userEmail,
+      route: alertDoc.route,
+      occurrences: alertDoc.occurrences,
+      lastSeenAt: alertDoc.lastSeenAt,
+      message: alertDoc.message,
+      stack: alertDoc.stack ? String(alertDoc.stack).slice(0, 350) : null
+    },
+    null,
+    2
+  );
+
+  const text = `🛡️ *Guardián Contadora OS (${alertDoc.severity})*\n\`\`\`json\n${payloadJson.slice(0, 3600)}\n\`\`\``;
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown'
+    }),
+    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined
+  });
 }
 
 async function resolveGuardianAlert(db, alertId, actorEmail = 'superadmin') {

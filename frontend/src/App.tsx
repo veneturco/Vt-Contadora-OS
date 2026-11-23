@@ -378,6 +378,9 @@ export default function App() {
   const [tenants, setTenants] = useState<Tenant[]>(() => safeGetStorage('vt_tenants_v31', INITIAL_TENANTS));
   const [selectedTenantId, setSelectedTenantId] = useState<string>(() => INITIAL_TENANTS[0].id);
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => safeGetStorage('vt_invoices_v31', INITIAL_INVOICES));
+  const [dismissedDuplicateIds, setDismissedDuplicateIds] = useState<string[]>(() =>
+    safeGetStorage<string[]>('vt_dismissed_dups_v1', [])
+  );
   const [ocrPresets, setOcrPresets] = useState(() => safeGetStorage('vt_ocr_presets_v1', OCR_PRESETS));
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
@@ -751,6 +754,74 @@ export default function App() {
     () => invoices.filter(i => i.tenantId === activeTenant.id),
     [invoices, activeTenant]
   );
+
+  const normalizeInvNum = (num: string) =>
+    String(num || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .replace(/^0+/, '') || '0';
+
+  const duplicateSuspectMap = useMemo(() => {
+    const activeList = tenantInvoices.filter(inv => !dismissedDuplicateIds.includes(inv.id));
+    const byNumber = new Map<string, FiscalInvoice[]>();
+    const byDateAmount = new Map<string, FiscalInvoice[]>();
+
+    for (const inv of activeList) {
+      const k1 = `${inv.supplierRif}|${normalizeInvNum(inv.invoiceNumber)}`;
+      byNumber.set(k1, [...(byNumber.get(k1) || []), inv]);
+
+      const k2 = `${inv.supplierRif}|${inv.emissionDate}|${Number(inv.totalOriginal || 0).toFixed(2)}`;
+      byDateAmount.set(k2, [...(byDateAmount.get(k2) || []), inv]);
+    }
+
+    const suspects = new Map<string, string>();
+    byNumber.forEach(group => {
+      if (group.length > 1) {
+        group.forEach(inv => suspects.set(inv.id, 'Mismo RIF y Nº de Factura'));
+      }
+    });
+    byDateAmount.forEach(group => {
+      if (group.length > 1) {
+        group.forEach(inv => {
+          if (!suspects.has(inv.id)) {
+            suspects.set(inv.id, 'Mismo RIF, Fecha y Monto Total');
+          }
+        });
+      }
+    });
+    return suspects;
+  }, [tenantInvoices, dismissedDuplicateIds]);
+
+  function handleDismissDuplicate(invId: string) {
+    setDismissedDuplicateIds(prev => {
+      const next = prev.includes(invId) ? prev : [...prev, invId];
+      safeSetStorage('vt_dismissed_dups_v1', next);
+      return next;
+    });
+    appendAuditLog(
+      'DUPLICADO_CONSERVADO',
+      currentUser?.email || 'contador:auditor',
+      `Contador decidió conservar factura ${invId} (no es duplicada)`
+    );
+  }
+
+  function handleDeleteDuplicateInvoice(inv: FiscalInvoice) {
+    setConfirmDialog({
+      title: `Eliminar factura duplicada #${inv.invoiceNumber}`,
+      message: `¿Confirmas eliminar esta factura de ${inv.supplierName} (${inv.currency} ${inv.totalOriginal.toFixed(2)}) del libro del cliente?`,
+      confirmLabel: 'Eliminar duplicada',
+      cancelLabel: 'Cancelar',
+      destructive: true,
+      onConfirm: () => {
+        setInvoices(prev => prev.filter(i => i.id !== inv.id));
+        appendAuditLog(
+          'ELIMINAR_FACTURA_DUPLICADA',
+          currentUser?.email || 'contador:auditor',
+          `Factura duplicada #${inv.invoiceNumber} (${inv.supplierRif}) eliminada por el contador`
+        );
+      }
+    });
+  }
 
   const tenantEmployees = useMemo(
     () => employees.filter(e => e.tenantId === activeTenant.id),
@@ -2607,102 +2678,114 @@ export default function App() {
       return;
     }
 
-    const dupExists = invoices.some(
-      inv =>
-        inv.tenantId === activeTenant.id &&
-        inv.supplierRif === rifValidation.formatted &&
-        inv.invoiceNumber.toUpperCase() === ocrDraft.invoiceNumber.trim().toUpperCase()
-    );
-    if (dupExists) {
-      setOcrAlertMessage(`BLOQUEO ANTI-FRAUDE: La factura #${ocrDraft.invoiceNumber} del RIF ${rifValidation.formatted} ya existe en este cliente.`);
-      return;
-    }
-
     const vatOriginal = Number(((ocrDraft.taxableBaseOriginal * ocrDraft.vatRate) / 100).toFixed(2));
     const totalOriginal = Number(
       (ocrDraft.taxableBaseOriginal + ocrDraft.exemptOriginal + vatOriginal + ocrDraft.igtfOriginal).toFixed(2)
     );
-    const newId = `inv_${Date.now()}`;
-    const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
-    const auditHash = computeDeterministicHash(lastHash, {
-      newId,
-      rif: rifValidation.formatted,
-      invoiceNumber: ocrDraft.invoiceNumber,
-      totalOriginal
-    });
 
-    const createdInvoice: FiscalInvoice = {
-      id: newId,
-      tenantId: activeTenant.id,
-      bookType: ocrDraft.bookType,
-      docType: ocrDraft.docType,
-      channel: ocrDraft.channel,
-      supplierRif: rifValidation.formatted,
-      supplierName: ocrDraft.supplierName,
-      hasBuyerRifOnTicket: ocrDraft.hasBuyerRifOnTicket,
-      invoiceNumber: ocrDraft.invoiceNumber,
-      controlNumber: ocrDraft.controlNumber,
-      emissionDate: ocrDraft.emissionDate,
-      emissionTime: ocrDraft.emissionTime,
-      currency: ocrDraft.currency,
-      bcvRateOnDate: bcvRate,
-      taxableBaseOriginal: ocrDraft.taxableBaseOriginal,
-      exemptOriginal: ocrDraft.exemptOriginal,
-      vatRate: ocrDraft.vatRate,
-      vatOriginal,
-      igtfOriginal: ocrDraft.igtfOriginal,
-      totalOriginal,
-      vatRetentionRate: ocrDraft.vatRetentionRate,
-      islrRetentionRate: ocrDraft.islrRetentionRate,
-      status: 'BORRADOR_IA',
-      sourceChannel: origin,
-      auditHash
+    const executeSaveOcrInvoice = () => {
+      const newId = `inv_${Date.now()}`;
+      const lastHash = auditLogs.length > 0 ? auditLogs[auditLogs.length - 1].sha256Hash : 'GENESIS_SENIAT_2026';
+      const auditHash = computeDeterministicHash(lastHash, {
+        newId,
+        rif: rifValidation.formatted,
+        invoiceNumber: ocrDraft.invoiceNumber,
+        totalOriginal
+      });
+
+      const createdInvoice: FiscalInvoice = {
+        id: newId,
+        tenantId: activeTenant.id,
+        bookType: ocrDraft.bookType,
+        docType: ocrDraft.docType,
+        channel: ocrDraft.channel,
+        supplierRif: rifValidation.formatted,
+        supplierName: ocrDraft.supplierName,
+        hasBuyerRifOnTicket: ocrDraft.hasBuyerRifOnTicket,
+        invoiceNumber: ocrDraft.invoiceNumber,
+        controlNumber: ocrDraft.controlNumber,
+        emissionDate: ocrDraft.emissionDate,
+        emissionTime: ocrDraft.emissionTime,
+        currency: ocrDraft.currency,
+        bcvRateOnDate: bcvRate,
+        taxableBaseOriginal: ocrDraft.taxableBaseOriginal,
+        exemptOriginal: ocrDraft.exemptOriginal,
+        vatRate: ocrDraft.vatRate,
+        vatOriginal,
+        igtfOriginal: ocrDraft.igtfOriginal,
+        totalOriginal,
+        vatRetentionRate: ocrDraft.vatRetentionRate,
+        islrRetentionRate: ocrDraft.islrRetentionRate,
+        status: 'BORRADOR_IA',
+        sourceChannel: origin,
+        auditHash
+      };
+
+      setInvoices(prev => [createdInvoice, ...prev]);
+      learnFromConfirmedInvoice({
+        tenantId: activeTenant.id,
+        supplierRif: createdInvoice.supplierRif,
+        supplierName: createdInvoice.supplierName,
+        channel: createdInvoice.channel,
+        currency: createdInvoice.currency,
+        vatRate: createdInvoice.vatRate
+      }).catch(() => {});
+      appendAuditLog(
+        origin === 'TELEGRAM_BOT' ? 'INGESTA_TELEGRAM_OCR' : 'INGESTA_WEB_OCR',
+        origin === 'TELEGRAM_BOT' ? `telegram:${activeTenant.telegramCode}` : 'web:scanner_ia',
+        newId,
+        `Factura #${createdInvoice.invoiceNumber} (${createdInvoice.supplierName}) por ${createdInvoice.currency} ${createdInvoice.totalOriginal.toFixed(2)}`,
+        simulateAes256GcmEncrypt(`RIF:${createdInvoice.supplierRif}|FACT:${createdInvoice.invoiceNumber}|TOTAL:${createdInvoice.totalOriginal}`)
+      );
+
+      if (origin === 'TELEGRAM_BOT') {
+        const nowTime = new Date().toTimeString().slice(0, 5);
+        setTelegramSimMessages(prev => [
+          ...prev,
+          {
+            id: `u_${Date.now()}`,
+            sender: 'user',
+            text: `[FOTO] ${ocrDraft.supplierName} #${ocrDraft.invoiceNumber}`,
+            time: nowTime
+          },
+          {
+            id: `b_${Date.now() + 1}`,
+            sender: 'bot',
+            text: `Recibida para ${activeTenant.name}: Factura #${ocrDraft.invoiceNumber} (${rifValidation.formatted}) por ${ocrDraft.currency} ${totalOriginal.toFixed(2)}. Hash SHA-256: ${auditHash.slice(0, 12)}...`,
+            time: nowTime
+          }
+        ]);
+      }
+
+      setOcrAlertMessage(`Factura #${createdInvoice.invoiceNumber} indexada exitosamente en ${activeTenant.name} con Hash SHA-256.`);
+      setOcrDraft(prev => ({
+        ...prev,
+        invoiceNumber: `000${Math.floor(10000 + Math.random() * 89999)}`,
+        controlNumber: `00-00${Math.floor(100000 + Math.random() * 899999)}`
+      }));
     };
 
-    setInvoices(prev => [createdInvoice, ...prev]);
-    // Aprendizaje automático local en FiscalTemplateDB (IndexedDB aislado por tenantId)
-    learnFromConfirmedInvoice({
-      tenantId: activeTenant.id,
-      supplierRif: createdInvoice.supplierRif,
-      supplierName: createdInvoice.supplierName,
-      channel: createdInvoice.channel,
-      currency: createdInvoice.currency,
-      vatRate: createdInvoice.vatRate
-    }).catch(() => {});
-    appendAuditLog(
-      origin === 'TELEGRAM_BOT' ? 'INGESTA_TELEGRAM_OCR' : 'INGESTA_WEB_OCR',
-      origin === 'TELEGRAM_BOT' ? `telegram:${activeTenant.telegramCode}` : 'web:scanner_ia',
-      newId,
-      `Factura #${createdInvoice.invoiceNumber} (${createdInvoice.supplierName}) por ${createdInvoice.currency} ${createdInvoice.totalOriginal.toFixed(2)}`,
-      simulateAes256GcmEncrypt(`RIF:${createdInvoice.supplierRif}|FACT:${createdInvoice.invoiceNumber}|TOTAL:${createdInvoice.totalOriginal}`)
+    const dupMatch = invoices.find(
+      inv =>
+        inv.tenantId === activeTenant.id &&
+        inv.supplierRif === rifValidation.formatted &&
+        (normalizeInvNum(inv.invoiceNumber) === normalizeInvNum(ocrDraft.invoiceNumber) ||
+          (inv.emissionDate === ocrDraft.emissionDate &&
+            Math.abs(Number(inv.totalOriginal || 0) - totalOriginal) < 0.01))
     );
-
-    if (origin === 'TELEGRAM_BOT') {
-      const nowTime = new Date().toTimeString().slice(0, 5);
-      setTelegramSimMessages(prev => [
-        ...prev,
-        {
-          id: `u_${Date.now()}`,
-          sender: 'user',
-          text: `[FOTO] ${ocrDraft.supplierName} #${ocrDraft.invoiceNumber}`,
-          time: nowTime
-        },
-        {
-          id: `b_${Date.now() + 1}`,
-          sender: 'bot',
-          text: `Recibida para ${activeTenant.name}: Factura #${ocrDraft.invoiceNumber} (${rifValidation.formatted}) por ${ocrDraft.currency} ${totalOriginal.toFixed(2)}. Hash SHA-256: ${auditHash.slice(0, 12)}...`,
-          time: nowTime
-        }
-      ]);
+    if (dupMatch) {
+      setConfirmDialog({
+        title: 'Posible Factura Duplicada Detectada',
+        message: `Ya existe una factura similar de ${dupMatch.supplierName} (#${dupMatch.invoiceNumber}, fecha ${dupMatch.emissionDate}, monto ${dupMatch.currency} ${dupMatch.totalOriginal.toFixed(2)}). ¿Deseas guardarla de todas formas o cancelar?`,
+        confirmLabel: 'Guardar de todos modos',
+        cancelLabel: 'Cancelar (No duplicar)',
+        destructive: false,
+        onConfirm: executeSaveOcrInvoice
+      });
+      return;
     }
 
-    setOcrAlertMessage(`Factura #${createdInvoice.invoiceNumber} indexada exitosamente en ${activeTenant.name} con Hash SHA-256.`);
-    // Advance invoice number for easy repeat testing
-    setOcrDraft(prev => ({
-      ...prev,
-      invoiceNumber: `000${Math.floor(10000 + Math.random() * 89999)}`,
-      controlNumber: `00-00${Math.floor(100000 + Math.random() * 899999)}`
-    }));
+    executeSaveOcrInvoice();
   }
 
   async function handleRegisterSaasPayment() {
@@ -5140,6 +5223,23 @@ export default function App() {
               </div>
             </div>
 
+            {/* Alerta de Posibles Facturas Duplicadas */}
+            {duplicateSuspectMap.size > 0 && (
+              <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-amber-300">
+                      Alerta de Posibles Facturas Duplicadas ({duplicateSuspectMap.size})
+                    </span>
+                    <p className="text-[11px] text-amber-200/80">
+                      Se detectaron facturas repetidas por mismo RIF y número o misma fecha y monto. El contador decide si eliminarlas o conservarlas.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Listado con Semáforo Visual */}
             <div className="space-y-3">
               {semaforoFilteredInvoices.length === 0 ? (
@@ -5152,12 +5252,15 @@ export default function App() {
                   const isAdvertencia = !isVatDeductible(inv);
                   const isBorrador = inv.status === 'BORRADOR_IA';
                   const totalBsVal = toVes(inv.totalOriginal, inv.currency, inv.bcvRateOnDate);
+                  const dupReason = duplicateSuspectMap.get(inv.id);
 
                   return (
                     <div
                       key={inv.id}
                       className={`p-4 rounded-xl border transition-all flex flex-wrap items-center justify-between gap-4 ${
-                        isConforme
+                        dupReason
+                          ? 'bg-amber-950/25 border-amber-500/50'
+                          : isConforme
                           ? 'bg-emerald-950/15 border-emerald-500/30'
                           : isAdvertencia
                           ? 'bg-amber-950/20 border-amber-500/30'
@@ -5188,7 +5291,30 @@ export default function App() {
                             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--border-subtle)] text-[var(--muted-foreground)]">
                               {inv.bookType}
                             </span>
+                            {dupReason && (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold">
+                                POSIBLE DUPLICADA ({dupReason})
+                              </span>
+                            )}
                           </div>
+                          {dupReason && (
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDuplicateInvoice(inv)}
+                                className="px-2.5 py-1 rounded-md text-[11px] font-mono bg-rose-500/20 border border-rose-500/40 text-rose-300 hover:bg-rose-500/30 transition"
+                              >
+                                Eliminar duplicada
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDismissDuplicate(inv.id)}
+                                className="px-2.5 py-1 rounded-md text-[11px] font-mono bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 hover:bg-emerald-500/25 transition"
+                              >
+                                Conservar (No es duplicada)
+                              </button>
+                            </div>
+                          )}
 
                           <div className="text-xs">
                             {isConforme && (
@@ -5727,58 +5853,6 @@ export default function App() {
                   )}
                 </div>
               </div>
-
-              {/* Preset Scenarios Bar */}
-              {ocrPresets.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <span className="text-xs font-mono opacity-75">Plantillas de Prueba Rápida:</span>
-                  {ocrPresets.map((preset, idx) => (
-                    <div
-                      key={preset.label}
-                      className="inline-flex items-center rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] overflow-hidden text-xs font-mono group"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleLoadOcrPreset(preset)}
-                        className="px-2.5 py-1 hover:text-[var(--accent-primary)] transition-colors"
-                        title="Cargar datos de plantilla"
-                      >
-                        {preset.label}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteOcrPreset(idx);
-                        }}
-                        className="px-1.5 py-1 text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/10 transition-colors border-l border-[var(--border-subtle)]"
-                        title="Eliminar esta plantilla"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={handleClearAllOcrPresets}
-                    className="px-2 py-1 text-[11px] font-mono rounded border border-rose-500/30 text-rose-400/80 hover:bg-rose-500/10 hover:text-rose-300 transition-colors"
-                    title="Eliminar todas las plantillas de prueba rápida"
-                  >
-                    Borrar todas
-                  </button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 pt-1 text-[11px] font-mono text-zinc-500">
-                  <span>Plantillas de prueba eliminadas.</span>
-                  <button
-                    type="button"
-                    onClick={handleRestoreOcrPresets}
-                    className="underline hover:text-[var(--accent-primary)] transition-colors"
-                  >
-                    Restaurar si las necesitas
-                  </button>
-                </div>
-              )}
 
               {ocrAlertMessage && (
                 <div className="p-3 rounded border border-[var(--accent-primary)] bg-[var(--bg-elevated)] text-xs font-mono flex items-center justify-between">
