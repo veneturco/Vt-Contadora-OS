@@ -376,6 +376,7 @@ export default function App() {
   const [tenants, setTenants] = useState<Tenant[]>(() => safeGetStorage('vt_tenants_v31', INITIAL_TENANTS));
   const [selectedTenantId, setSelectedTenantId] = useState<string>(() => INITIAL_TENANTS[0].id);
   const [invoices, setInvoices] = useState<FiscalInvoice[]>(() => safeGetStorage('vt_invoices_v31', INITIAL_INVOICES));
+  const [ocrPresets, setOcrPresets] = useState(() => safeGetStorage('vt_ocr_presets_v1', OCR_PRESETS));
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => safeGetStorage('vt_audit_v31', INITIAL_AUDIT_LOGS));
   const [payments, setPayments] = useState<SaasPaymentRecord[]>(() => safeGetStorage('vt_payments_v31', INITIAL_PAYMENTS));
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
@@ -2192,8 +2193,9 @@ export default function App() {
     setAdjustmentTarget(null);
   }
 
-  function handleLoadOcrPreset(index: number) {
-    const p = OCR_PRESETS[index];
+  function handleLoadOcrPreset(presetOrIndex: number | typeof OCR_PRESETS[0]) {
+    const p = typeof presetOrIndex === 'number' ? ocrPresets[presetOrIndex] : presetOrIndex;
+    if (!p) return;
     setOcrScanning(true);
     setOcrAlertMessage(null);
     setTimeout(() => {
@@ -2216,6 +2218,24 @@ export default function App() {
       }));
       setOcrScanning(false);
     }, 450);
+  }
+
+  function handleDeleteOcrPreset(index: number) {
+    setOcrPresets((prev: typeof OCR_PRESETS) => {
+      const updated = prev.filter((_, idx) => idx !== index);
+      safeSetStorage('vt_ocr_presets_v1', updated);
+      return updated;
+    });
+  }
+
+  function handleClearAllOcrPresets() {
+    setOcrPresets([]);
+    safeSetStorage('vt_ocr_presets_v1', []);
+  }
+
+  function handleRestoreOcrPresets() {
+    setOcrPresets(OCR_PRESETS);
+    safeSetStorage('vt_ocr_presets_v1', OCR_PRESETS);
   }
 
   function decodeQrFromDataUrl(dataUrl: string): Promise<string | undefined> {
@@ -5696,18 +5716,56 @@ export default function App() {
               </div>
 
               {/* Preset Scenarios Bar */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-xs font-mono opacity-75">Plantillas de Prueba Rápida:</span>
-                {OCR_PRESETS.map((preset, idx) => (
+              {ocrPresets.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="text-xs font-mono opacity-75">Plantillas de Prueba Rápida:</span>
+                  {ocrPresets.map((preset, idx) => (
+                    <div
+                      key={preset.label}
+                      className="inline-flex items-center rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] overflow-hidden text-xs font-mono group"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleLoadOcrPreset(preset)}
+                        className="px-2.5 py-1 hover:text-[var(--accent-primary)] transition-colors"
+                        title="Cargar datos de plantilla"
+                      >
+                        {preset.label}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteOcrPreset(idx);
+                        }}
+                        className="px-1.5 py-1 text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/10 transition-colors border-l border-[var(--border-subtle)]"
+                        title="Eliminar esta plantilla"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
                   <button
-                    key={preset.label}
-                    onClick={() => handleLoadOcrPreset(idx)}
-                    className="px-2.5 py-1 text-xs font-mono rounded border border-[var(--border-subtle)] bg-[var(--bg-elevated)] hover:border-[var(--accent-primary)] transition-colors"
+                    type="button"
+                    onClick={handleClearAllOcrPresets}
+                    className="px-2 py-1 text-[11px] font-mono rounded border border-rose-500/30 text-rose-400/80 hover:bg-rose-500/10 hover:text-rose-300 transition-colors"
+                    title="Eliminar todas las plantillas de prueba rápida"
                   >
-                    {preset.label}
+                    Borrar todas
                   </button>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 pt-1 text-[11px] font-mono text-zinc-500">
+                  <span>Plantillas de prueba eliminadas.</span>
+                  <button
+                    type="button"
+                    onClick={handleRestoreOcrPresets}
+                    className="underline hover:text-[var(--accent-primary)] transition-colors"
+                  >
+                    Restaurar si las necesitas
+                  </button>
+                </div>
+              )}
 
               {ocrAlertMessage && (
                 <div className="p-3 rounded border border-[var(--accent-primary)] bg-[var(--bg-elevated)] text-xs font-mono flex items-center justify-between">
