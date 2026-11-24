@@ -53,6 +53,7 @@ const {
 const {
   readWorkspaceState,
   writeWorkspaceState,
+  applyWorkspaceDelta,
   appendTenantInvoice,
   deleteTenantWorkspace
 } = require('./services/workspaceStore');
@@ -1196,7 +1197,8 @@ app.delete('/api/accountants/:id', verifyFirebaseToken, requireSuperAdmin, async
 
 app.get('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
   try {
-    const result = await readWorkspaceState(db, req.user);
+    const period = typeof req.query?.period === 'string' ? req.query.period.trim() : undefined;
+    const result = await readWorkspaceState(db, req.user, { period });
     return res.json({ ok: true, empty: result.empty, partitioned: result.partitioned, state: result.state });
   } catch (err) {
     next(err);
@@ -1392,6 +1394,15 @@ app.post('/api/guardian/telemetry', telemetryLimiter, async (req, res, next) => 
       userAgent: req.headers['user-agent'] || null
     });
     return res.status(201).json({ ok: true, alert });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.patch('/api/workspace/delta', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+  try {
+    const result = await applyWorkspaceDelta(db, req.user, req.body || {});
+    return res.json(result);
   } catch (err) {
     next(err);
   }

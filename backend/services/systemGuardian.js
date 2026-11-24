@@ -2,7 +2,11 @@
 // VeneTurco Fiscal OS v3.4
 const crypto = require('crypto');
 const { validateVenezuelanRIF } = require('./seniatEngine');
-const { PARTITIONED_COLLECTION } = require('./workspaceStore');
+const {
+  PARTITIONED_COLLECTION,
+  hydrateTenantDocShards,
+  applyWorkspaceDelta
+} = require('./workspaceStore');
 
 const GUARDIAN_ALERTS_COL = 'vt_guardian_alerts';
 const GUARDIAN_OCR_MEMORY_COL = 'vt_guardian_ocr_memory';
@@ -562,7 +566,8 @@ async function runSystemGuardianAudit(db, { autoRepair = false, env = process.en
     const snap = await db.collection(PARTITIONED_COLLECTION).get();
     const docs = snap && !snap.empty && Array.isArray(snap.docs) ? snap.docs : [];
     for (const d of docs) {
-      const data = d.data() || {};
+      const rawData = d.data() || {};
+      const data = await hydrateTenantDocShards(db, rawData);
       const tenant = data.tenant || { id: d.id };
       const invoices = Array.isArray(data.invoices) ? data.invoices : [];
       tenantsAudited += 1;
@@ -624,14 +629,22 @@ async function runSystemGuardianAudit(db, { autoRepair = false, env = process.en
       });
 
       if (autoRepair && tenantDirty) {
-        await db.collection(PARTITIONED_COLLECTION).doc(d.id).set(
-          {
-            invoices: repairedInvoices,
-            updatedAt: nowIso,
-            updatedBy: 'guardian:auto_repair'
-          },
-          { merge: true }
-        );
+        if (rawData.shardedByPeriod) {
+          await applyWorkspaceDelta(
+            db,
+            { role: 'superadmin', email: 'guardian:auto_repair' },
+            { tenantId: d.id, tenant, upsertInvoices: repairedInvoices }
+          );
+        } else {
+          await db.collection(PARTITIONED_COLLECTION).doc(d.id).set(
+            {
+              invoices: repairedInvoices,
+              updatedAt: nowIso,
+              updatedBy: 'guardian:auto_repair'
+            },
+            { merge: true }
+          );
+        }
       }
     }
   } catch (err) {
