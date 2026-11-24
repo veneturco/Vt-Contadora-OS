@@ -43,7 +43,7 @@ import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { enhanceDocumentForOcr, runLocalBrowserOcr } from './utils/documentEnhancer';
 import { lookupLocalVendorHints, learnFromConfirmedInvoice } from './utils/fiscalTemplateDb';
-import { safeApiRequest } from './services/apiClient';
+import { safeApiRequest, reportClientErrorTelemetry } from './services/apiClient';
 
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
 import { AppleEmptyState } from './components/AppleEmptyState';
@@ -289,6 +289,7 @@ export default function App() {
       const wsRes = await safeApiRequest<{
         ok: boolean;
         empty: boolean;
+        partitioned?: boolean;
         state: {
           tenants?: Tenant[];
           invoices?: FiscalInvoice[];
@@ -301,15 +302,18 @@ export default function App() {
 
       if (!cancelled && wsRes.ok && wsRes.data && !wsRes.data.empty && wsRes.data.state) {
         const st = wsRes.data.state;
-        if (Array.isArray(st.tenants) && st.tenants.length > 0) {
-          setTenants(st.tenants);
-          setSelectedTenantId(prev => (st.tenants!.some(t => t.id === prev) ? prev : st.tenants![0].id));
+        const isPart = Boolean(wsRes.data.partitioned);
+        if (Array.isArray(st.tenants) && (st.tenants.length > 0 || isPart)) {
+          if (st.tenants.length > 0) {
+            setTenants(st.tenants);
+            setSelectedTenantId(prev => (st.tenants!.some(t => t.id === prev) ? prev : st.tenants![0].id));
+          }
         }
-        if (Array.isArray(st.invoices) && st.invoices.length > 0) setInvoices(st.invoices);
-        if (Array.isArray(st.employees) && st.employees.length > 0) setEmployees(st.employees);
-        if (Array.isArray(st.payments) && st.payments.length > 0) setPayments(st.payments);
-        if (Array.isArray(st.bankMovements) && st.bankMovements.length > 0) setBankMovements(st.bankMovements);
-        if (Array.isArray(st.auditLogs) && st.auditLogs.length > 0) setAuditLogs(st.auditLogs);
+        if (Array.isArray(st.invoices) && (st.invoices.length > 0 || isPart)) setInvoices(st.invoices);
+        if (Array.isArray(st.employees) && (st.employees.length > 0 || isPart)) setEmployees(st.employees);
+        if (Array.isArray(st.payments) && (st.payments.length > 0 || isPart)) setPayments(st.payments);
+        if (Array.isArray(st.bankMovements) && (st.bankMovements.length > 0 || isPart)) setBankMovements(st.bankMovements);
+        if (Array.isArray(st.auditLogs) && (st.auditLogs.length > 0 || isPart)) setAuditLogs(st.auditLogs);
       }
       if (!cancelled) setWorkspaceCloudHydrated(true);
     })();
@@ -387,33 +391,34 @@ export default function App() {
   const [employees, setEmployees] = useState<PayrollEmployee[]>(() => safeGetStorage('vt_employees_v31', INITIAL_EMPLOYEES));
   const [bankMovements, setBankMovements] = useState<BankMovement[]>(() => safeGetStorage('vt_bank_moves_v32', INITIAL_BANK_MOVEMENTS));
 
-  // Telemetría automática de errores en tiempo real hacia el Guardián del Sistema
+  // Telemetría automática de errores en tiempo real hacia el Guardián del Sistema (incluye pantalla de login y cola offline)
   useEffect(() => {
-    if (!currentUser || typeof window === 'undefined') return;
-    let lastSentAt = 0;
-    const reportError = (message: string, stack?: string) => {
-      const now = Date.now();
-      if (now - lastSentAt < 5000) return;
-      lastSentAt = now;
-      safeApiRequest('/api/guardian/telemetry', {
-        method: 'POST',
-        body: JSON.stringify({
+    if (typeof window === 'undefined') return;
+    const onError = (evt: ErrorEvent) => {
+      if (evt.message) {
+        reportClientErrorTelemetry({
           severity: 'WARNING',
           category: 'FRONTEND_RUNTIME',
-          message,
-          stack,
+          message: evt.message,
+          stack: evt.error?.stack,
           route: window.location.hash || '#/',
-          tenantId: selectedTenantId
-        })
-      }).catch(() => {});
-    };
-    const onError = (evt: ErrorEvent) => {
-      if (evt.message) reportError(evt.message, evt.error?.stack);
+          tenantId: selectedTenantId,
+          userEmail: currentUser?.email
+        });
+      }
     };
     const onRejection = (evt: PromiseRejectionEvent) => {
       const msg = evt.reason instanceof Error ? evt.reason.message : String(evt.reason || 'Unhandled rejection');
       const stack = evt.reason instanceof Error ? evt.reason.stack : undefined;
-      reportError(msg, stack);
+      reportClientErrorTelemetry({
+        severity: 'WARNING',
+        category: 'UNHANDLED_PROMISE',
+        message: msg,
+        stack,
+        route: window.location.hash || '#/',
+        tenantId: selectedTenantId,
+        userEmail: currentUser?.email
+      });
     };
     window.addEventListener('error', onError);
     window.addEventListener('unhandledrejection', onRejection);
@@ -698,6 +703,10 @@ export default function App() {
     safeSetStorage('vt_accountants_v32', accountants);
   }, [accountants]);
 
+  useEffect(() => {
+    safeSetStorage('vt_bank_moves_v32', bankMovements);
+  }, [bankMovements]);
+
   // Recepción en vivo de facturas vía Server-Sent Events (SSE) desde Telegram Bot (con ticket efímero de un solo uso)
   useEffect(() => {
     if (!currentUser || typeof window === 'undefined' || !('EventSource' in window)) return;
@@ -741,7 +750,7 @@ export default function App() {
   }, [currentUser, selectedTenantId]);
 
   const activeTenant = useMemo(
-    () => tenants.find(t => t.id === selectedTenantId) || tenants[0],
+    () => tenants.find(t => t.id === selectedTenantId) || tenants[0] || INITIAL_TENANTS[0],
     [tenants, selectedTenantId]
   );
 
@@ -806,9 +815,16 @@ export default function App() {
   }
 
   function handleDeleteDuplicateInvoice(inv: FiscalInvoice) {
+    if (inv.status === 'APROBADA') {
+      setSubPayToast(
+        `Bloqueo COT (10 años): La factura #${inv.invoiceNumber} ya está APROBADA y sellada. Emita una Nota de Crédito (03) o conserve el asiento.`
+      );
+      setTimeout(() => setSubPayToast(null), 6000);
+      return;
+    }
     setConfirmDialog({
-      title: `Eliminar factura duplicada #${inv.invoiceNumber}`,
-      message: `¿Confirmas eliminar esta factura de ${inv.supplierName} (${inv.currency} ${inv.totalOriginal.toFixed(2)}) del libro del cliente?`,
+      title: `Eliminar borrador duplicado #${inv.invoiceNumber}`,
+      message: `¿Confirmas eliminar este borrador de ${inv.supplierName} (${inv.currency} ${inv.totalOriginal.toFixed(2)}) del libro del cliente?`,
       confirmLabel: 'Eliminar duplicada',
       cancelLabel: 'Cancelar',
       destructive: true,
@@ -817,7 +833,8 @@ export default function App() {
         appendAuditLog(
           'ELIMINAR_FACTURA_DUPLICADA',
           currentUser?.email || 'contador:auditor',
-          `Factura duplicada #${inv.invoiceNumber} (${inv.supplierRif}) eliminada por el contador`
+          inv.id,
+          `Borrador duplicado #${inv.invoiceNumber} (${inv.supplierRif}) eliminado por el contador`
         );
       }
     });
@@ -1847,10 +1864,31 @@ export default function App() {
   }
 
   function handleLogout() {
+    setWorkspaceCloudHydrated(false);
     setCurrentUser(null);
-    localStorage.removeItem('vt_auth_user');
-    localStorage.removeItem('vt_auth_token');
-    localStorage.removeItem('vt_last_login_password');
+    setImpersonatedAccountant(null);
+    const keysToClear = [
+      'vt_auth_user',
+      'vt_auth_token',
+      'vt_last_login_password',
+      'vt_tenants_v31',
+      'vt_invoices_v31',
+      'vt_audit_v31',
+      'vt_payments_v31',
+      'vt_employees_v31',
+      'vt_bank_moves_v32',
+      'vt_accountants_v32',
+      'vt_dismissed_dups_v1'
+    ];
+    keysToClear.forEach(k => localStorage.removeItem(k));
+    setTenants(INITIAL_TENANTS);
+    setSelectedTenantId(INITIAL_TENANTS[0].id);
+    setInvoices(INITIAL_INVOICES);
+    setEmployees(INITIAL_EMPLOYEES);
+    setPayments(INITIAL_PAYMENTS);
+    setBankMovements(INITIAL_BANK_MOVEMENTS);
+    setAuditLogs(INITIAL_AUDIT_LOGS);
+    setAccountants(INITIAL_ACCOUNTANTS);
   }
 
   async function handleCreateTenant(e: React.FormEvent) {
@@ -2069,11 +2107,15 @@ export default function App() {
     let newRate: number | null = null;
     let source = 'BCV';
 
-    // 1. Intentar backend del sistema (/api/bcv/sync-now o /api/bcv/latest)
-    const res = await safeApiRequest<{ usdVes: number; status: string; source: string }>('/api/bcv/sync-now', {
-      method: 'POST',
-      timeoutMs: 8000
-    });
+    // 1. Intentar backend del sistema (POST autenticado o GET público en login)
+    const hasAuthToken = typeof window !== 'undefined' && Boolean(window.localStorage.getItem('vt_auth_token'));
+    const res = await safeApiRequest<{ usdVes: number; status: string; source: string }>(
+      hasAuthToken ? '/api/bcv/sync-now' : '/api/bcv/latest',
+      {
+        method: hasAuthToken ? 'POST' : 'GET',
+        timeoutMs: 8000
+      }
+    );
 
     if (res.ok && res.data?.usdVes && res.data.usdVes > 100) {
       newRate = Number(res.data.usdVes.toFixed(2));
@@ -2145,16 +2187,26 @@ export default function App() {
     const purchasesVatBs = tenantInvoices
       .filter(i => i.bookType === 'COMPRA' && isVatDeductible(i))
       .reduce((acc, i) => acc + toVes(i.vatOriginal, i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1), 0);
-    const withheldBs = tenantInvoices.reduce(
-      (acc, i) => acc + toVes(i.vatOriginal * (i.vatRetentionRate / 100), i.currency, i.bcvRateOnDate),
-      0
-    );
+    // Retenciones soportadas en ventas (practicadas por clientes SPE) reducen la cuota propia
+    const salesWithheldByClientsBs = tenantInvoices
+      .filter(i => i.bookType === 'VENTA')
+      .reduce(
+        (acc, i) => acc + toVes(i.vatOriginal * (i.vatRetentionRate / 100), i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1),
+        0
+      );
+    // Retenciones practicadas a proveedores en compras (Agente SPE SNAT/2015/0049) se enteran íntegras al SENIAT
+    const purchasesWithheldToSuppliersBs = tenantInvoices
+      .filter(i => i.bookType === 'COMPRA')
+      .reduce(
+        (acc, i) => acc + toVes(i.vatOriginal * (i.vatRetentionRate / 100), i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1),
+        0
+      );
     const igtfBs = tenantInvoices.reduce(
-      (acc, i) => acc + toVes(i.igtfOriginal, i.currency, i.bcvRateOnDate),
+      (acc, i) => acc + toVes(i.igtfOriginal, i.currency, i.bcvRateOnDate) * (i.docType === '03' ? -1 : 1),
       0
     );
-    const netIvaQuotaBs = Math.max(0, salesVatBs - purchasesVatBs - withheldBs);
-    const totalToPayBs = netIvaQuotaBs + igtfBs;
+    const netOwnIvaQuotaBs = Math.max(0, salesVatBs - purchasesVatBs - salesWithheldByClientsBs);
+    const totalToPayBs = netOwnIvaQuotaBs + Math.max(0, purchasesWithheldToSuppliersBs) + Math.max(0, igtfBs);
     const totalToPayUsd = totalToPayBs / Math.max(1, bcvRate);
 
     const msg =
@@ -2163,9 +2215,10 @@ export default function App() {
       `🗓️ *Fecha Límite (Terminal ${speCalendar.terminalDigit}):* ${speCalendar.quincena1Deadline}\n\n` +
       `• *Débito Fiscal (Ventas):* Bs. ${salesVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
       `• *Crédito Fiscal Deducible (Compras):* Bs. ${purchasesVatBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
-      `• *Retenciones IVA del Período:* Bs. ${withheldBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
-      `• *IGTF Divisas (3%):* Bs. ${igtfBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n` +
-      `🏛️ *TOTAL ESTIMADO A PAGAR SENIAT:* *Bs. ${totalToPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
+      `• *Cuota Propia IVA (Forma 30):* Bs. ${netOwnIvaQuotaBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
+      `• *Retenciones IVA a Enterar (Proveedores):* Bs. ${Math.max(0, purchasesWithheldToSuppliersBs).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n` +
+      `• *IGTF Divisas (3%):* Bs. ${Math.max(0, igtfBs).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n` +
+      `🏛️ *TOTAL ESTIMADO A ENTERAR SENIAT:* *Bs. ${totalToPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*\n` +
       `💵 *Ref. Bimoneda:* USD $${totalToPayUsd.toFixed(2)} (@ Tasa BCV ${bcvRate.toFixed(2)} Bs.)\n\n` +
       `Los archivos TXT de 16 columnas y Libros Fiscales ya se encuentran auditados y listos en *VT Fiscal OS*.`;
 
@@ -2349,23 +2402,34 @@ export default function App() {
   }
 
   function handleClearTenantInvoices() {
+    const draftCount = tenantInvoices.filter(inv => inv.status !== 'APROBADA').length;
+    const lockedCount = tenantInvoices.filter(inv => inv.status === 'APROBADA').length;
+    if (draftCount === 0 && lockedCount > 0) {
+      setOcrAlertMessage(
+        `Protección COT (10 años): Las ${lockedCount} factura(s) de "${activeTenant.name}" ya están APROBADAS y son inmutables.`
+      );
+      return;
+    }
     setConfirmDialog({
-      title: `Vaciar todas las facturas de ${activeTenant.name}`,
-      message: `¿Desea borrar las ${tenantInvoices.length} factura(s) registradas en "${activeTenant.name}" (incluyendo facturas de prueba anteriores) para dejar la empresa completamente en blanco?`,
-      confirmLabel: 'Sí, dejar en blanco',
+      title: `Limpiar borradores pendientes de ${activeTenant.name}`,
+      message:
+        lockedCount > 0
+          ? `Se eliminarán ${draftCount} borrador(es) no aprobados de "${activeTenant.name}". Las ${lockedCount} factura(s) ya APROBADAS se conservarán intactas por mandato del COT (10 años).`
+          : `¿Desea descartar los ${draftCount} borrador(es) en "${activeTenant.name}" para dejar la bandeja limpia?`,
+      confirmLabel: 'Limpiar borradores',
       destructive: true,
       onConfirm: () => {
-        setInvoices(prev => prev.filter(inv => inv.tenantId !== activeTenant.id));
+        setInvoices(prev => prev.filter(inv => inv.tenantId !== activeTenant.id || inv.status === 'APROBADA'));
         setOcrDraft(createEmptyOcrDraft());
         setOcrUploadedFileName('Ningún archivo cargado');
-        setOcrAlertMessage(`Todas las facturas de "${activeTenant.name}" fueron borradas. La bandeja quedó en blanco.`);
+        setOcrAlertMessage(`Se limpiaron ${draftCount} borrador(es) de "${activeTenant.name}" respetando los documentos aprobados.`);
         appendAuditLog(
-          'LIMPIEZA_BANDEJA_FACTURAS',
+          'LIMPIEZA_BANDEJA_BORRADORES',
           currentUser?.email || 'admin:contador',
           activeTenant.id,
-          `Bandeja de facturas vaciada para pruebas/reinicio en ${activeTenant.name}`
+          `${draftCount} borrador(es) limpiados en ${activeTenant.name} (${lockedCount} aprobadas preservadas COT)`
         );
-        setSubPayToast(`Bandeja de "${activeTenant.name}" dejada en blanco (0 facturas).`);
+        setSubPayToast(`Borradores de "${activeTenant.name}" limpiados (${lockedCount} aprobadas protegidas).`);
         setTimeout(() => setSubPayToast(null), 4500);
       }
     });
@@ -2915,9 +2979,13 @@ export default function App() {
   }
 
   async function handleRegenerateTelegramCode() {
-    const apiRes = await safeApiRequest<{ telegramCode?: string }>('/api/saas/generate-telegram-code', {
+    const apiRes = await safeApiRequest<{ code?: string; telegramCode?: string }>('/api/saas/generate-telegram-code', {
       method: 'POST',
-      body: JSON.stringify({ tenantId: activeTenant.id })
+      body: JSON.stringify({
+        tenantId: activeTenant.id,
+        companyName: activeTenant.name,
+        rif: activeTenant.rif
+      })
     });
     if (!apiRes.ok && apiRes.status !== 0) {
       setSubPayToast(`Error al regenerar código Telegram: ${apiRes.error || 'No autorizado'}`);
@@ -2925,16 +2993,16 @@ export default function App() {
       return;
     }
     const randomHex = Math.floor(0x100000 + Math.random() * 0xefffff).toString(16).toUpperCase();
-    const prefix = activeTenant.name.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase();
-    const newCode = apiRes.data?.telegramCode || `VT-${prefix}-${randomHex}`;
+    const prefix = activeTenant.name.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() || 'VENE';
+    const newCode = apiRes.data?.code || apiRes.data?.telegramCode || `VT-${prefix}-${randomHex}`;
     setTenants(prev => prev.map(t => (t.id === activeTenant.id ? { ...t, telegramCode: newCode } : t)));
     appendAuditLog(
       'ROTACION_TOKEN_TELEGRAM',
-      'admin:security',
+      currentUser?.email || 'admin:security',
       activeTenant.id,
       `Nuevo código de vinculación Telegram sincronizado para ${activeTenant.name}: ${newCode}`
     );
-    setSubPayToast(`Código Telegram actualizado en servidor: ${newCode}`);
+    setSubPayToast(`Código Telegram activo para /vincular: ${newCode}`);
     setTimeout(() => setSubPayToast(null), 4500);
   }
 
@@ -3417,34 +3485,33 @@ export default function App() {
             </>
           )}
 
-          {/* Barra de Pruebas y Simulación de Ataque */}
-          <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
-            <div className="flex items-center justify-between text-[10px] opacity-75">
-              <span>Laboratorio de Seguridad (Prueba en Vivo):</span>
-              <span className="font-mono text-cyan-300">{failedLoginAttempts}/5 Fallos</span>
+          {/* Barra de Pruebas y Simulación de Ataque (visible solo en desarrollo local) */}
+          {import.meta.env.DEV && (
+            <div className="pt-3 border-t border-[var(--border-subtle)] space-y-2">
+              <div className="flex items-center justify-between text-[10px] opacity-75">
+                <span>Laboratorio de Seguridad (Solo Desarrollo):</span>
+                <span className="font-mono text-cyan-300">{failedLoginAttempts}/5 Fallos</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleSimulateFailedAttempt}
+                  disabled={isAccountLocked}
+                  className="py-1.5 px-2 rounded border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-[10px] font-bold flex items-center justify-center gap-1 transition-all disabled:opacity-40"
+                >
+                  <span>🧪 Simular Fallo (+1)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleUnlockAccount('Desbloquear2026#')}
+                  disabled={!isAccountLocked && failedLoginAttempts === 0}
+                  className="py-1.5 px-2 rounded border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[10px] font-bold flex items-center justify-center gap-1 transition-all disabled:opacity-40"
+                >
+                  <span>⚡ Desbloquear</span>
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleSimulateFailedAttempt}
-                disabled={isAccountLocked}
-                className="py-1.5 px-2 rounded border border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-[10px] font-bold flex items-center justify-center gap-1 transition-all disabled:opacity-40"
-              >
-                <span>🧪 Simular Fallo (+1)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleUnlockAccount('Desbloquear2026#')}
-                disabled={!isAccountLocked && failedLoginAttempts === 0}
-                className="py-1.5 px-2 rounded border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[10px] font-bold flex items-center justify-center gap-1 transition-all disabled:opacity-40"
-              >
-                <span>⚡ Desbloquear</span>
-              </button>
-            </div>
-            <p className="text-[10px] opacity-65 text-center">
-              Clave autorizada demo: <code className="text-cyan-300 font-bold">Seniat2026#</code>
-            </p>
-          </div>
+          )}
         </form>
 
         {/* Modal de Desbloqueo por Clave Maestra */}
@@ -7958,9 +8025,28 @@ export default function App() {
                   <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px]">
                     Doble Factor activado en Cloud Firestore. El inicio de sesión Super-Admin exige código TOTP en el servidor antes de emitir el token.
                   </div>
+                  <div>
+                    <label className="block mb-1 text-[10px] text-[#8E8E93] uppercase">
+                      Código TOTP actual de 6 dígitos (requerido para desactivar):
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={setupTotpCode}
+                      onChange={e => setSetupTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className="w-full p-2.5 rounded-xl bg-white/[0.04] border border-white/10 text-center font-mono tracking-[0.3em] text-sm text-white"
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
+                      if (setupTotpCode.trim().length !== 6) {
+                        setSubPayToast('Ingresa los 6 dígitos actuales de tu app autenticadora para desactivar 2FA.');
+                        setTimeout(() => setSubPayToast(null), 4000);
+                        return;
+                      }
                       setConfirmDialog({
                         title: 'Desactivar Doble Factor (2FA)',
                         message: '¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin? Se recomienda mantenerla activa para máxima seguridad.',
@@ -7969,13 +8055,14 @@ export default function App() {
                         onConfirm: async () => {
                           const res = await safeApiRequest<{ ok: boolean; user: typeof currentUser }>('/api/auth/2fa/disable', {
                             method: 'POST',
-                            body: JSON.stringify({})
+                            body: JSON.stringify({ code: setupTotpCode.trim() })
                           });
                           if (!res.ok || !res.data?.user) {
-                            setSubPayToast(`No se pudo desactivar 2FA: ${res.error || 'Error de servidor'}`);
+                            setSubPayToast(`No se pudo desactivar 2FA: ${res.error || 'Código 2FA inválido'}`);
                             setTimeout(() => setSubPayToast(null), 4000);
                             return;
                           }
+                          setSetupTotpCode('');
                           localStorage.removeItem('vt_superadmin_2fa_secret');
                           localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
                           setCurrentUser(res.data.user);

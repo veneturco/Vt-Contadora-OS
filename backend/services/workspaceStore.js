@@ -3,8 +3,10 @@
 // manteniendo compatibilidad de lectura automática con datos legacy existentes.
 
 const PARTITIONED_COLLECTION = 'vt_workspace_tenants';
+const ARCHIVED_COLLECTION = 'vt_archived_tenants';
 const LEGACY_COLLECTION = 'vt_workspace';
 const LEGACY_DOC_ID = 'shared_state';
+const LOCKED_FISCAL_STATUSES = new Set(['APROBADA', 'AJUSTADA', 'ANULADA_CON_NC']);
 
 function groupByTenantId(items = []) {
   const map = new Map();
@@ -140,12 +142,54 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
   const auditLogsByTenant = groupByTenantId(auditLogs);
 
   await Promise.all(
-    targetTenants.map(tenant => {
+    targetTenants.map(async tenant => {
       const tid = String(tenant.id);
+      const docRef = db.collection(PARTITIONED_COLLECTION).doc(tid);
+      const existingSnap = await docRef.get();
+      const existingData = existingSnap && existingSnap.exists ? (existingSnap.data() || {}) : {};
+      const existingInvoices = Array.isArray(existingData.invoices) ? existingData.invoices : [];
+
+      const incomingList = invoicesByTenant.get(tid) || [];
+      const incomingById = new Map();
+      for (const inv of incomingList) {
+        if (inv && inv.id) incomingById.set(inv.id, inv);
+      }
+
+      // Protección COT (10 años) + Prevención de Lost Update para facturas entrantes por Telegram/Móvil
+      const mergedInvoices = [...incomingList];
+      const nowMs = Date.now();
+      for (const prevInv of existingInvoices) {
+        if (!prevInv || !prevInv.id) continue;
+        const isLocked = LOCKED_FISCAL_STATUSES.has(prevInv.status);
+        const createdMs = prevInv.createdAt ? Date.parse(prevInv.createdAt) : 0;
+        const isRecentExternal =
+          (prevInv.sourceChannel === 'TELEGRAM_BOT' || prevInv.createdByClient) &&
+          !Number.isNaN(createdMs) &&
+          nowMs - createdMs < 5 * 60 * 1000;
+
+        if (!incomingById.has(prevInv.id)) {
+          if (isLocked || isRecentExternal) {
+            mergedInvoices.unshift(prevInv);
+          }
+        } else if (isLocked) {
+          // Impedir alteración destructiva de montos/RIF en facturas ya selladas bajo COT
+          const candidate = incomingById.get(prevInv.id);
+          const idx = mergedInvoices.findIndex(x => x && x.id === prevInv.id);
+          if (idx !== -1) {
+            mergedInvoices[idx] = {
+              ...prevInv,
+              linkedAdjustmentId: candidate.linkedAdjustmentId || prevInv.linkedAdjustmentId,
+              adjustmentType: candidate.adjustmentType || prevInv.adjustmentType,
+              status: LOCKED_FISCAL_STATUSES.has(candidate.status) ? candidate.status : prevInv.status
+            };
+          }
+        }
+      }
+
       const payload = {
         tenantId: tid,
         tenant,
-        invoices: invoicesByTenant.get(tid) || [],
+        invoices: mergedInvoices,
         employees: employeesByTenant.get(tid) || [],
         payments: paymentsByTenant.get(tid) || [],
         updatedAt: nowIso,
@@ -157,7 +201,7 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
       if (Array.isArray(auditLogs)) {
         payload.auditLogs = (auditLogsByTenant.get(tid) || []).slice(-150);
       }
-      return db.collection(PARTITIONED_COLLECTION).doc(tid).set(payload, { merge: true });
+      return docRef.set(payload, { merge: true });
     })
   );
 
@@ -168,16 +212,31 @@ async function writeWorkspaceState(db, user, { tenants, invoices, employees, pay
   };
 }
 
-async function deleteTenantWorkspace(db, tenantId) {
+async function deleteTenantWorkspace(db, tenantId, actorEmail = 'system') {
   const tid = String(tenantId || '').trim();
   if (!tid) {
     const err = new Error('tenantId requerido para eliminar empresa.');
     err.status = 400;
     throw err;
   }
-  await db.collection(PARTITIONED_COLLECTION).doc(tid).delete();
+  const nowIso = new Date().toISOString();
+  const wsRef = db.collection(PARTITIONED_COLLECTION).doc(tid);
+  const wsSnap = await wsRef.get();
+  if (wsSnap && wsSnap.exists) {
+    // Resguardo forense inmutable de 10 años (COT) antes de retirar de la cartera activa
+    await db.collection(ARCHIVED_COLLECTION).doc(tid).set(
+      {
+        ...(wsSnap.data() || {}),
+        archivedAt: nowIso,
+        archivedBy: actorEmail,
+        cotRetentionYears: 10
+      },
+      { merge: true }
+    );
+  }
+  await wsRef.delete();
   await db.collection('tenants').doc(tid).delete();
-  return { ok: true, deletedTenantId: tid };
+  return { ok: true, deletedTenantId: tid, archivedInVault: Boolean(wsSnap && wsSnap.exists) };
 }
 
 async function appendTenantInvoice(db, tenantId, invoice, actorEmail = 'client') {
@@ -223,6 +282,7 @@ async function appendTenantInvoice(db, tenantId, invoice, actorEmail = 'client')
 
 module.exports = {
   PARTITIONED_COLLECTION,
+  ARCHIVED_COLLECTION,
   readWorkspaceState,
   writeWorkspaceState,
   appendTenantInvoice,

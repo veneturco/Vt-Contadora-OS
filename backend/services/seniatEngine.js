@@ -1,8 +1,9 @@
 function validateVenezuelanRIF(rif) {
-  const clean = String(rif || '').trim().toUpperCase().replace(/[^JVEGP0-9]/g, '');
-  if (!/^[JVEGP][0-9]{9}$/.test(clean)) return { valid: false, formatted: rif, reason: 'Formato RIF invalido' };
+  const clean = String(rif || '').trim().toUpperCase().replace(/[^JVEGPC0-9]/g, '');
+  if (!/^[JVEGPC][0-9]{9}$/.test(clean)) return { valid: false, formatted: rif, reason: 'Formato RIF invalido' };
 
-  const prefixWeights = { V: 1, E: 2, J: 3, P: 4, G: 5 };
+  // Prefijos oficiales SENIAT: V=1, E=2, J=3, C=3 (Consejos Comunales / Comunas), P=4, G=5
+  const prefixWeights = { V: 1, E: 2, J: 3, C: 3, P: 4, G: 5 };
   const multipliers = [3, 2, 7, 6, 5, 4, 3, 2];
   let sum = prefixWeights[clean[0]] * 4;
 

@@ -329,12 +329,12 @@ function extractTextFromPdfBase64(base64Data) {
       const streamSlice = buf.slice(dataStart, endIdx);
       if (streamSlice.length > 0 && streamSlice.length < 2 * 1024 * 1024) {
         try {
-          const inflated = zlib.inflateSync(streamSlice).toString('latin1');
+          const inflated = zlib.inflateSync(streamSlice, { maxOutputLength: 8 * 1024 * 1024 }).toString('latin1');
           if (inflated.includes('BT') || inflated.includes('Tj') || inflated.includes('TJ')) {
             collectPdfTextOps(inflated);
           }
         } catch {
-          // No era FlateDecode o stream de imagen
+          // No era FlateDecode, excede límite anti-zip-bomb o es stream de imagen
         }
       }
       pos = endIdx + 9;
@@ -474,7 +474,7 @@ function parseSeniatFiscalQr(qrContent) {
             totalOriginal: total,
             rifValid: true,
             mathValid: true,
-            status: 'APROBADA'
+            status: 'BORRADOR_IA'
           }
         };
       }
@@ -722,7 +722,7 @@ function parseSeniatRawText(rawText) {
         bcvRateImplicit,
         rifValid,
         mathValid,
-        status: isComplete ? 'APROBADA' : 'BORRADOR_IA'
+        status: 'BORRADOR_IA'
       }
     };
   }
@@ -793,7 +793,7 @@ function validateAndNormalizeAiExtraction(extracted) {
     supplierRif: rifCheck.valid ? rifCheck.formatted : rawRif,
     rifValid: rifCheck.valid,
     mathValid,
-    status: mathValid && rifCheck.valid ? 'APROBADA' : 'BORRADOR_IA'
+    status: 'BORRADOR_IA'
   };
 }
 

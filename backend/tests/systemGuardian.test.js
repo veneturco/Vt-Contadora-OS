@@ -171,4 +171,20 @@ test('Guardián Memoria OCR y Telemetría: aprende patrones y deduplica/resuelve
 
   const resolved = await resolveGuardianAlert(db, a1.id, 'super@vt.com');
   assert.equal(resolved.status, 'RESOLVED');
+
+  // Si vuelve a ocurrir después de resuelta, reabre en OPEN con occurrences = 1 y genera código VT-XXXXXX
+  const reopened = await recordGuardianAlert(db, {
+    severity: 'CRITICAL',
+    category: 'FRONTEND_RUNTIME',
+    message: 'TypeError: Cannot read properties of undefined'
+  });
+  assert.equal(reopened.status, 'OPEN');
+  assert.equal(reopened.occurrences, 1);
+  assert.match(reopened.errorCode, /^VT-[0-9A-F]{6}$/);
+
+  const { sendTestGuardianAlert, escapeTelegramHtml } = require('../services/systemGuardian');
+  assert.equal(escapeTelegramHtml('<script>&</script>'), '&lt;script&gt;&amp;&lt;/script&gt;');
+  const selfTest = await sendTestGuardianAlert(db, 'super@vt.com');
+  assert.equal(selfTest.ok, true);
+  assert.equal(selfTest.alert.errorCode, 'VT-TEST01');
 });

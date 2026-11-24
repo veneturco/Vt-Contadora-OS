@@ -4,6 +4,12 @@ const { validateVenezuelanRIF } = require('./seniatEngine');
 const { processFiscalInvoiceVNDE } = require('./vndeFiscalProcessor');
 const { DEFAULT_CURRENT_BCV_USD, DEFAULT_CURRENT_BCV_EUR } = require('./bcvConstants');
 const { checkTenantPlanQuota, incrementTenantInvoiceUsage } = require('./saasBillingEngine');
+const { appendTenantInvoice } = require('./workspaceStore');
+const { recordGuardianAlert } = require('./systemGuardian');
+
+function escapeTelegramMd(value) {
+  return String(value ?? '').replace(/([_*`\[])/g, '\\$1');
+}
 
 async function processTelegramReceiptUpdate(update, db) {
   const message = update.message;
@@ -11,6 +17,16 @@ async function processTelegramReceiptUpdate(update, db) {
 
   const chatId = String(message.chat.id);
   const text = (message.text || '').trim();
+
+  if (text === '/id' || text === '/chatid' || text === '/mid') {
+    await sendTelegramMessage(
+      chatId,
+      `🛡️ *Identificador de Chat Telegram*\n\n` +
+      `• *Tu Chat ID:* \`${chatId}\`\n\n` +
+      `Copia este número en la variable \`ADMIN_TELEGRAM_CHAT_ID\` de tu servidor para recibir alertas automáticas en tiempo real del Guardián VT ante cualquier error.`
+    );
+    return { status: 'chat_id_displayed', chatId };
+  }
 
   if (text === '/start' || text === '/ayuda') {
     const chatBinding = await db.collection('telegram_links').doc(`chat_${chatId}`).get();
@@ -174,6 +190,14 @@ async function processTelegramReceiptUpdate(update, db) {
     });
   } catch (vndeErr) {
     console.error('Error en pipeline VNDE:', vndeErr.message);
+    recordGuardianAlert(db, {
+      severity: 'CRITICAL',
+      source: 'telegram_bot',
+      category: 'TELEGRAM_VNDE_ERROR',
+      message: `Error procesando factura en Telegram (${companyName}): ${vndeErr.message}`,
+      stack: vndeErr.stack,
+      tenantId
+    }).catch(() => {});
     await sendTelegramMessage(chatId, 'El motor fiscal experimentó un problema procesando el comprobante. Intenta nuevamente.');
     return { status: 'vnde_error' };
   }
@@ -211,6 +235,14 @@ async function processTelegramReceiptUpdate(update, db) {
     createdAt: new Date().toISOString()
   };
   await invRef.set(savedInvoice);
+  try {
+    await appendTenantInvoice(db, tenantId, savedInvoice, `telegram:${chatId}`);
+  } catch (dupOrWsErr) {
+    if (dupOrWsErr?.status === 409) {
+      await sendTelegramMessage(chatId, `⚠️ *ALERTA DUPLICADO*: La factura #${escapeTelegramMd(extracted.invoiceNumber)} ya figura en el libro activo de la empresa.`);
+      return { status: 'duplicate' };
+    }
+  }
   await incrementTenantInvoiceUsage(db, tenantId);
 
   await db.collection(`tenants/${tenantId}/audit_logs`).add({
@@ -227,12 +259,12 @@ async function processTelegramReceiptUpdate(update, db) {
 
   await sendTelegramMessage(
     chatId,
-    `🧾 *Factura procesada con éxito* para *${companyName}*:\n` +
-    `• *Proveedor:* ${extracted.supplierName} (${rifCheck.formatted})\n` +
-    `• *Nº Factura:* #${extracted.invoiceNumber} | *Control:* ${extracted.controlNumber}\n` +
-    `• *Monto Total:* ${extracted.currency} ${totalFormatted}\n` +
-    `• *Motor Fiscal:* ${vndeResult.mode} (${vndeResult.tokensUsed} tokens)\n` +
-    `• *Estatus:* ${extracted.mathValid ? '✅ Conciliada Matemáticamente (100% Exacta)' : '📝 Enviada a Auditoría de Contador'}`
+    `🧾 *Factura procesada con éxito* para *${escapeTelegramMd(companyName)}*:\n` +
+    `• *Proveedor:* ${escapeTelegramMd(extracted.supplierName)} (${escapeTelegramMd(rifCheck.formatted)})\n` +
+    `• *Nº Factura:* #${escapeTelegramMd(extracted.invoiceNumber)} | *Control:* ${escapeTelegramMd(extracted.controlNumber)}\n` +
+    `• *Monto Total:* ${escapeTelegramMd(extracted.currency)} ${totalFormatted}\n` +
+    `• *Motor Fiscal:* ${escapeTelegramMd(vndeResult.mode)} (${vndeResult.tokensUsed} tokens)\n` +
+    `• *Estatus:* ${extracted.mathValid ? '✅ Conciliada Matemáticamente (Enviada a Bandeja del Contador)' : '📝 Enviada a Auditoría de Contador'}`
   );
 
   return { status: 'processed', invoiceId: invRef.id, tenantId, invoice: savedInvoice, vndeMode: vndeResult.mode, tokensUsed: vndeResult.tokensUsed };

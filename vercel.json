@@ -46,11 +46,15 @@
   "crons": [
     {
       "path": "/api/bcv/sync-now",
-      "schedule": "5 13,17 * * 1-5"
+      "schedule": "5 13 * * 1-5"
     },
     {
       "path": "/api/saas/suspend-expired",
       "schedule": "5 4 * * *"
+    },
+    {
+      "path": "/api/guardian/cron-audit",
+      "schedule": "35 4 * * *"
     }
   ]
 }

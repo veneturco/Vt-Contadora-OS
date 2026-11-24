@@ -41,10 +41,15 @@ export interface GuardianSeniatFinding {
 
 export interface GuardianAlert {
   id: string;
+  errorCode?: string;
   severity: 'CRITICAL' | 'WARNING' | 'INFO';
   source: string;
   category: string;
   message: string;
+  stack?: string | null;
+  route?: string | null;
+  userEmail?: string | null;
+  tenantId?: string | null;
   occurrences: number;
   status: string;
   lastSeenAt: string;
@@ -286,6 +291,35 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
       setRepairing(false);
       setTimeout(() => setToast(null), 4500);
     }
+  }
+
+  async function handleTestRealtimeAlert() {
+    setToast('Enviando alerta de prueba en tiempo real...');
+    const res = await safeApiRequest<{
+      ok: boolean;
+      alert?: GuardianAlert;
+      channelsConfigured?: { telegram?: boolean; webhook?: boolean; email?: boolean };
+      delivery?: { telegramSent?: boolean; webhookSent?: boolean; emailSent?: boolean };
+    }>('/api/guardian/test-alert', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    if (res.ok && res.data) {
+      const { delivery, channelsConfigured } = res.data;
+      const sentList: string[] = ['Panel Guardián'];
+      if (delivery?.telegramSent) sentList.push('Telegram Admin');
+      if (delivery?.webhookSent) sentList.push('Webhook');
+      if (delivery?.emailSent) sentList.push('Email');
+      const hint = !channelsConfigured?.telegram
+        ? ' (Tip: envía /id a tu bot y configura ADMIN_TELEGRAM_CHAT_ID para recibirlas en tu celular)'
+        : '';
+      setToast(`Alerta de prueba registrada -> ${sentList.join(' + ')}${hint}`);
+      fetchStatus();
+      setActiveView('alerts');
+    } else {
+      setToast(res.error || 'No se pudo enviar la alerta de prueba.');
+    }
+    setTimeout(() => setToast(null), 6500);
   }
 
   async function handleResolveAlert(alertId: string) {
@@ -611,13 +645,24 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                 </button>
                 <button
                   type="button"
+                  onClick={handleTestRealtimeAlert}
+                  className="px-3 py-1.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/25 border border-fuchsia-400/35 text-fuchsia-200 text-xs font-semibold flex items-center gap-1.5"
+                  title="Envía una notificación de prueba a tu Telegram, Webhook/Correo y Bandeja en Vivo"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Probar Alerta</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     if (!report) return;
                     const diagnosticPayload = {
                       exportedAt: new Date().toISOString(),
                       checkedAt: report.checkedAt,
-                      summary: report.summary,
-                      alerts: report.alerts || [],
+                      healthScore: report.healthScore,
+                      status: report.status,
+                      metrics: report.metrics,
+                      openAlerts: report.openAlerts || [],
                       infraFindings: report.infraFindings || [],
                       seniatFindings: report.seniatFindings || []
                     };
@@ -758,9 +803,14 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                         key={alert.id}
                         className="p-3 rounded-xl bg-[#1A1D26] border border-white/10 space-y-1.5"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-amber-300">
-                            {alert.category} ({alert.occurrences}x)
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                            {alert.errorCode && (
+                              <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-sky-300">
+                                {alert.errorCode}
+                              </span>
+                            )}
+                            <span>{alert.category} ({alert.occurrences}x)</span>
                           </span>
                           <button
                             type="button"
@@ -770,9 +820,12 @@ export const SystemGuardianDrawer: React.FC<Props> = ({ isSuperAdmin, onRepaired
                             Marcar Resuelta
                           </button>
                         </div>
-                        <p className="text-[11px] text-white/85">{alert.message}</p>
+                        <p className="text-[11px] text-white/85 break-words">{alert.message}</p>
                         <div className="text-[10px] text-white/45">
-                          Fuente: {alert.source} · Última vez: {new Date(alert.lastSeenAt).toLocaleString()}
+                          Fuente: {alert.source}
+                          {alert.route ? ` · Ruta: ${alert.route}` : ''}
+                          {alert.userEmail ? ` · ${alert.userEmail}` : ''}
+                          {' · '}Última vez: {new Date(alert.lastSeenAt).toLocaleString()}
                         </div>
                       </div>
                     ))

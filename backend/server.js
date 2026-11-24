@@ -59,6 +59,7 @@ const {
 const {
   runSystemGuardianAudit,
   recordGuardianAlert,
+  sendTestGuardianAlert,
   resolveGuardianAlert,
   recordOcrLearningPattern
 } = require('./services/systemGuardian');
@@ -373,6 +374,26 @@ const authLimiter = rateLimit({
   message: { error: 'Demasiados intentos de autenticación. Espere unos minutos.' }
 });
 
+const telemetryLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 35,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Límite de reportes de telemetría alcanzado.' }
+});
+
+function resolveOptionalSessionUser(req) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) return null;
+    const token = authHeader.split('Bearer ')[1].trim();
+    if (!token || token === 'DEV_LOCAL_BYPASS') return null;
+    return verifySessionToken(token);
+  } catch {
+    return null;
+  }
+}
+
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
@@ -392,9 +413,9 @@ async function verifyFirebaseToken(req, res, next) {
     }
     const sessionUser = verifySessionToken(token);
     if (sessionUser) {
-      const active = await isUserActiveInDb(db, sessionUser.email);
+      const active = await isUserActiveInDb(db, sessionUser.email, sessionUser.iat);
       if (!active) {
-        return res.status(403).json({ error: 'Cuenta suspendida o revocada.' });
+        return res.status(403).json({ error: 'Sesión revocada, clave actualizada o cuenta suspendida. Inicie sesión nuevamente.' });
       }
       req.user = sessionUser;
       return next();
@@ -539,9 +560,9 @@ app.get('/api/events/invoices', async (req, res, next) => {
     if (!ticketData) {
       return res.status(401).json({ error: 'Ticket SSE inválido o expirado.' });
     }
-    const active = await isUserActiveInDb(db, ticketData.user?.email);
+    const active = await isUserActiveInDb(db, ticketData.user?.email, ticketData.user?.iat);
     if (!active) {
-      return res.status(403).json({ error: 'Cuenta suspendida o revocada.' });
+      return res.status(403).json({ error: 'Sesión revocada o cuenta suspendida.' });
     }
     req.user = ticketData.user;
     req.sseValidatedTenantId = ticketData.tenantId;
@@ -594,6 +615,16 @@ app.post('/webhooks/telegram', webhookLimiter, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('Telegram webhook error:', err);
+    recordGuardianAlert(db, {
+      severity: 'CRITICAL',
+      source: 'telegram_webhook',
+      category: 'WEBHOOK_UNHANDLED_ERROR',
+      message: err?.message || 'Error inesperado en webhook de Telegram',
+      stack: err?.stack,
+      route: '/webhooks/telegram',
+      method: 'POST',
+      statusCode: 500
+    }).catch(() => {});
     res.status(500).json({ error: 'Error procesando comprobante' });
   }
 });
@@ -630,7 +661,7 @@ async function handleBcvSyncNow(_req, res, next) {
   }
 }
 app.get('/api/bcv/sync-now', bcvSyncLimiter, verifyCronSecretIfConfigured, handleBcvSyncNow);
-app.post('/api/bcv/sync-now', bcvSyncLimiter, handleBcvSyncNow);
+app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, handleBcvSyncNow);
 
 // Barrido diario de suscripciones vencidas (Vercel Cron GET o disparo manual Super-Admin POST)
 app.get('/api/saas/suspend-expired', verifyCronSecretIfConfigured, async (req, res, next) => {
@@ -807,8 +838,18 @@ app.get('/api/saas/plans', (_req, res) => {
 
 app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
   try {
-    const { tenantId, companyName, rif } = req.body;
-    if (!tenantId || !rif) {
+    let { tenantId, companyName, rif } = req.body || {};
+    if (!tenantId) {
+      return res.status(400).json({ error: 'tenantId es requerido' });
+    }
+    if (!rif || !companyName) {
+      const tSnap = await db.collection('tenants').doc(String(tenantId)).get();
+      const wsSnap = (!tSnap || !tSnap.exists) ? await db.collection('vt_workspace_tenants').doc(String(tenantId)).get() : null;
+      const storedTenant = (tSnap && tSnap.exists ? tSnap.data() : null) || (wsSnap && wsSnap.exists ? wsSnap.data()?.tenant : null) || {};
+      rif = rif || storedTenant.rif;
+      companyName = companyName || storedTenant.name;
+    }
+    if (!rif) {
       return res.status(400).json({ error: 'tenantId y rif son requeridos' });
     }
     const rifCheck = validateVenezuelanRIF(rif);
@@ -816,7 +857,7 @@ app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantA
       return res.status(400).json({ error: 'El RIF proporcionado no supera la validación Módulo 11 del SENIAT' });
     }
     const code = generateTelegramLinkCode(tenantId);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 días de validez para vincular con comodidad
     await db.collection('telegram_links').doc(code).set({
       tenantId,
       companyName: String(companyName || 'Empresa Vinculada').slice(0, 120),
@@ -825,7 +866,11 @@ app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantA
       expiresAt,
       createdAt: new Date().toISOString()
     });
-    res.json({ code, expiresAt });
+    await db.collection('tenants').doc(String(tenantId)).set(
+      { telegramCode: code, updatedAt: new Date().toISOString() },
+      { merge: true }
+    ).catch(() => {});
+    res.json({ ok: true, code, telegramCode: code, expiresAt });
   } catch (err) {
     next(err);
   }
@@ -1028,7 +1073,8 @@ app.post('/api/auth/2fa/enable', verifyFirebaseToken, requireSuperAdmin, async (
 
 app.post('/api/auth/2fa/disable', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
   try {
-    const result = await disableUser2fa(db, req.user.email);
+    const { code, currentPassword } = req.body || {};
+    const result = await disableUser2fa(db, req.user.email, { code, currentPassword });
     if (!result.ok) {
       return res.status(result.status || 400).json({ error: result.error });
     }
@@ -1068,7 +1114,7 @@ app.post('/api/auth/verify-attempt', authLimiter, async (req, res) => {
   return res.json({ recorded: true, timestamp: new Date().toISOString() });
 });
 
-app.post('/api/auth/subaccount-invite', verifyFirebaseToken, async (req, res, next) => {
+app.post('/api/auth/subaccount-invite', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({ error: 'Solo administradores o contadores pueden activar sub-cuentas.' });
@@ -1185,7 +1231,17 @@ app.post('/api/tenants', verifyFirebaseToken, async (req, res, next) => {
     }
     const tid = String(tenant.id);
     const nowIso = new Date().toISOString();
-    const cleanTenant = { ...tenant, id: tid, rif: rifCheck.formatted };
+    const initialTelegramCode =
+      tenant.telegramCode && String(tenant.telegramCode).trim().length >= 6
+        ? String(tenant.telegramCode).trim().toUpperCase()
+        : generateTelegramLinkCode(tid);
+    const cleanTenant = {
+      ...tenant,
+      id: tid,
+      rif: rifCheck.formatted,
+      telegramCode: initialTelegramCode,
+      ownerAccountantEmail: req.user.email || null
+    };
 
     await db.collection('tenants').doc(tid).set(
       {
@@ -1195,6 +1251,14 @@ app.post('/api/tenants', verifyFirebaseToken, async (req, res, next) => {
       },
       { merge: true }
     );
+    await db.collection('telegram_links').doc(initialTelegramCode).set({
+      tenantId: tid,
+      companyName: String(cleanTenant.name || 'Empresa Vinculada').slice(0, 120),
+      rif: rifCheck.formatted,
+      used: false,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: nowIso
+    });
     await db.collection('vt_workspace_tenants').doc(tid).set(
       {
         tenantId: tid,
@@ -1234,7 +1298,7 @@ app.delete('/api/tenants/:tenantId', verifyFirebaseToken, requireTenantAccess, a
     if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
       return res.status(403).json({ error: 'Solo contadores o Super-Admin pueden eliminar empresas.' });
     }
-    const result = await deleteTenantWorkspace(db, req.params.tenantId);
+    const result = await deleteTenantWorkspace(db, req.params.tenantId, req.user?.email || req.user?.uid || 'admin');
     return res.json(result);
   } catch (err) {
     next(err);
@@ -1244,6 +1308,18 @@ app.delete('/api/tenants/:tenantId', verifyFirebaseToken, requireTenantAccess, a
 // =========================================================================
 // GUARDIÁN DEL SISTEMA — MONITOREO CONTINUO, SENIAT 2026 Y APRENDIZAJE OCR
 // =========================================================================
+
+app.get('/api/guardian/cron-audit', verifyCronSecretIfConfigured, async (_req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && !process.env.CRON_SECRET) {
+    return res.status(503).json({ error: 'CRON_SECRET requerido en producción para ejecutar este cron.' });
+  }
+  try {
+    const report = await runSystemGuardianAudit(db, { autoRepair: false });
+    return res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.get('/api/guardian/status', verifyFirebaseToken, requireSuperAdmin, async (_req, res, next) => {
   try {
@@ -1264,6 +1340,15 @@ app.post('/api/guardian/audit', verifyFirebaseToken, requireSuperAdmin, async (r
   }
 });
 
+app.post('/api/guardian/test-alert', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await sendTestGuardianAlert(db, req.user?.email || 'superadmin');
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/guardian/alerts/:id/resolve', verifyFirebaseToken, requireSuperAdmin, async (req, res, next) => {
   try {
     const result = await resolveGuardianAlert(db, req.params.id, req.user?.email || 'superadmin');
@@ -1273,21 +1358,38 @@ app.post('/api/guardian/alerts/:id/resolve', verifyFirebaseToken, requireSuperAd
   }
 });
 
-app.post('/api/guardian/telemetry', verifyFirebaseToken, async (req, res, next) => {
+// Telemetría abierta con rate-limit propio (captura crashes incluso en pantalla de login o ErrorBoundary)
+app.post('/api/guardian/telemetry', telemetryLimiter, async (req, res, next) => {
   try {
-    const { severity = 'WARNING', category = 'FRONTEND_RUNTIME', message, stack, route, tenantId } = req.body || {};
-    if (!message) {
-      return res.status(400).json({ error: 'message requerido para telemetría del Guardián.' });
-    }
-    const alert = await recordGuardianAlert(db, {
-      severity,
-      source: 'frontend',
-      category,
+    const {
+      severity = 'WARNING',
+      source = 'frontend',
+      category = 'FRONTEND_RUNTIME',
       message,
       stack,
       route,
-      userEmail: req.user?.email || null,
-      tenantId: tenantId || null
+      method,
+      statusCode,
+      tenantId,
+      userEmail: clientEmailHint
+    } = req.body || {};
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'message requerido para telemetría del Guardián.' });
+    }
+    const optionalUser = resolveOptionalSessionUser(req);
+    const safeSeverity = ['CRITICAL', 'WARNING', 'INFO'].includes(severity) ? severity : 'WARNING';
+    const alert = await recordGuardianAlert(db, {
+      severity: safeSeverity,
+      source: source === 'error_boundary' ? 'frontend_boundary' : 'frontend',
+      category: String(category || 'FRONTEND_RUNTIME').slice(0, 60),
+      message: message.slice(0, 400),
+      stack: stack ? String(stack).slice(0, 1200) : undefined,
+      route: route ? String(route).slice(0, 140) : undefined,
+      method: method ? String(method).slice(0, 12) : undefined,
+      statusCode: statusCode ? Number(statusCode) : undefined,
+      userEmail: optionalUser?.email || (clientEmailHint ? String(clientEmailHint).slice(0, 120) : null),
+      tenantId: tenantId ? String(tenantId).slice(0, 80) : null,
+      userAgent: req.headers['user-agent'] || null
     });
     return res.status(201).json({ ok: true, alert });
   } catch (err) {
@@ -1346,14 +1448,51 @@ app.use('/api/*', (_req, res) => {
   res.status(404).json({ error: 'Ruta API no encontrada' });
 });
 
-// Middleware Global de Manejo de Errores (sin filtrar stack traces ni rutas internas en producción)
-app.use((err, _req, res, _next) => {
-  console.error('Error interno capturado en Express:', err.stack || err.message);
+// Middleware Global de Manejo de Errores (notifica automáticamente al Guardián en fallos >= 500 sin filtrar stack traces al cliente)
+app.use((err, req, res, _next) => {
+  const statusCode = Number(err?.status || err?.statusCode || 500);
+  console.error('Error interno capturado en Express:', err?.stack || err?.message);
+
+  if (statusCode >= 500) {
+    recordGuardianAlert(db, {
+      severity: 'CRITICAL',
+      source: 'backend_express',
+      category: 'UNHANDLED_API_ERROR',
+      message: err?.message || 'Error interno no controlado en Express',
+      stack: err?.stack,
+      route: req?.originalUrl || req?.path || 'unknown',
+      method: req?.method || 'UNKNOWN',
+      statusCode,
+      userEmail: req?.user?.email || null,
+      tenantId: req?.body?.tenantId || req?.params?.tenantId || req?.query?.tenantId || null,
+      userAgent: req?.headers?.['user-agent'] || null
+    }).catch(() => {});
+  }
+
   const isProd = process.env.NODE_ENV === 'production';
-  res.status(err.status || 500).json({
-    error: isProd ? 'Error interno del servidor. Por favor reporte el incidente.' : err.message
+  res.status(statusCode).json({
+    error: isProd && statusCode >= 500
+      ? 'Error interno del servidor. El incidente fue reportado automáticamente al Guardián VT.'
+      : (err?.message || 'Error procesando solicitud')
   });
 });
+
+// Captura de promesas rechazadas y excepciones fatales a nivel de proceso Node.js
+if (!global.__vtGuardianProcessHooksBound) {
+  global.__vtGuardianProcessHooksBound = true;
+  process.on('unhandledRejection', reason => {
+    const msg = reason instanceof Error ? reason.message : String(reason || 'Unhandled Rejection');
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    console.error('UnhandledRejection capturado por Guardián:', msg);
+    recordGuardianAlert(db, {
+      severity: 'CRITICAL',
+      source: 'node_process',
+      category: 'UNHANDLED_REJECTION',
+      message: msg,
+      stack
+    }).catch(() => {});
+  });
+}
 
 const PORT = process.env.PORT || 8080;
 if (require.main === module) {

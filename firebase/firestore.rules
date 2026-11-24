@@ -7,21 +7,29 @@ rules_version = '2';
 // Legal Compliance Invariant (Código Orgánico Tributario — 10-year retention):
 //   - Client-side `delete` is strictly prohibited (`allow delete: if false`) on ALL collections.
 //   - Approved fiscal invoices (`APROBADA`, `AJUSTADA`, `ANULADA_CON_NC`) are immutable,
-//     except Super-Admin linking credit/debit adjustments without reverting fiscal status.
+//     except authorized tenant accountants / Super-Admin linking credit/debit adjustments
+//     without reverting fiscal status.
 //   - Cryptographic audit logs (`audit_logs`) are strictly append-only (no update/delete).
+//   - Strict key allowlists (`hasOnly`) on all collections prevent schema pollution and storage abuse.
 //
-// Authentication & RBAC (Trusted Server Custom Claims only):
-//   - `request.auth.token.role == 'admin'` -> Super-Admin (Firma Contable)
-//   - `request.auth.token.tenantIds` (list<string>) -> Authorized Tenant IDs
+// Authentication & RBAC (Trusted Server Custom Claims via `syncFirebaseAuthUser`):
+//   - `request.auth.token.vtRole == 'superadmin'` -> Global Super-Admin (`isSuperAdmin()`)
+//   - `request.auth.token.vtRole == 'admin'` + `tenantId in request.auth.token.tenantIds`
+//       -> Allied Accountant scoped strictly to assigned tenants (`isTenantAccountant(tenantId)`)
+//   - `request.auth.token.tenantIds` (list<string>) -> Authorized Tenant IDs (`belongsToTenant(tenantId)`)
 //
 // Collection: tenants/{tenantId}
-//   - rif: string (required, immutable after set, format ^[JVEGP]-[0-9]{8}-[0-9]$)
-//   - name: string (optional, 1..200)
+//   - rif: string (required, immutable after set, format ^[JVEGPC]-[0-9]{8}-[0-9]$)
+//   - id, name: optional bounded strings
 //   - regime: string (optional, 'SPE' | 'ORDINARIO' | 'FORMAL')
 //   - planId: string (optional, 'COMERCIO_PRO' | 'EMPRESA_MAX' | 'FIRMA_CONTABLE')
 //   - subscriptionStatus: string (optional, 'ACTIVA' | 'SUSPENDIDA' | 'EN_PRUEBA' | 'PENDIENTE')
-//   - nextBillingDate: string (optional, <= 32)
-//   - telegramCode: string (optional, <= 64)
+//   - nextBillingDate, telegramCode, telegramChatLinked: optional bounded strings
+//   - subAccountEnabled: optional bool
+//   - subAccountContactName, subAccountPhone, subAccountEmail: optional bounded strings
+//   - subAccountRole: optional 'OPERADOR_CAJA' | 'ADMIN_EMPRESA' | 'SOLO_CONSULTA'
+//   - subAccountStatus: optional 'TRIAL_15_DIAS' | 'ACTIVA' | 'POR_VENCER' | 'SUSPENDIDA'
+//   - trialDaysLeft, monthlyFeeUsd, accountantCommissionPercent: optional numbers >= 0
 //   - createdAt / updatedAt / suspendedAt: timestamp | string (optional, createdAt immutable)
 //
 // Collection: tenants/{tenantId}/invoices/{invoiceId}
@@ -32,10 +40,14 @@ rules_version = '2';
 //     update may also use ['AJUSTADA', 'ANULADA_CON_NC']; locked statuses cannot revert)
 //   - linkedAdjustmentId: string (optional, 1..128; set when linking NC/ND to approved invoice)
 //   - adjustmentType: string (optional, 'NC' | 'ND' | '02' | '03' | 'NOTA_CREDITO' | 'NOTA_DEBITO')
-//   - supplierRif, supplierName, invoiceNumber, controlNumber, affectedDocument,
-//     emissionDate, emissionTime, fiscalPeriod, auditHash, duplicateKey: optional bounded strings
-//   - bookType ('COMPRA'|'VENTA'), docType ('01'|'02'|'03'), currency ('VES'|'USD'|'EUR')
-//   - taxableBaseOriginal, exemptOriginal, vatOriginal, igtfOriginal, bcvRateOnDate, vatRate: optional numbers >= 0
+//   - id, supplierRif, supplierName, buyerRif, buyerName, invoiceNumber, controlNumber,
+//     affectedDocument, machineSerial, emissionDate, emissionTime, fiscalPeriod,
+//     islrConceptCode, vndeMode, auditHash, duplicateKey: optional bounded strings
+//   - bookType ('COMPRA'|'VENTA'), docType ('01'|'02'|'03'), currency ('VES'|'USD'|'EUR'),
+//     channel ('DIGITAL'|'MAQUINA_FISCAL'|'CONTINGENCIA'|'FORMA_LIBRE'),
+//     sourceChannel ('WEB_OCR'|'TELEGRAM_BOT'|'MANUAL'|'MOBILE_PORTAL')
+//   - taxableBaseOriginal, exemptOriginal, vatOriginal, igtfOriginal, bcvRateOnDate,
+//     vatRate, vatRetentionRate, islrRetentionRate, vndeTokensUsed: optional numbers >= 0
 //   - hasBuyerRifOnTicket, rifValid, mathValid: optional booleans
 //   - createdAt / updatedAt: optional timestamp | string (createdAt immutable)
 //
@@ -43,26 +55,28 @@ rules_version = '2';
 //   - actorUid: string (required on create, == request.auth.uid)
 //   - sha256Hash: string (required, 1..128)
 //   - tenantId: string (optional, if present == tenantId)
-//   - action, details, previousHash, targetId, invoiceId: optional bounded strings
+//   - id, action, details, previousHash, encryptedPayload, targetId, invoiceId, mode: optional bounded strings
+//   - sequence, tokensUsed: optional numbers >= 0
 //   - timestamp: optional timestamp | string
 //   - Immutable: update & delete forbidden
 //
 // Collection: tenants/{tenantId}/payroll/{payrollId}
 //   - tenantId: string (optional, if present == tenantId, immutable)
-//   - fullName, cedula, role, hireDate: optional bounded strings
+//   - id, fullName, cedula, role, hireDate: optional bounded strings
 //   - baseSalaryBs, cestaticketBs: optional numbers >= 0
 //   - riskLevel: optional 'MINIMO' | 'MEDIO' | 'ALTO'
 //   - createdAt / updatedAt: optional timestamp | string (createdAt immutable)
 //
 // Collection: tenants/{tenantId}/subscriptions/{paymentId}
 //   - tenantId: string (required, immutable, == tenantId)
-//   - status: string (required; non-admin create restricted strictly to 'PENDIENTE_VERIFICACION';
+//   - status: string (required; non-superadmin create restricted strictly to 'PENDIENTE_VERIFICACION';
 //     valid set: 'PENDIENTE_VERIFICACION' | 'PENDIENTE' | 'VERIFICADO' | 'RECHAZADO')
 //   - planId: optional 'COMERCIO_PRO' | 'EMPRESA_MAX' | 'FIRMA_CONTABLE'
-//   - planName, referenceNumber, auditHash, verifiedBy: optional bounded strings
+//   - paymentId, id, planName, referenceNumber, auditHash, verifiedBy: optional bounded strings
 //   - paymentMethod: optional 'PAGO_MOVIL' | 'ZELLE' | 'BINANCE_PAY' | 'TRANSFERENCIA_VES'
 //   - amountUsd, bcvRate, amountBs: optional numbers >= 0
-//   - createdAt / verifiedAt: optional timestamp | string (createdAt immutable; non-admins cannot set verifiedBy/verifiedAt)
+//   - createdAt / updatedAt / verifiedAt: optional timestamp | string (createdAt immutable;
+//     only Super-Admin can verify/approve subscription payments)
 //
 // Collection: bcv_rates/{dateStr}
 //   - Official BCV rates synced by backend Admin SDK; read-only for authenticated users.
@@ -70,7 +84,7 @@ rules_version = '2';
 // Collection: telegram_links/{chatId}
 //   - Backend Admin SDK only; all client read/write denied.
 //
-// Unlisted collections (e.g., saas_plans, tenants/{tenantId}/usage):
+// Unlisted collections (e.g., saas_plans, vt_users, vt_accountants, vt_workspace_tenants, tenants/{tenantId}/usage):
 //   - Backend Admin SDK only; denied by root default-deny rule.
 // ===============================================================
 
@@ -91,8 +105,19 @@ service cloud.firestore {
 
     function isSuperAdmin() {
       return isAuthenticated()
-        && ('role' in request.auth.token)
-        && request.auth.token.role == 'admin';
+        && ('vtRole' in request.auth.token)
+        && request.auth.token.vtRole == 'superadmin';
+    }
+
+    function isTenantAccountant(tenantId) {
+      return isSuperAdmin() || (
+        isAuthenticated()
+        && ('vtRole' in request.auth.token)
+        && request.auth.token.vtRole == 'admin'
+        && ('tenantIds' in request.auth.token)
+        && request.auth.token.tenantIds is list
+        && tenantId in request.auth.token.tenantIds
+      );
     }
 
     function belongsToTenant(tenantId) {
@@ -128,10 +153,12 @@ service cloud.firestore {
         || (field in request.resource.data && request.resource.data[field] == resource.data[field]);
     }
 
+    // Supports J (Jurídico), V (Venezolano), E (Extranjero), G (Gubernamental),
+    // P (Pasaporte), and C (Consejos Comunales) per SENIAT RIF standard.
     function isValidRif(rif) {
       return rif is string
         && rif.size() == 12
-        && rif.matches('^[JVEGP]-[0-9]{8}-[0-9]$');
+        && rif.matches('^[JVEGPC]-[0-9]{8}-[0-9]$');
     }
 
     function isValidOptionalString(data, field, minLen, maxLen) {
@@ -146,6 +173,14 @@ service cloud.firestore {
       return !(field in data) || (
         data[field] is number
         && data[field] >= 0
+      );
+    }
+
+    function isValidOptionalPercentage(data, field) {
+      return !(field in data) || (
+        data[field] is number
+        && data[field] >= 0
+        && data[field] <= 100
       );
     }
 
@@ -172,7 +207,15 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidTenant(data) {
-      return ('rif' in data) && isValidRif(data.rif)
+      return data.keys().hasOnly([
+          'id', 'rif', 'name', 'regime', 'planId', 'subscriptionStatus',
+          'nextBillingDate', 'telegramCode', 'telegramChatLinked',
+          'subAccountEnabled', 'subAccountContactName', 'subAccountPhone', 'subAccountEmail',
+          'subAccountRole', 'subAccountStatus', 'trialDaysLeft',
+          'monthlyFeeUsd', 'accountantCommissionPercent',
+          'createdAt', 'updatedAt', 'suspendedAt'
+        ])
+        && ('rif' in data) && isValidRif(data.rif)
         && isValidOptionalString(data, 'id', 1, 128)
         && isValidOptionalString(data, 'name', 1, 200)
         && (!('regime' in data) || (data.regime is string && data.regime in ['SPE', 'ORDINARIO', 'FORMAL']))
@@ -185,8 +228,11 @@ service cloud.firestore {
         && isValidOptionalString(data, 'subAccountPhone', 0, 40)
         && isValidOptionalString(data, 'subAccountEmail', 0, 150)
         && isValidOptionalBool(data, 'subAccountEnabled')
+        && (!('subAccountRole' in data) || (data.subAccountRole is string && data.subAccountRole in ['OPERADOR_CAJA', 'ADMIN_EMPRESA', 'SOLO_CONSULTA']))
+        && (!('subAccountStatus' in data) || (data.subAccountStatus is string && data.subAccountStatus in ['TRIAL_15_DIAS', 'ACTIVA', 'POR_VENCER', 'SUSPENDIDA']))
+        && isValidOptionalNonNegativeNumber(data, 'trialDaysLeft')
         && isValidOptionalNonNegativeNumber(data, 'monthlyFeeUsd')
-        && isValidOptionalNonNegativeNumber(data, 'accountantCommissionPercent')
+        && isValidOptionalPercentage(data, 'accountantCommissionPercent')
         && isValidOptionalTimestampOrString(data, 'createdAt')
         && isValidOptionalTimestampOrString(data, 'updatedAt')
         && isValidOptionalTimestampOrString(data, 'suspendedAt');
@@ -197,16 +243,33 @@ service cloud.firestore {
     }
 
     function isValidInvoice(data, tenantId) {
-      return ('tenantId' in data) && data.tenantId == tenantId
+      return data.keys().hasOnly([
+          'id', 'tenantId', 'createdBy', 'totalOriginal', 'status',
+          'supplierRif', 'supplierName', 'buyerRif', 'buyerName',
+          'invoiceNumber', 'controlNumber', 'affectedDocument', 'machineSerial',
+          'emissionDate', 'emissionTime', 'fiscalPeriod',
+          'auditHash', 'duplicateKey', 'linkedAdjustmentId', 'adjustmentType',
+          'bookType', 'docType', 'channel', 'sourceChannel', 'currency',
+          'taxableBaseOriginal', 'exemptOriginal', 'vatOriginal', 'igtfOriginal',
+          'bcvRateOnDate', 'vatRate', 'vatRetentionRate', 'islrRetentionRate', 'islrConceptCode',
+          'vndeMode', 'vndeTokensUsed',
+          'hasBuyerRifOnTicket', 'rifValid', 'mathValid',
+          'createdAt', 'updatedAt'
+        ])
+        && ('tenantId' in data) && data.tenantId == tenantId
         && ('totalOriginal' in data) && data.totalOriginal is number && data.totalOriginal >= 0
         && ('status' in data) && data.status is string
         && data.status in ['BORRADOR_IA', 'PENDIENTE_REVISION', 'APROBADA', 'AJUSTADA', 'ANULADA_CON_NC']
+        && isValidOptionalString(data, 'id', 1, 128)
         && isValidOptionalString(data, 'createdBy', 1, 128)
         && isValidOptionalString(data, 'supplierRif', 0, 20)
         && isValidOptionalString(data, 'supplierName', 0, 200)
+        && isValidOptionalString(data, 'buyerRif', 0, 20)
+        && isValidOptionalString(data, 'buyerName', 0, 200)
         && isValidOptionalString(data, 'invoiceNumber', 0, 64)
         && isValidOptionalString(data, 'controlNumber', 0, 64)
         && isValidOptionalString(data, 'affectedDocument', 0, 64)
+        && isValidOptionalString(data, 'machineSerial', 0, 64)
         && isValidOptionalString(data, 'emissionDate', 0, 32)
         && isValidOptionalString(data, 'emissionTime', 0, 32)
         && isValidOptionalString(data, 'fiscalPeriod', 0, 16)
@@ -216,13 +279,20 @@ service cloud.firestore {
         && (!('adjustmentType' in data) || (data.adjustmentType is string && data.adjustmentType in ['NC', 'ND', '02', '03', 'NOTA_CREDITO', 'NOTA_DEBITO']))
         && (!('bookType' in data) || (data.bookType is string && data.bookType in ['COMPRA', 'VENTA']))
         && (!('docType' in data) || (data.docType is string && data.docType in ['01', '02', '03']))
+        && (!('channel' in data) || (data.channel is string && data.channel in ['DIGITAL', 'MAQUINA_FISCAL', 'CONTINGENCIA', 'FORMA_LIBRE']))
+        && (!('sourceChannel' in data) || (data.sourceChannel is string && data.sourceChannel in ['WEB_OCR', 'TELEGRAM_BOT', 'MANUAL', 'MOBILE_PORTAL']))
         && (!('currency' in data) || (data.currency is string && data.currency in ['VES', 'USD', 'EUR']))
         && isValidOptionalNonNegativeNumber(data, 'taxableBaseOriginal')
         && isValidOptionalNonNegativeNumber(data, 'exemptOriginal')
         && isValidOptionalNonNegativeNumber(data, 'vatOriginal')
         && isValidOptionalNonNegativeNumber(data, 'igtfOriginal')
         && isValidOptionalNonNegativeNumber(data, 'bcvRateOnDate')
-        && isValidOptionalNonNegativeNumber(data, 'vatRate')
+        && isValidOptionalPercentage(data, 'vatRate')
+        && isValidOptionalPercentage(data, 'vatRetentionRate')
+        && isValidOptionalPercentage(data, 'islrRetentionRate')
+        && isValidOptionalString(data, 'islrConceptCode', 0, 16)
+        && isValidOptionalString(data, 'vndeMode', 0, 120)
+        && isValidOptionalNonNegativeNumber(data, 'vndeTokensUsed')
         && isValidOptionalBool(data, 'hasBuyerRifOnTicket')
         && isValidOptionalBool(data, 'rifValid')
         && isValidOptionalBool(data, 'mathValid')
@@ -231,21 +301,36 @@ service cloud.firestore {
     }
 
     function isValidAuditLog(data, tenantId) {
-      return ('actorUid' in data) && data.actorUid is string
+      return data.keys().hasOnly([
+          'id', 'tenantId', 'sequence', 'actorUid', 'action', 'details',
+          'previousHash', 'sha256Hash', 'encryptedPayload',
+          'targetId', 'invoiceId', 'mode', 'tokensUsed', 'timestamp'
+        ])
+        && ('actorUid' in data) && data.actorUid is string
         && data.actorUid.size() > 0 && data.actorUid.size() <= 128
         && ('sha256Hash' in data) && data.sha256Hash is string
         && data.sha256Hash.size() > 0 && data.sha256Hash.size() <= 128
         && (!('tenantId' in data) || data.tenantId == tenantId)
+        && isValidOptionalString(data, 'id', 1, 128)
+        && isValidOptionalNonNegativeNumber(data, 'sequence')
         && isValidOptionalString(data, 'action', 1, 100)
         && isValidOptionalString(data, 'details', 0, 2000)
         && isValidOptionalString(data, 'previousHash', 0, 128)
+        && isValidOptionalString(data, 'encryptedPayload', 0, 4096)
         && isValidOptionalString(data, 'targetId', 0, 128)
         && isValidOptionalString(data, 'invoiceId', 0, 128)
+        && isValidOptionalString(data, 'mode', 0, 120)
+        && isValidOptionalNonNegativeNumber(data, 'tokensUsed')
         && isValidOptionalTimestampOrString(data, 'timestamp');
     }
 
     function isValidPayroll(data, tenantId) {
-      return (!('tenantId' in data) || data.tenantId == tenantId)
+      return data.keys().hasOnly([
+          'id', 'tenantId', 'fullName', 'cedula', 'role', 'hireDate',
+          'baseSalaryBs', 'cestaticketBs', 'riskLevel',
+          'createdAt', 'updatedAt'
+        ])
+        && (!('tenantId' in data) || data.tenantId == tenantId)
         && isValidOptionalString(data, 'id', 1, 128)
         && isValidOptionalString(data, 'fullName', 1, 160)
         && isValidOptionalString(data, 'cedula', 1, 32)
@@ -259,7 +344,13 @@ service cloud.firestore {
     }
 
     function isValidSubscriptionPayment(data, tenantId) {
-      return ('tenantId' in data) && data.tenantId == tenantId
+      return data.keys().hasOnly([
+          'paymentId', 'id', 'tenantId', 'planId', 'planName',
+          'paymentMethod', 'referenceNumber', 'amountUsd', 'bcvRate', 'amountBs',
+          'status', 'auditHash', 'verifiedBy', 'verifiedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && ('tenantId' in data) && data.tenantId == tenantId
         && ('status' in data) && data.status is string
         && data.status in ['PENDIENTE_VERIFICACION', 'PENDIENTE', 'VERIFICADO', 'RECHAZADO']
         && isValidOptionalString(data, 'paymentId', 1, 128)
@@ -274,7 +365,8 @@ service cloud.firestore {
         && isValidOptionalString(data, 'auditHash', 0, 128)
         && isValidOptionalString(data, 'verifiedBy', 1, 128)
         && isValidOptionalTimestampOrString(data, 'verifiedAt')
-        && isValidOptionalTimestampOrString(data, 'createdAt');
+        && isValidOptionalTimestampOrString(data, 'createdAt')
+        && isValidOptionalTimestampOrString(data, 'updatedAt');
     }
 
     // ===============================================================
@@ -299,7 +391,7 @@ service cloud.firestore {
           && ('createdBy' in request.resource.data)
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.status in ['BORRADOR_IA', 'PENDIENTE_REVISION', 'APROBADA'];
-        allow update: if isSuperAdmin()
+        allow update: if isTenantAccountant(tenantId)
           && isValidInvoice(request.resource.data, tenantId)
           && areImmutableFieldsUnchanged(['tenantId', 'createdBy', 'createdAt'])
           && (
@@ -322,9 +414,9 @@ service cloud.firestore {
 
       match /payroll/{payrollId} {
         allow read: if belongsToTenant(tenantId);
-        allow create: if isSuperAdmin()
+        allow create: if isTenantAccountant(tenantId)
           && isValidPayroll(request.resource.data, tenantId);
-        allow update: if isSuperAdmin()
+        allow update: if isTenantAccountant(tenantId)
           && isValidPayroll(request.resource.data, tenantId)
           && areImmutableFieldsUnchanged(['tenantId', 'createdAt']);
         allow delete: if false;
@@ -357,7 +449,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Default deny for all unlisted collections (e.g., saas_plans, tenants/{tenantId}/usage)
+    // Default deny for all unlisted collections (e.g., saas_plans, vt_users, vt_accountants, vt_workspace_tenants, tenants/{tenantId}/usage)
     match /{document=**} {
       allow read, write: if false;
     }

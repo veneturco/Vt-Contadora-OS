@@ -21,38 +21,48 @@ const SUPER_ADMIN_BOOTSTRAP_PASSWORD =
   (process.env.NODE_ENV === 'production' ? null : 'DEV_SUPERADMIN_LOCAL_2026#');
 
 function getSigningSecret() {
-  const secret =
-    process.env.AUTH_TOKEN_SECRET ||
-    process.env.AES_MASTER_KEY ||
-    process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('CONFIGURACIÓN CRÍTICA FALTANTE: Defina AUTH_TOKEN_SECRET o AES_MASTER_KEY en producción.');
-    }
-    return 'vt-fiscal-os-dev-only-signing-key-2026';
+  if (process.env.AUTH_TOKEN_SECRET) {
+    return process.env.AUTH_TOKEN_SECRET;
   }
-  return secret;
+  const fallbackSecret = process.env.AES_MASTER_KEY || process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (fallbackSecret) {
+    // Deriva una subclave aislada criptográficamente (HKDF/HMAC) para no reutilizar la clave AES en crudo
+    return crypto.createHmac('sha256', String(fallbackSecret)).update('VT_FISCAL_OS_JWT_SIGNING_SUBKEY_V1').digest('hex');
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('CONFIGURACIÓN CRÍTICA FALTANTE: Defina AUTH_TOKEN_SECRET o AES_MASTER_KEY en producción.');
+  }
+  return 'vt-fiscal-os-dev-only-signing-key-2026';
 }
 
 function invalidateUserStatusCache(email) {
   if (email) userStatusCache.delete(normalizeEmail(email));
 }
 
-async function isUserActiveInDb(db, email) {
+async function isUserActiveInDb(db, email, tokenIatSec = null) {
   const cleanEmail = normalizeEmail(email);
   if (!cleanEmail || !db) return true;
-  const cached = userStatusCache.get(cleanEmail);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.active;
+  let entry = userStatusCache.get(cleanEmail);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    try {
+      const snap = await db.collection('vt_users').doc(cleanEmail).get();
+      const data = snap.exists ? snap.data() : null;
+      const active = !snap.exists || (data?.status !== 'SUSPENDIDA' && data?.status !== 'ELIMINADO');
+      const passwordChangedAtMs = data?.passwordChangedAt ? new Date(data.passwordChangedAt).getTime() : 0;
+      entry = { active, passwordChangedAtMs, expiresAt: Date.now() + STATUS_CACHE_TTL_MS };
+      userStatusCache.set(cleanEmail, entry);
+    } catch {
+      return true;
+    }
   }
-  try {
-    const snap = await db.collection('vt_users').doc(cleanEmail).get();
-    const active = !snap.exists || (snap.data()?.status !== 'SUSPENDIDA' && snap.data()?.status !== 'ELIMINADO');
-    userStatusCache.set(cleanEmail, { active, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
-    return active;
-  } catch {
-    return true;
+  if (!entry.active) return false;
+  if (tokenIatSec && entry.passwordChangedAtMs > 0) {
+    // Invalida tokens emitidos antes del último cambio/reseteo de contraseña (margen de 2s por redondeo de segundo)
+    if (tokenIatSec * 1000 < entry.passwordChangedAtMs - 2000) {
+      return false;
+    }
   }
+  return true;
 }
 
 function base32ToBuffer(base32) {
@@ -473,13 +483,26 @@ async function enableUser2fa(db, email, secret, code) {
   return { ok: true, status: 200, user: toPublicUser(updated) };
 }
 
-async function disableUser2fa(db, email) {
+async function disableUser2fa(db, email, { code, currentPassword } = {}) {
   const cleanEmail = normalizeEmail(email);
   const userRef = db.collection('vt_users').doc(cleanEmail);
   const snap = await userRef.get();
   if (!snap.exists) return { ok: false, status: 404, error: 'Usuario no encontrado.' };
+  const userDoc = snap.data();
+  if (userDoc.totpEnabled && userDoc.totpSecret) {
+    const plainSecret = resolveStoredTotpSecret(userDoc.totpSecret);
+    const validTotp = code ? verifyTotpCodeNode(plainSecret, code) : false;
+    const validPass = currentPassword ? verifyPassword(currentPassword, userDoc.passwordHash) : false;
+    if (!validTotp && !validPass) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Por seguridad debe confirmar su código 2FA actual o su contraseña para desactivar el segundo factor.'
+      };
+    }
+  }
   const updated = {
-    ...snap.data(),
+    ...userDoc,
     totpEnabled: false,
     totpSecret: null,
     updatedAt: new Date().toISOString()
@@ -520,6 +543,7 @@ async function changeUserPassword(db, adminSdk, { email, currentPassword, newPas
     updatedAt: nowIso
   };
   await userRef.set(updated, { merge: true });
+  invalidateUserStatusCache(cleanEmail);
   await syncFirebaseAuthUser(adminSdk, {
     email: cleanEmail,
     password: cleanNew,
@@ -669,10 +693,12 @@ async function resetAccountantPassword(db, adminSdk, accountantId, customTempPas
       mustChangePassword: true,
       failedAttempts: 0,
       lockedUntil: null,
+      passwordChangedAt: nowIso,
       updatedAt: nowIso
     },
     { merge: true }
   );
+  invalidateUserStatusCache(cleanEmail);
 
   const firebaseSync = await syncFirebaseAuthUser(adminSdk, {
     email: cleanEmail,
@@ -746,6 +772,13 @@ async function upsertClientSubAccount(db, adminSdk, { email, name, tenantId, ten
 
   const userRef = db.collection('vt_users').doc(cleanEmail);
   const existing = await userRef.get();
+  if (existing.exists && (existing.data()?.role === 'superadmin' || existing.data()?.role === 'admin')) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Ese correo pertenece a un Contador o Super-Admin. Use un correo distinto para la sub-cuenta del comercio.'
+    };
+  }
   const existingTenants = existing.exists && Array.isArray(existing.data().tenantIds) ? existing.data().tenantIds : [];
   const mergedTenants = Array.from(new Set([...existingTenants, tenantId]));
 
@@ -798,9 +831,7 @@ async function unlockUserAccount(db, email) {
     },
     { merge: true }
   );
-  if (typeof userActiveCache !== 'undefined' && userActiveCache && typeof userActiveCache.delete === 'function') {
-    userActiveCache.delete(cleanEmail);
-  }
+  invalidateUserStatusCache(cleanEmail);
   return { ok: true, status: 200, email: cleanEmail };
 }
 

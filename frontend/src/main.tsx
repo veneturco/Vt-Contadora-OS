@@ -2,6 +2,16 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/adaptive-skin-engine.css';
+import { reportClientErrorTelemetry, flushPendingErrorTelemetry } from './services/apiClient';
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    flushPendingErrorTelemetry();
+  });
+  setTimeout(() => {
+    flushPendingErrorTelemetry();
+  }, 2500);
+}
 
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -14,6 +24,16 @@ class RootErrorBoundary extends React.Component<
 
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, errorMsg: error?.message || 'Error inesperado de renderizado' };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    reportClientErrorTelemetry({
+      severity: 'CRITICAL',
+      source: 'error_boundary',
+      category: 'REACT_RENDER_CRASH',
+      message: error?.message || 'Fallo crítico de renderizado React',
+      stack: `${error?.stack || ''}\n${errorInfo?.componentStack || ''}`.trim()
+    });
   }
 
   render() {

@@ -160,9 +160,49 @@ test('WorkspaceStore: persiste bankMovements y auditLogs y elimina empresas perm
   assert.equal(before.state.bankMovements.length, 1);
   assert.equal(before.state.auditLogs.length, 1);
 
-  const delRes = await deleteTenantWorkspace(db, 'tenant_del');
+  const delRes = await deleteTenantWorkspace(db, 'tenant_del', 'super@vt.com');
   assert.equal(delRes.ok, true);
+  assert.equal(delRes.archivedInVault, true);
 
   const after = await readWorkspaceState(db, superAdmin);
   assert.equal(after.empty, true);
+
+  // Verificar custodia forense COT 10 años en vt_archived_tenants
+  const archived = await db.collection('vt_archived_tenants').doc('tenant_del').get();
+  assert.equal(archived.exists, true);
+  assert.equal(archived.data().cotRetentionYears, 10);
+});
+
+test('WorkspaceStore COT: protege facturas APROBADAS contra borrado o alteración accidental en writeWorkspaceState', async () => {
+  const db = createMockDb();
+  const superAdmin = { role: 'superadmin', email: 'super@vt.com' };
+
+  await writeWorkspaceState(db, superAdmin, {
+    tenants: [{ id: 'tenant_cot', name: 'Empresa Protegida COT' }],
+    invoices: [
+      {
+        id: 'inv_aprobada_1',
+        tenantId: 'tenant_cot',
+        supplierRif: 'J-40918273-8',
+        invoiceNumber: '00001001',
+        totalOriginal: 580,
+        status: 'APROBADA'
+      }
+    ],
+    employees: [],
+    payments: []
+  });
+
+  // Intento de sobrescribir dejando invoices vacío o alterando el monto de la factura APROBADA
+  await writeWorkspaceState(db, superAdmin, {
+    tenants: [{ id: 'tenant_cot', name: 'Empresa Protegida COT' }],
+    invoices: [],
+    employees: [],
+    payments: []
+  });
+
+  const check1 = await readWorkspaceState(db, superAdmin);
+  assert.equal(check1.state.invoices.length, 1);
+  assert.equal(check1.state.invoices[0].id, 'inv_aprobada_1');
+  assert.equal(check1.state.invoices[0].totalOriginal, 580);
 });

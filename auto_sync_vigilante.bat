@@ -19,7 +19,13 @@ echo.
 :loop
 git status --porcelain > nul 2>&1
 for /f %%i in ('git status --porcelain 2^>nul') do (
-    echo [%TIME%] Cambios detectados. Sincronizando con GitHub...
+    echo [%TIME%] Cambios detectados. Verificando pruebas unitarias antes de subir...
+    call npm test
+    if errorlevel 1 (
+        echo [%TIME%] ALERTA: Las pruebas fallaron. Se cancela el push automatico para proteger produccion.
+        goto wait
+    )
+    echo [%TIME%] Pruebas exitosas. Sincronizando con GitHub...
     git add .
     git commit -m "auto: mejora continua VeneTurco Fiscal OS [%DATE% %TIME%]"
     git push origin main

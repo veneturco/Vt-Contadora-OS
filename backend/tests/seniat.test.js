@@ -18,6 +18,11 @@ test('Validacion RIF Venezolano Modulo 11 (SNAT)', () => {
   assert.equal(valid.valid, true);
   assert.equal(valid.formatted, 'J-40918273-8');
 
+  // Consejo Comunal / Comuna (prefijo C, mismo peso Módulo 11 que J = 3)
+  const validComunal = validateVenezuelanRIF('C-40918273-8');
+  assert.equal(validComunal.valid, true);
+  assert.equal(validComunal.formatted, 'C-40918273-8');
+
   const invalid = validateVenezuelanRIF('J-40918273-4');
   assert.equal(invalid.valid, false);
 });

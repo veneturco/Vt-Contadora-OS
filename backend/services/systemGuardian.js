@@ -254,10 +254,33 @@ async function getOcrLearnedHints(db, limit = 12) {
   }
 }
 
+function escapeTelegramHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
- * Registra una alerta/error de telemetría en tiempo real
+ * Registra una alerta/error de telemetría en tiempo real y dispara notificaciones multicanal
  */
-async function recordGuardianAlert(db, { severity = 'WARNING', source = 'frontend', category = 'RUNTIME_ERROR', message, stack, route, userEmail, tenantId }) {
+async function recordGuardianAlert(
+  db,
+  {
+    severity = 'WARNING',
+    source = 'frontend',
+    category = 'RUNTIME_ERROR',
+    message,
+    stack,
+    route,
+    method,
+    statusCode,
+    userEmail,
+    tenantId,
+    userAgent,
+    forceNotify = false
+  }
+) {
   if (!db || !message) return null;
   const nowIso = new Date().toISOString();
   const fingerprint = crypto
@@ -266,43 +289,68 @@ async function recordGuardianAlert(db, { severity = 'WARNING', source = 'fronten
     .digest('hex')
     .slice(0, 16);
 
+  const errorCode = `VT-${fingerprint.slice(0, 6).toUpperCase()}`;
   const ref = db.collection(GUARDIAN_ALERTS_COL).doc(`alert_${fingerprint}`);
   const snap = await ref.get();
   const prev = snap && snap.exists ? (snap.data() || {}) : {};
+  const wasResolved = prev.status === 'RESOLVED';
 
   const alertDoc = {
     id: `alert_${fingerprint}`,
+    errorCode,
     severity,
     source,
     category,
     message: String(message).slice(0, 400),
-    stack: stack ? String(stack).slice(0, 800) : (prev.stack || null),
-    route: route ? String(route).slice(0, 120) : (prev.route || null),
+    stack: stack ? String(stack).slice(0, 1200) : (prev.stack || null),
+    route: route ? String(route).slice(0, 140) : (prev.route || null),
+    method: method ? String(method).slice(0, 12) : (prev.method || null),
+    statusCode: statusCode ? Number(statusCode) : (prev.statusCode || null),
     userEmail: userEmail || prev.userEmail || null,
     tenantId: tenantId || prev.tenantId || null,
-    occurrences: Number(prev.occurrences || 0) + 1,
+    userAgent: userAgent ? String(userAgent).slice(0, 180) : (prev.userAgent || null),
+    occurrences: wasResolved ? 1 : Number(prev.occurrences || 0) + 1,
     status: 'OPEN',
-    firstSeenAt: prev.firstSeenAt || nowIso,
+    firstSeenAt: wasResolved ? nowIso : (prev.firstSeenAt || nowIso),
     lastSeenAt: nowIso
   };
 
   await ref.set(alertDoc, { merge: true });
-  notifyAdminTelegramAlert(alertDoc).catch(() => {});
+  dispatchRealtimeErrorNotifications(alertDoc, { forceNotify }).catch(() => {});
   return alertDoc;
 }
 
 /**
- * Envía el fallo estructurado en JSON al Telegram del Administrador si está configurado
+ * Despacha notificaciones en tiempo real a todos los canales configurados (Telegram HTML + Webhook + Email Resend)
+ */
+async function dispatchRealtimeErrorNotifications(alertDoc, { forceNotify = false } = {}) {
+  if (!alertDoc) return { telegramSent: false, webhookSent: false, emailSent: false };
+  // Anti-spam inteligente: notifica en la 1ra aparición, si reabre tras resolverse, si es forzada o cada 10 repeticiones
+  if (!forceNotify && alertDoc.occurrences > 1 && alertDoc.occurrences % 10 !== 0) {
+    return { telegramSent: false, webhookSent: false, emailSent: false, throttled: true };
+  }
+
+  const [telegramSent, webhookSent, emailSent] = await Promise.all([
+    notifyAdminTelegramAlert(alertDoc).catch(() => false),
+    notifyAdminWebhookAlert(alertDoc).catch(() => false),
+    notifyAdminEmailAlert(alertDoc).catch(() => false)
+  ]);
+
+  return { telegramSent, webhookSent, emailSent };
+}
+
+/**
+ * Envía el fallo estructurado en HTML seguro al Telegram del Administrador (inmune a errores de parseo Markdown)
  */
 async function notifyAdminTelegramAlert(alertDoc) {
   const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = String(process.env.ADMIN_TELEGRAM_CHAT_ID || '').trim();
-  if (!token || !chatId || !alertDoc) return;
-  // Evita spam si ocurre en bucle: notifica la primera vez y cada 10 repeticiones
-  if (alertDoc.occurrences > 1 && alertDoc.occurrences % 10 !== 0) return;
+  if (!token || !chatId || !alertDoc) return false;
 
+  const badge = alertDoc.severity === 'CRITICAL' ? '🚨 CRÍTICO' : '⚠️ ADVERTENCIA';
   const payloadJson = JSON.stringify(
     {
+      errorCode: alertDoc.errorCode,
       id: alertDoc.id,
       severity: alertDoc.severity,
       source: alertDoc.source,
@@ -310,26 +358,143 @@ async function notifyAdminTelegramAlert(alertDoc) {
       tenantId: alertDoc.tenantId,
       userEmail: alertDoc.userEmail,
       route: alertDoc.route,
+      method: alertDoc.method,
+      statusCode: alertDoc.statusCode,
       occurrences: alertDoc.occurrences,
       lastSeenAt: alertDoc.lastSeenAt,
       message: alertDoc.message,
-      stack: alertDoc.stack ? String(alertDoc.stack).slice(0, 350) : null
+      stack: alertDoc.stack ? String(alertDoc.stack).slice(0, 450) : null
     },
     null,
     2
   );
 
-  const text = `🛡️ *Guardián Contadora OS (${alertDoc.severity})*\n\`\`\`json\n${payloadJson.slice(0, 3600)}\n\`\`\``;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const htmlText =
+    `🛡️ <b>Guardián Contadora OS · ${badge}</b>\n` +
+    `• <b>Código:</b> <code>${escapeTelegramHtml(alertDoc.errorCode)}</code> (${alertDoc.occurrences}x)\n` +
+    `• <b>Origen:</b> ${escapeTelegramHtml(alertDoc.source)} / ${escapeTelegramHtml(alertDoc.category)}\n` +
+    (alertDoc.route ? `• <b>Ruta:</b> <code>${escapeTelegramHtml(alertDoc.method ? `${alertDoc.method} ${alertDoc.route}` : alertDoc.route)}</code>\n` : '') +
+    (alertDoc.tenantId || alertDoc.userEmail
+      ? `• <b>Contexto:</b> ${escapeTelegramHtml(alertDoc.tenantId || 'sin-empresa')} · ${escapeTelegramHtml(alertDoc.userEmail || 'anónimo')}\n`
+      : '') +
+    `• <b>Detalle:</b> ${escapeTelegramHtml(alertDoc.message)}\n\n` +
+    `<pre>${escapeTelegramHtml(payloadJson.slice(0, 3100))}</pre>`;
+
+  const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      text,
-      parse_mode: 'Markdown'
+      text: htmlText,
+      parse_mode: 'HTML'
     }),
-    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined
+    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
   });
+  return Boolean(resp && resp.ok);
+}
+
+/**
+ * Canal opcional Webhook (Slack / Discord / Make / n8n / monitoreo externo)
+ */
+async function notifyAdminWebhookAlert(alertDoc) {
+  const webhookUrl = String(process.env.ERROR_WEBHOOK_URL || '').trim();
+  if (!webhookUrl || !alertDoc) return false;
+
+  const summaryText = `[${alertDoc.severity}] ${alertDoc.errorCode} (${alertDoc.source}/${alertDoc.category}): ${alertDoc.message}`;
+  const resp = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: summaryText,
+      content: summaryText,
+      alert: alertDoc
+    }),
+    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
+  });
+  return Boolean(resp && resp.ok);
+}
+
+/**
+ * Canal opcional de Correo Instantáneo vía Resend API (Plan gratuito: 3.000 emails/mes sin dependencias extra)
+ */
+async function notifyAdminEmailAlert(alertDoc) {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const emailTo = String(process.env.ALERT_EMAIL_TO || '').trim();
+  if (!apiKey || !emailTo || !alertDoc) return false;
+  // Para cuidar la cuota gratuita de correo, envía correo en errores CRITICAL o pruebas explícitas
+  if (alertDoc.severity !== 'CRITICAL' && alertDoc.category !== 'TEST_NOTIFICATION') return false;
+
+  const fromAddr = String(process.env.ALERT_EMAIL_FROM || 'Guardian VT <onboarding@resend.dev>').trim();
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:640px;padding:20px;background:#0f172a;color:#f8fafc;border-radius:12px;">
+      <h2 style="margin:0 0 12px;color:#38bdf8;">Guardián Contadora OS · ${escapeTelegramHtml(alertDoc.errorCode)}</h2>
+      <p style="margin:4px 0;"><strong>Severidad:</strong> ${escapeTelegramHtml(alertDoc.severity)} (${alertDoc.occurrences}x)</p>
+      <p style="margin:4px 0;"><strong>Origen:</strong> ${escapeTelegramHtml(alertDoc.source)} / ${escapeTelegramHtml(alertDoc.category)}</p>
+      <p style="margin:4px 0;"><strong>Ruta:</strong> ${escapeTelegramHtml(alertDoc.route || 'N/A')} · <strong>Usuario:</strong> ${escapeTelegramHtml(alertDoc.userEmail || 'anónimo')}</p>
+      <p style="margin:12px 0;padding:12px;background:#1e293b;border-radius:8px;">${escapeTelegramHtml(alertDoc.message)}</p>
+      ${alertDoc.stack ? `<pre style="padding:12px;background:#020617;color:#94a3b8;border-radius:8px;overflow-x:auto;font-size:12px;">${escapeTelegramHtml(alertDoc.stack)}</pre>` : ''}
+    </div>
+  `;
+
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: fromAddr,
+      to: emailTo.split(',').map(s => s.trim()).filter(Boolean),
+      subject: `[${alertDoc.severity}] ${alertDoc.errorCode} · ${String(alertDoc.message).slice(0, 70)}`,
+      html
+    }),
+    signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
+  });
+  return Boolean(resp && resp.ok);
+}
+
+/**
+ * Dispara una alerta de prueba controlada para verificar extremo a extremo la llegada al administrador
+ */
+async function sendTestGuardianAlert(db, actorEmail = 'superadmin') {
+  const channelsConfigured = {
+    firestorePanel: Boolean(db),
+    telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.ADMIN_TELEGRAM_CHAT_ID),
+    webhook: Boolean(process.env.ERROR_WEBHOOK_URL),
+    email: Boolean(process.env.RESEND_API_KEY && process.env.ALERT_EMAIL_TO)
+  };
+
+  const nowIso = new Date().toISOString();
+  const testDoc = {
+    id: `alert_test_${Date.now()}`,
+    errorCode: 'VT-TEST01',
+    severity: 'WARNING',
+    source: 'guardian_self_test',
+    category: 'TEST_NOTIFICATION',
+    message: `Prueba en vivo del sistema de alertas automáticas solicitada por ${actorEmail}.`,
+    stack: `GuardianSelfTest at ${nowIso}`,
+    route: '/api/guardian/test-alert',
+    method: 'POST',
+    statusCode: 200,
+    userEmail: actorEmail,
+    tenantId: 'system',
+    occurrences: 1,
+    status: 'OPEN',
+    firstSeenAt: nowIso,
+    lastSeenAt: nowIso
+  };
+
+  if (db) {
+    await db.collection(GUARDIAN_ALERTS_COL).doc('alert_self_test').set({ ...testDoc, id: 'alert_self_test' }, { merge: true });
+  }
+  const delivery = await dispatchRealtimeErrorNotifications({ ...testDoc, id: 'alert_self_test' }, { forceNotify: true });
+
+  return {
+    ok: true,
+    alert: { ...testDoc, id: 'alert_self_test' },
+    channelsConfigured,
+    delivery
+  };
 }
 
 async function resolveGuardianAlert(db, alertId, actorEmail = 'superadmin') {
@@ -382,6 +547,13 @@ async function runSystemGuardianAudit(db, { autoRepair = false, env = process.en
       severity: 'CRITICAL',
       category: 'SECURITY',
       message: 'AES_MASTER_KEY ausente o débil en el entorno del servidor.'
+    });
+  }
+  if (!env.ADMIN_TELEGRAM_CHAT_ID && !env.ERROR_WEBHOOK_URL && !env.ALERT_EMAIL_TO) {
+    infraFindings.push({
+      severity: 'INFO',
+      category: 'ALERTING',
+      message: 'Alertas externas opcionales: configure ADMIN_TELEGRAM_CHAT_ID (enviando /id al bot) o ALERT_EMAIL_TO para recibir fallos en el móvil.'
     });
   }
 
@@ -537,10 +709,12 @@ module.exports = {
   GUARDIAN_ALERTS_COL,
   GUARDIAN_OCR_MEMORY_COL,
   SENIAT_LEGAL_RULES,
+  escapeTelegramHtml,
   auditInvoiceSeniatCompliance,
   recordOcrLearningPattern,
   getOcrLearnedHints,
   recordGuardianAlert,
+  sendTestGuardianAlert,
   resolveGuardianAlert,
   runSystemGuardianAudit
 };

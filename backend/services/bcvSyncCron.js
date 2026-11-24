@@ -3,9 +3,9 @@ const https = require('https');
 const { computeAuditHash } = require('../security/cryptoVault');
 const { DEFAULT_CURRENT_BCV_USD, DEFAULT_CURRENT_BCV_EUR } = require('./bcvConstants');
 
-// Agente HTTPS para requests directos a BCV
+// Agente HTTPS para requests directos a BCV (TLS verificado por defecto; solo se relaja si BCV_INSECURE_TLS=true explícito)
 const bcvHttpsAgent = new https.Agent({
-  rejectUnauthorized: process.env.BCV_STRICT_TLS === 'true'
+  rejectUnauthorized: process.env.BCV_INSECURE_TLS !== 'true'
 });
 
 // Cache en memoria para evitar saturar fuentes externas y prevenir rate-limits

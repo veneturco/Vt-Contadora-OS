@@ -256,3 +256,54 @@ test('Seguridad Estado Vivo: usuario suspendido/eliminado pierde acceso inmediat
   const userSnap = await db.collection('vt_users').doc('revocable@firma.com').get();
   assert.equal(userSnap.data().status, 'ELIMINADO');
 });
+
+test('Seguridad Sesiones & Sub-Cuentas: cambio de clave revoca tokens previos, 2FA exige código para desactivar y bloquea degradar admin', async () => {
+  const { disableUser2fa, upsertClientSubAccount } = require('../services/authService');
+  const db = makeMockDb();
+
+  const created = await upsertAccountantAccount(db, null, {
+    name: 'Lic. Ana Seguridad',
+    cpcNumber: 'CPC-99999',
+    email: 'ana@firma.com'
+  });
+
+  // Token emitido ANTES del cambio de clave (simulando 10s antes)
+  const staleIat = Math.floor(Date.now() / 1000) - 10;
+  await changeUserPassword(db, null, {
+    email: 'ana@firma.com',
+    newPassword: 'NuevaClaveSegura2026#'
+  });
+  assert.equal(await isUserActiveInDb(db, 'ana@firma.com', staleIat), false);
+  assert.equal(await isUserActiveInDb(db, 'ana@firma.com', Math.floor(Date.now() / 1000) + 1), true);
+
+  // Impedir que upsertClientSubAccount sobrescriba una cuenta de Contador Aliado
+  const hijackAttempt = await upsertClientSubAccount(db, null, {
+    email: 'ana@firma.com',
+    name: 'Intruso',
+    tenantId: 'tenant_ajeno'
+  });
+  assert.equal(hijackAttempt.ok, false);
+  assert.equal(hijackAttempt.status, 403);
+
+  // Impedir desactivar 2FA sin código ni contraseña válida
+  const secret = generateTotpSecretNode(20);
+  const crypto = require('crypto');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, val = 0; const bytes = [];
+  for (const ch of secret) { val = (val << 5) | alphabet.indexOf(ch); bits += 5; if (bits >= 8) { bytes.push((val >>> (bits - 8)) & 0xff); bits -= 8; } }
+  const counter = Math.floor(Math.floor(Date.now() / 1000) / 30);
+  const buf = Buffer.alloc(8); buf.writeUInt32BE(Math.floor(counter / 0x100000000), 0); buf.writeUInt32BE(counter >>> 0, 4);
+  const hmac = crypto.createHmac('sha1', Buffer.from(bytes)).update(buf).digest();
+  const off = hmac[hmac.length - 1] & 0x0f;
+  const code = String((((hmac[off] & 0x7f) << 24) | ((hmac[off+1] & 0xff) << 16) | ((hmac[off+2] & 0xff) << 8) | (hmac[off+3] & 0xff)) % 1000000).padStart(6, '0');
+
+  await enableUser2fa(db, 'ana@firma.com', secret, code);
+  const unauthorizedDisable = await disableUser2fa(db, 'ana@firma.com', {});
+  assert.equal(unauthorizedDisable.ok, false);
+  assert.equal(unauthorizedDisable.status, 401);
+
+  const authorizedDisable = await disableUser2fa(db, 'ana@firma.com', { code });
+  assert.equal(authorizedDisable.ok, true);
+  assert.equal(authorizedDisable.user.totpEnabled, false);
+  assert.ok(created.ok);
+});

@@ -1,5 +1,5 @@
-// VeneTurco Fiscal OS v3.3 - Service Worker PWA (Offline Resilient + Local OCR)
-const CACHE_NAME = 'veneturco-cache-v3.3.3';
+// VeneTurco Fiscal OS v3.4 - Service Worker PWA (Network-First Navigation + Offline Resilient + Local OCR)
+const CACHE_NAME = 'veneturco-cache-v3.4.0';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -42,7 +42,23 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Stale-While-Revalidate for static assets, scripts and styles
+  // Network-First para navegación HTML: garantiza cargar siempre el último bundle tras despliegues
+  if (req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('/index.html')) {
+    event.respondWith(
+      fetch(req)
+        .then(networkResp => {
+          if (networkResp && networkResp.status === 200) {
+            const respClone = networkResp.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put('/index.html', respClone));
+          }
+          return networkResp;
+        })
+        .catch(() => caches.match('/index.html') || caches.match(req))
+    );
+    return;
+  }
+
+  // Stale-While-Revalidate para recursos estáticos versionados, iconos y WASM Tesseract
   event.respondWith(
     caches.match(req).then(cachedResp => {
       const fetchPromise = fetch(req).then(networkResp => {
@@ -53,13 +69,7 @@ self.addEventListener('fetch', event => {
           });
         }
         return networkResp;
-      }).catch(() => {
-        // Fallback for navigation requests when offline
-        if (req.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-        return cachedResp;
-      });
+      }).catch(() => cachedResp);
 
       return cachedResp || fetchPromise;
     })
