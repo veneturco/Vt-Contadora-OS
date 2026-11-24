@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import jsQR from 'jsqr';
 import {
   ShieldCheck, FileText, Cpu, Send, Users, CreditCard, Smartphone,
@@ -37,13 +37,20 @@ import {
   breakdownPosSettlementBatch,
   runDeterministicBankReconciliation,
   exportBankReconciliationCsv,
-  downloadPdfBankReconciliationAudit
+  downloadPdfBankReconciliationAudit,
+  computeQuincenalClosingSummary,
+  downloadPdfQuincenalClosingSummary
 } from './utils/seniatEngine';
+import { archiveOriginalDocumentCustody } from './utils/documentCustody';
 import { getTotpUri } from './utils/totp';
 import { safeGetStorage, safeSetStorage } from './utils/storage';
 import { enhanceDocumentForOcr, runLocalBrowserOcr } from './utils/documentEnhancer';
 import { lookupLocalVendorHints, learnFromConfirmedInvoice } from './utils/fiscalTemplateDb';
+import { enqueueOfflineInvoice, flushOfflineInvoiceQueue, getPendingOfflineCount } from './utils/offlineInvoiceQueue';
 import { safeApiRequest, reportClientErrorTelemetry } from './services/apiClient';
+
+const PayrollLotttView = lazy(() => import('./features/payroll/PayrollLotttView'));
+const SecurityVaultView = lazy(() => import('./features/security/SecurityVaultView'));
 
 import { SkinId, ActiveTabId, OperationStepId, Tenant, AccountantPartner } from './types/fiscal';
 import { AppleEmptyState } from './components/AppleEmptyState';
@@ -526,6 +533,7 @@ export default function App() {
     sourceChannel: 'WEB_OCR' as 'WEB_OCR' | 'TELEGRAM_BOT' | 'MANUAL'
   });
   const [ocrDraft, setOcrDraft] = useState(createEmptyOcrDraft);
+  const [lastOcrSourceFile, setLastOcrSourceFile] = useState<{ base64Data: string; mimeType: string } | null>(null);
   const [ocrScanning, setOcrScanning] = useState(false);
   const [ocrUploadedFileName, setOcrUploadedFileName] = useState<string>('Ningún archivo cargado');
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
@@ -614,10 +622,26 @@ export default function App() {
   }, [skin]);
 
   useEffect(() => {
-    function onOnline() { setIsOnline(true); }
+    function syncOfflineNow() {
+      flushOfflineInvoiceQueue()
+        .then(res => {
+          if (res.synced > 0) {
+            setSubPayToast(`Conexión restaurada: ${res.synced} factura(s) offline sincronizadas con la nube.`);
+            setTimeout(() => setSubPayToast(null), 5000);
+          }
+        })
+        .catch(() => {});
+    }
+    function onOnline() {
+      setIsOnline(true);
+      syncOfflineNow();
+    }
     function onOffline() { setIsOnline(false); }
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      syncOfflineNow();
+    }
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
@@ -1040,15 +1064,15 @@ export default function App() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (/\.(xlsx|xls)$/i.test(file.name)) {
-      setSubPayToast('Formato Excel binario (.xlsx/.xls) no soportado directamente. Exporte su extracto como CSV (delimitado por comas) o TXT e importe de nuevo.');
-      setTimeout(() => setSubPayToast(null), 6000);
-      return;
-    }
     const reader = new FileReader();
     reader.onload = evt => {
-      const text = evt.target?.result as string;
+      const text = String(evt.target?.result || '');
       if (!text) return;
+      if (/^PK\x03\x04|^\xD0\xCF\x11\xE0/.test(text)) {
+        setSubPayToast('Archivo Excel binario (.xlsx/.xls binario) detectado. Guárdelo como "CSV" o "Libro XML/HTML" desde su banco o Excel e importe de nuevo.');
+        setTimeout(() => setSubPayToast(null), 6000);
+        return;
+      }
       const parsed = parseBankStatementCsv(
         text,
         selectedBankFilter === 'TODOS' ? 'BANESCO' : selectedBankFilter,
@@ -1061,12 +1085,12 @@ export default function App() {
           'EXTRACTO_BANCARIO_IMPORTADO',
           currentUser?.email || 'admin:contador',
           activeTenant.id,
-          `${parsed.length} movimientos importados del archivo ${file.name}`
+          `${parsed.length} movimientos importados del archivo ${file.name} (${parsed[0].bankName})`
         );
-        setSubPayToast(`¡${parsed.length} movimientos importados con éxito! Haz clic en "Ejecutar Conciliación" para cruzarlos.`);
+        setSubPayToast(`¡${parsed.length} movimientos de ${parsed[0].bankName} importados! Pulsa "Ejecutar Conciliación" para cruzarlos.`);
         setTimeout(() => setSubPayToast(null), 5000);
       } else {
-        setSubPayToast('No se detectaron movimientos válidos en el archivo. Verifique que sea formato CSV o TXT.');
+        setSubPayToast('No se detectaron movimientos válidos. Verifique que el archivo sea CSV, TXT o HTML/XML bancario (Banesco, BDV, Mercantil, Bancamiga).');
         setTimeout(() => setSubPayToast(null), 5000);
       }
     };
@@ -2225,6 +2249,43 @@ export default function App() {
     return `https://wa.me/?text=${encodeURIComponent(msg)}`;
   }
 
+  function handleRunQuincenalClosingPackage() {
+    const periodYYYYMM = new Date().toISOString().slice(0, 7).replace('-', '');
+    const summary = computeQuincenalClosingSummary(tenantInvoices, periodYYYYMM, bcvRate);
+
+    handleDownloadFile(
+      `LIBRO_FISCAL_SENIAT_${activeTenant.rif}_${periodYYYYMM}.csv`,
+      exportSeniatPurchaseAndSalesBookCsv(
+        activeTenant.name,
+        activeTenant.rif,
+        periodYYYYMM,
+        'ALL',
+        tenantInvoices
+      ),
+      'text/csv;charset=utf-8'
+    );
+    handleDownloadFile(
+      `RET_IVA_${activeTenant.rif}_${periodYYYYMM}.txt`,
+      exportSeniatIvaTxt16(activeTenant.rif, periodYYYYMM, tenantInvoices),
+      'text/plain'
+    );
+    handleDownloadFile(
+      `RET_ISLR_${activeTenant.rif}_${periodYYYYMM}.xml`,
+      exportIslrXmlDecreto1808(activeTenant.rif, periodYYYYMM, tenantInvoices),
+      'application/xml'
+    );
+    downloadPdfQuincenalClosingSummary(activeTenant.name, activeTenant.rif, bcvRate, summary);
+
+    appendAuditLog(
+      'PAQUETE_CIERRE_QUINCENAL_1CLIC',
+      currentUser?.email || 'admin:contador',
+      activeTenant.id,
+      `Paquete Cierre Quincenal ${periodYYYYMM} generado: CSV Libros + TXT IVA + XML ISLR + Acta PDF (Total a enterar Bs. ${summary.totalPayableSeniatBs.toFixed(2)})`
+    );
+    setSubPayToast(`Paquete de Cierre Quincenal ${periodYYYYMM} descargado (4 archivos oficiales SENIAT).`);
+    setTimeout(() => setSubPayToast(null), 5500);
+  }
+
   function handleExportParafiscalCsv() {
     const header = 'CEDULA;TRABAJADOR;CARGO;SALARIO_BASE_BS;IVSS_EMPLEADO_4%;FAOV_EMPLEADO_1%;RPE_EMPLEADO_0.5%;IVSS_PATRONAL_BS;FAOV_PATRONAL_2%;RPE_PATRONAL_2%;PROVISION_INCES_2%;TOTAL_APORTE_PARAFISCAL_BS';
     const rows = tenantEmployees.map(emp => {
@@ -2450,6 +2511,7 @@ export default function App() {
 
     try {
       const enhanced = await enhanceDocumentForOcr(file);
+      setLastOcrSourceFile({ base64Data: enhanced.base64Data, mimeType: enhanced.mimeType });
       if (file.type.startsWith('image/')) {
         setOcrPreviewUrl(enhanced.dataUrl);
       } else {
@@ -2662,6 +2724,26 @@ export default function App() {
           };
 
           setInvoices(prev => [createdInvoice, ...prev]);
+      if (lastOcrSourceFile) {
+        archiveOriginalDocumentCustody({
+          tenantId: activeTenant.id,
+          invoiceId: newId,
+          base64Data: lastOcrSourceFile.base64Data,
+          mimeType: lastOcrSourceFile.mimeType,
+          emissionDate: createdInvoice.emissionDate
+        })
+          .then(custody => {
+            setInvoices(prev =>
+              prev.map(inv =>
+                inv.id === newId
+                  ? { ...inv, custodyPath: custody.custodyPath, custodySha256: custody.custodySha256 }
+                  : inv
+              )
+            );
+          })
+          .catch(() => {});
+        setLastOcrSourceFile(null);
+      }
     // Aprendizaje automático local en FiscalTemplateDB (IndexedDB aislado por tenantId)
     learnFromConfirmedInvoice({
       tenantId: activeTenant.id,
@@ -2786,6 +2868,26 @@ export default function App() {
       };
 
       setInvoices(prev => [createdInvoice, ...prev]);
+      if (lastOcrSourceFile) {
+        archiveOriginalDocumentCustody({
+          tenantId: activeTenant.id,
+          invoiceId: newId,
+          base64Data: lastOcrSourceFile.base64Data,
+          mimeType: lastOcrSourceFile.mimeType,
+          emissionDate: createdInvoice.emissionDate
+        })
+          .then(custody => {
+            setInvoices(prev =>
+              prev.map(inv =>
+                inv.id === newId
+                  ? { ...inv, custodyPath: custody.custodyPath, custodySha256: custody.custodySha256 }
+                  : inv
+              )
+            );
+          })
+          .catch(() => {});
+        setLastOcrSourceFile(null);
+      }
       learnFromConfirmedInvoice({
         tenantId: activeTenant.id,
         supplierRif: createdInvoice.supplierRif,
@@ -3168,6 +3270,10 @@ export default function App() {
         return;
       }
 
+      if (!syncRes.ok && syncRes.status === 0) {
+        await enqueueOfflineInvoice(activeTenant.id, newInv);
+      }
+
       setInvoices(prev => [newInv, ...prev]);
       learnFromConfirmedInvoice({
         tenantId: activeTenant.id,
@@ -3186,10 +3292,11 @@ export default function App() {
       setMobileQuickInvoiceNumber('');
       setMobileQuickControlNumber('');
       setMobileUploadedFileName('');
+      const queuedCount = !syncRes.ok ? await getPendingOfflineCount(activeTenant.id) : 0;
       setMobileToast(
         syncRes.ok
           ? `Factura #${invNum} enviada en vivo al Contador con sello SHA-256`
-          : `Sin red: Factura #${invNum} guardada localmente con sello SHA-256`
+          : `Sin red: Factura #${invNum} en cola offline IndexedDB (${queuedCount} pendiente${queuedCount === 1 ? '' : 's'}) — se enviará sola al reconectar`
       );
       setTimeout(() => setMobileToast(null), 4000);
     } finally {
@@ -6317,6 +6424,15 @@ export default function App() {
                     <span>✨ Firmar {tenantInvoices.filter(i => i.status !== 'APROBADA').length} en Lote</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={handleRunQuincenalClosingPackage}
+                  className="px-3.5 py-2 text-xs font-bold rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 border border-sky-400/40 flex items-center gap-1.5 transition cursor-pointer"
+                  title="Genera y descarga en 1 clic: Libro CSV, TXT IVA 16 Cols, XML ISLR y Acta PDF de Cierre"
+                >
+                  <Download className="w-3.5 h-3.5 text-sky-300" />
+                  <span>Cierre Quincenal 1-Clic</span>
+                </button>
                 <a
                   href={getWhatsAppClosingSummaryUrl()}
                   target="_blank"
@@ -6605,319 +6721,34 @@ export default function App() {
       )}
 
       {/* =====================================================================
-          TAB 04: NÓMINA VENEZOLANA LOTTT + APORTES PATRONALES + ART. 142
+          TAB 04: NÓMINA VENEZOLANA LOTTT + APORTES PATRONALES + ART. 142 (LAZY CHUNK)
          ===================================================================== */}
       {activeTab === 'payroll' && (
-        <div className="space-y-5">
-          {/* 4 Bento KPI Cards Interactivos de Nómina LOTTT */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <button
-              type="button"
-              onClick={() => document.getElementById('payroll-roster-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
-              title="Tocar para ir a la nómina activa de trabajadores"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="apple-icon-jewel apple-icon-jewel-blue w-7 h-7">
-                    <Users className="w-3.5 h-3.5" />
-                  </div>
-                  <span className="text-xs font-semibold text-white/85">Nómina Activa</span>
-                </div>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white/10 text-white/90">LOTTT</span>
-              </div>
-              <div className="text-2xl font-extrabold text-white tabular-nums tracking-tight">
-                {tenantEmployees.length} <span className="text-sm font-normal opacity-70">Trabajadores</span>
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
-                <span>{activeTenant.name}</span>
-                <span className="text-sky-400 font-semibold group-hover:translate-x-0.5 transition-transform">Gestionar →</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (tenantEmployees[0]) {
-                  downloadPdfPaystub(activeTenant.name, activeTenant.rif, tenantEmployees[0]);
-                }
-              }}
-              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
-              title="Tocar para descargar el Recibo Oficial de Pago LOTTT en PDF con QR"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="apple-icon-jewel apple-icon-jewel-emerald w-7 h-7">
-                    <CreditCard className="w-3.5 h-3.5" />
-                  </div>
-                  <span className="text-xs font-semibold text-emerald-200">Neto + Cestaticket</span>
-                </div>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300">RECIBO PDF</span>
-              </div>
-              <div className="text-xl font-extrabold text-emerald-400 tabular-nums tracking-tight">
-                Bs. {payrollBreakdown.netPayBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
-                <span>Deducción 5.5%: -Bs. {payrollBreakdown.totalDeductions.toFixed(2)}</span>
-                <span className="text-emerald-300 font-semibold group-hover:translate-x-0.5 transition-transform">Emitir PDF →</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleExportParafiscalCsv}
-              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
-              title="Tocar para descargar la Planilla Parafiscal (IVSS, FAOV, RPE, INCES) en Excel CSV"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="apple-icon-jewel apple-icon-jewel-amber w-7 h-7">
-                    <Scale className="w-3.5 h-3.5" />
-                  </div>
-                  <span className="text-xs font-semibold text-amber-200">Aportes Parafiscales</span>
-                </div>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300">IVSS / FAOV</span>
-              </div>
-              <div className="text-xl font-extrabold text-amber-400 tabular-nums tracking-tight">
-                Bs. {(payrollBreakdown.ivssEmployer + payrollBreakdown.faovEmployer + payrollBreakdown.rpeEmployer + payrollBreakdown.incesQuarterlyProvision).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
-                <span>IVSS + Banavih + INCES</span>
-                <span className="text-amber-300 font-semibold group-hover:translate-x-0.5 transition-transform">Descargar CSV →</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleExportArt142Csv}
-              className="ui-card p-4 space-y-2.5 text-left cursor-pointer transition-all group"
-              title="Tocar para descargar el Libro de Garantía de Prestaciones Sociales (Art. 142 LOTTT)"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="apple-icon-jewel apple-icon-jewel-purple w-7 h-7">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                  </div>
-                  <span className="text-xs font-semibold text-purple-200">Prestaciones Art. 142</span>
-                </div>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300">5 DÍAS/MES</span>
-              </div>
-              <div className="text-xl font-extrabold text-purple-300 tabular-nums tracking-tight">
-                Bs. {payrollBreakdown.prestacionesMonthlyProvision.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)]">
-                <span>Garantía Salario Integral</span>
-                <span className="text-purple-300 font-semibold group-hover:translate-x-0.5 transition-transform">Exportar Libro →</span>
-              </div>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-12 gap-5">
-            <div className="col-span-12 lg:col-span-8 ui-card p-5 space-y-4">
-              <h2 className="ui-heading text-lg font-bold">Motor de Nómina Venezolana (LOTTT + Parafiscales + Art. 142)</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
-              <div>
-                <label className="block mb-1 opacity-75">Salario Base Mensual (Bs.)</label>
-                <input
-                  type="number"
-                  value={baseSalaryBs}
-                  onChange={e => setBaseSalaryBs(Number(e.target.value) || 0)}
-                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block mb-1 opacity-75">Cestaticket Socialista (Bs.)</label>
-                <input
-                  type="number"
-                  value={cestaticketBs}
-                  onChange={e => setCestaticketBs(Number(e.target.value) || 0)}
-                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block mb-1 opacity-75">Nivel de Riesgo IVSS Patronal</label>
-                <select
-                  value={riskLevel}
-                  onChange={e => setRiskLevel(e.target.value as 'MINIMO' | 'MEDIO' | 'ALTO')}
-                  className="w-full p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
-                >
-                  <option value="MINIMO">Riesgo Mínimo (9%)</option>
-                  <option value="MEDIO">Riesgo Medio (10%)</option>
-                  <option value="ALTO">Riesgo Máximo (11%)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2 text-xs font-mono">
-              <div className="p-3 rounded bg-[var(--bg-elevated)]">
-                <span className="opacity-70 block">IVSS Empleado (4%)</span>
-                <strong className="tabular-nums">- Bs. {payrollBreakdown.ivssEmployee.toFixed(2)}</strong>
-              </div>
-              <div className="p-3 rounded bg-[var(--bg-elevated)]">
-                <span className="opacity-70 block">FAOV / Banavih (1%)</span>
-                <strong className="tabular-nums">- Bs. {payrollBreakdown.faovEmployee.toFixed(2)}</strong>
-              </div>
-              <div className="p-3 rounded bg-[var(--bg-elevated)]">
-                <span className="opacity-70 block">Paro Forzoso RPE (0.5%)</span>
-                <strong className="tabular-nums">- Bs. {payrollBreakdown.rpeEmployee.toFixed(2)}</strong>
-              </div>
-              <div className="p-3 rounded bg-[var(--bg-elevated)] border border-[var(--accent-primary)]">
-                <span className="opacity-70 block">Neto a Pagar Trabajador</span>
-                <strong className="text-[var(--accent-primary)] tabular-nums">
-                  Bs. {payrollBreakdown.netPayBs.toFixed(2)}
-                </strong>
-              </div>
-            </div>
-          </div>
-
-          <div className="col-span-12 lg:col-span-4 ui-card p-5 space-y-3 text-xs font-mono">
-            <h3 className="ui-heading text-base font-bold">Cargas Patronales y Prestaciones (Art. 142 LOTTT)</h3>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span>IVSS Patronal ({riskLevel}):</span>
-                <strong className="tabular-nums">Bs. {payrollBreakdown.ivssEmployer.toFixed(2)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>FAOV Patronal (2%):</span>
-                <strong className="tabular-nums">Bs. {payrollBreakdown.faovEmployer.toFixed(2)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Paro Forzoso Patronal (2%):</span>
-                <strong className="tabular-nums">Bs. {payrollBreakdown.rpeEmployer.toFixed(2)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span>Provisión INCES (2%):</span>
-                <strong className="tabular-nums">Bs. {payrollBreakdown.incesQuarterlyProvision.toFixed(2)}</strong>
-              </div>
-              <div className="flex justify-between pt-2 border-t border-[var(--border-subtle)] text-[var(--accent-secondary)]">
-                <span>Garantía Prestaciones (5 días Sal. Integral):</span>
-                <strong className="tabular-nums">Bs. {payrollBreakdown.prestacionesMonthlyProvision.toFixed(2)}</strong>
-              </div>
-              <div className="flex justify-between pt-2 border-t border-[var(--border-subtle)] font-bold">
-                <span>Total Carga Patronal Mensual:</span>
-                <span className="tabular-nums">Bs. {payrollBreakdown.totalEmployerCost.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Multi-Employee LOTTT Roster & Printable Paystubs */}
-          <div id="payroll-roster-table" className="col-span-12 ui-card p-5 space-y-4 text-xs font-mono">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="ui-heading text-base font-bold">Nómina Activa de Trabajadores ({activeTenant.name})</h3>
-                <p className="opacity-75">Registro multi-empleado con emisión de Recibo de Pago LOTTT imprimible / PDF.</p>
-              </div>
-              <span className="px-2.5 py-1 rounded bg-white/10">{tenantEmployees.length} Trabajadores Activos</span>
-            </div>
-
-            <form onSubmit={handleAddEmployee} className="grid grid-cols-1 md:grid-cols-5 gap-3 p-3 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]">
-              <input
-                type="text"
-                required
-                placeholder="Nombre y Apellido"
-                value={newEmpName}
-                onChange={e => setNewEmpName(e.target.value)}
-                className="p-2 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)]"
-              />
-              <input
-                type="text"
-                required
-                placeholder="Cédula (Ej: V-20.111.222)"
-                value={newEmpCedula}
-                onChange={e => setNewEmpCedula(e.target.value)}
-                className="p-2 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)]"
-              />
-              <input
-                type="text"
-                placeholder="Cargo"
-                value={newEmpRole}
-                onChange={e => setNewEmpRole(e.target.value)}
-                className="p-2 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)]"
-              />
-              <input
-                type="number"
-                placeholder="Salario Base Bs."
-                value={newEmpSalary}
-                onChange={e => setNewEmpSalary(Number(e.target.value) || 0)}
-                className="p-2 rounded bg-[var(--bg-surface)] border border-[var(--border-subtle)] tabular-nums"
-              />
-              <button type="submit" className="ui-btn-primary py-2 px-3 text-xs flex items-center justify-center gap-1">
-                <Plus className="w-3.5 h-3.5" /> Agregar Trabajador
-              </button>
-            </form>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border-subtle)] opacity-75">
-                    <th className="py-2 px-2">Trabajador / Cédula</th>
-                    <th className="py-2 px-2">Cargo</th>
-                    <th className="py-2 px-2 text-right">Salario Base</th>
-                    <th className="py-2 px-2 text-right">Deducciones (5.5%)</th>
-                    <th className="py-2 px-2 text-right">Neto a Pagar</th>
-                    <th className="py-2 px-2 text-right">Prestaciones Art. 142</th>
-                    <th className="py-2 px-2 text-right">Recibo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tenantEmployees.map(emp => {
-                    const b = calculateLotttFullBreakdown(emp.baseSalaryBs, emp.cestaticketBs, emp.riskLevel);
-                    return (
-                      <tr key={emp.id} className="border-b border-[var(--border-subtle)]/50">
-                        <td className="py-2.5 px-2">
-                          <div className="font-bold">{emp.fullName}</div>
-                          <div className="opacity-70 text-[10px]">{emp.cedula} · Ingreso: {emp.hireDate}</div>
-                        </td>
-                        <td className="py-2.5 px-2">{emp.role}</td>
-                        <td className="py-2.5 px-2 text-right tabular-nums">Bs. {emp.baseSalaryBs.toFixed(2)}</td>
-                        <td className="py-2.5 px-2 text-right tabular-nums text-rose-400">- Bs. {b.totalDeductions.toFixed(2)}</td>
-                        <td className="py-2.5 px-2 text-right tabular-nums font-bold text-[var(--accent-primary)]">
-                          Bs. {b.netPayBs.toFixed(2)}
-                        </td>
-                        <td className="py-2.5 px-2 text-right tabular-nums text-[var(--accent-secondary)]">
-                          Bs. {b.prestacionesMonthlyProvision.toFixed(2)}
-                        </td>
-                        <td className="py-2.5 px-2 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => openPrintablePaystub(activeTenant.name, activeTenant.rif, emp)}
-                              title="Vista previa e impresión"
-                              className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-[10px] inline-flex items-center gap-1"
-                            >
-                              <Printer className="w-3 h-3" /> Imprimir
-                            </button>
-                            <button
-                              onClick={() => downloadPdfPaystub(activeTenant.name, activeTenant.rif, emp)}
-                              title="Descargar Recibo Oficial PDF con QR LOTTT"
-                              className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 text-[10px] inline-flex items-center gap-1 font-bold"
-                            >
-                              <Download className="w-3 h-3" /> PDF QR
-                            </button>
-                            <button
-                              onClick={() => handleDeleteEmployee(emp.id, emp.fullName)}
-                              title="Eliminar Trabajador de la Nómina"
-                              className="p-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[10px] transition"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {tenantEmployees.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="py-4 text-center opacity-60">
-                        No hay trabajadores registrados aún para {activeTenant.name}. Usa el formulario superior para agregar uno.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        </div>
+        <Suspense fallback={<div className="ui-card p-8 text-center text-xs font-mono opacity-75">Cargando Motor de Nómina LOTTT...</div>}>
+          <PayrollLotttView
+            activeTenant={activeTenant}
+            tenantEmployees={tenantEmployees}
+            payrollBreakdown={payrollBreakdown}
+            baseSalaryBs={baseSalaryBs}
+            setBaseSalaryBs={setBaseSalaryBs}
+            cestaticketBs={cestaticketBs}
+            setCestaticketBs={setCestaticketBs}
+            riskLevel={riskLevel}
+            setRiskLevel={setRiskLevel}
+            newEmpName={newEmpName}
+            setNewEmpName={setNewEmpName}
+            newEmpCedula={newEmpCedula}
+            setNewEmpCedula={setNewEmpCedula}
+            newEmpRole={newEmpRole}
+            setNewEmpRole={setNewEmpRole}
+            newEmpSalary={newEmpSalary}
+            setNewEmpSalary={setNewEmpSalary}
+            onAddEmployee={handleAddEmployee}
+            onDeleteEmployee={handleDeleteEmployee}
+            onExportParafiscalCsv={handleExportParafiscalCsv}
+            onExportArt142Csv={handleExportArt142Csv}
+          />
+        </Suspense>
       )}
 
       {/* =====================================================================
@@ -7935,286 +7766,33 @@ export default function App() {
       )}
 
       {/* =====================================================================
-          TAB 07: BLINDAJE CRIPTOGRÁFICO SHA-256 & BÓVEDA AES-256-GCM (8 + 4)
+          TAB 07: BLINDAJE CRIPTOGRÁFICO SHA-256 & BÓVEDA AES-256-GCM (LAZY CHUNK)
          ===================================================================== */}
       {activeTab === 'security' && (
-        <div className="grid grid-cols-12 gap-5">
-          {/* 8-Column Immutable Append-Only Audit Chain */}
-          <div className="col-span-12 lg:col-span-8 space-y-5">
-            <div className="ui-card p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="ui-heading text-lg font-bold">Bitácora Forense Inmutable (Cadena SHA-256 COT 10 Años)</h2>
-                  <p className="text-xs font-mono opacity-75">
-                    Cada evento fiscal incluye el hash criptográfico del bloque anterior (`previousHash`), impidiendo alteraciones retroactivas.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setChainIntegrityVerified(true)}
-                  className="ui-btn-primary px-3 py-2 text-xs flex items-center gap-1.5"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  Verificar Cadena ({auditLogs.length} Bloques OK)
-                </button>
-              </div>
-
-              {chainIntegrityVerified && (
-                <div className="p-3 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-mono">
-                  [AUDITORÍA FORENSE VERIFICADA] Los {auditLogs.length} bloques de la cadena SHA-256 desde GENESIS_SENIAT_2026 mantienen integridad matemática total (0 colisiones, 0 borrados).
-                </div>
-              )}
-
-              <div className="space-y-3 text-xs font-mono">
-                {auditLogs.map(log => (
-                  <div
-                    key={log.id}
-                    className="p-3.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] space-y-1.5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-bold text-[var(--accent-primary)]">
-                        BLOQUE #{String(log.sequence).padStart(4, '0')} · {log.action}
-                      </span>
-                      <span className="opacity-70">{log.timestamp} · Actor: {log.actorUid}</span>
-                    </div>
-                    <p className="opacity-90">{log.details}</p>
-                    <div className="pt-1 text-[10px] space-y-0.5 opacity-80 break-all">
-                      <div>
-                        <span className="opacity-60">PREV_HASH: </span>
-                        {log.previousHash}
-                      </div>
-                      <div className="text-emerald-400">
-                        <span className="opacity-60 text-[var(--text-primary)]">SHA256_HASH: </span>
-                        {log.sha256Hash}
-                      </div>
-                      {log.encryptedPayload && (
-                        <div className="text-[var(--accent-secondary)]">
-                          <span className="opacity-60 text-[var(--text-primary)]">AES256_GCM: </span>
-                          {log.encryptedPayload}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* 4-Column 2FA / AES-256-GCM Interactive Vault & Firestore Rules Matrix */}
-          <div className="col-span-12 lg:col-span-4 space-y-5">
-            {/* Super-Admin 2FA / TOTP Configurator */}
-            <div className="ui-card p-5 space-y-3 text-xs font-mono">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-400" />
-                  <h3 className="ui-heading text-base font-bold">2FA Super-Admin (TOTP)</h3>
-                </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  currentUser?.totpEnabled
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-white/10 text-zinc-400 border border-white/10'
-                }`}>
-                  {currentUser?.totpEnabled ? 'ACTIVO' : 'INACTIVO'}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#8E8E93]">
-                Protege el acceso Super-Admin con códigos temporales de 6 dígitos validados en el servidor (Google Authenticator / Apple Passwords).
-              </p>
-
-              {currentUser?.totpEnabled ? (
-                <div className="space-y-3 pt-1">
-                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-[11px]">
-                    Doble Factor activado en Cloud Firestore. El inicio de sesión Super-Admin exige código TOTP en el servidor antes de emitir el token.
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-[10px] text-[#8E8E93] uppercase">
-                      Código TOTP actual de 6 dígitos (requerido para desactivar):
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      placeholder="000000"
-                      value={setupTotpCode}
-                      onChange={e => setSetupTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      className="w-full p-2.5 rounded-xl bg-white/[0.04] border border-white/10 text-center font-mono tracking-[0.3em] text-sm text-white"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (setupTotpCode.trim().length !== 6) {
-                        setSubPayToast('Ingresa los 6 dígitos actuales de tu app autenticadora para desactivar 2FA.');
-                        setTimeout(() => setSubPayToast(null), 4000);
-                        return;
-                      }
-                      setConfirmDialog({
-                        title: 'Desactivar Doble Factor (2FA)',
-                        message: '¿Desactivar la autenticación en dos pasos (2FA) del perfil Super-Admin? Se recomienda mantenerla activa para máxima seguridad.',
-                        confirmLabel: 'Desactivar 2FA',
-                        destructive: true,
-                        onConfirm: async () => {
-                          const res = await safeApiRequest<{ ok: boolean; user: typeof currentUser }>('/api/auth/2fa/disable', {
-                            method: 'POST',
-                            body: JSON.stringify({ code: setupTotpCode.trim() })
-                          });
-                          if (!res.ok || !res.data?.user) {
-                            setSubPayToast(`No se pudo desactivar 2FA: ${res.error || 'Código 2FA inválido'}`);
-                            setTimeout(() => setSubPayToast(null), 4000);
-                            return;
-                          }
-                          setSetupTotpCode('');
-                          localStorage.removeItem('vt_superadmin_2fa_secret');
-                          localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
-                          setCurrentUser(res.data.user);
-                          setSubPayToast('2FA desactivado en la nube para Super-Admin.');
-                          setTimeout(() => setSubPayToast(null), 4000);
-                        }
-                      });
-                    }}
-                    className="w-full py-2 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-semibold transition"
-                  >
-                    Desactivar 2FA
-                  </button>
-                </div>
-              ) : setupTotpSecret ? (
-                <div className="space-y-3 pt-1">
-                  <div className="p-3 rounded-xl bg-white/[0.04] border border-white/10 space-y-1.5">
-                    <span className="text-[10px] text-[#8E8E93] uppercase block">1. Llave Secreta Base32 (Copia en tu App):</span>
-                    <div className="flex items-center justify-between gap-2">
-                      <code className="text-xs font-bold text-white tracking-wider break-all">{setupTotpSecret}</code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(setupTotpSecret);
-                          setSubPayToast('Llave secreta 2FA copiada.');
-                          setTimeout(() => setSubPayToast(null), 3000);
-                        }}
-                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white"
-                        title="Copiar llave secreta"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <a
-                      href={getTotpUri(setupTotpSecret, currentUser?.email || 'moucharrafiepc@gmail.com')}
-                      className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline pt-1"
-                    >
-                      <ArrowUpRight className="w-3 h-3" /> Abrir en App Autenticadora (otpauth://)
-                    </a>
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-[10px] text-[#8E8E93] uppercase">2. Verifica el código de 6 dígitos:</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={6}
-                        placeholder="000000"
-                        value={setupTotpCode}
-                        onChange={e => setSetupTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        className="flex-1 p-2 rounded-lg bg-[var(--bg-elevated)] border border-white/15 text-center font-mono font-bold tracking-widest text-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const res = await safeApiRequest<{ ok: boolean; user: typeof currentUser }>('/api/auth/2fa/enable', {
-                            method: 'POST',
-                            body: JSON.stringify({ secret: setupTotpSecret, code: setupTotpCode })
-                          });
-                          if (!res.ok || !res.data?.user) {
-                            setSubPayToast(res.error || 'Código inválido. Asegúrate de ingresar los 6 dígitos actuales de tu app autenticadora.');
-                            setTimeout(() => setSubPayToast(null), 5000);
-                            return;
-                          }
-                          localStorage.setItem('vt_auth_user', JSON.stringify(res.data.user));
-                          setCurrentUser(res.data.user);
-                          setSetupTotpSecret('');
-                          setSetupTotpCode('');
-                          setSubPayToast('¡2FA (TOTP) activado en el servidor para Super-Admin!');
-                          setTimeout(() => setSubPayToast(null), 5000);
-                        }}
-                        className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
-                      >
-                        Activar
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const res = await safeApiRequest<{ ok: boolean; secret: string }>('/api/auth/2fa/setup', {
-                      method: 'POST',
-                      body: JSON.stringify({})
-                    });
-                    if (!res.ok || !res.data?.secret) {
-                      setSubPayToast(`No se pudo iniciar 2FA: ${res.error || 'Error de servidor'}`);
-                      setTimeout(() => setSubPayToast(null), 4000);
-                      return;
-                    }
-                    setSetupTotpSecret(res.data.secret);
-                    setSetupTotpCode('');
-                  }}
-                  className="ui-btn-primary w-full py-2.5 text-xs flex items-center justify-center gap-1.5"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  Configurar 2FA Ahora
-                </button>
-              )}
-            </div>
-
-            <div className="ui-card p-5 space-y-3 text-xs font-mono">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-4 h-4 text-[var(--accent-primary)]" />
-                <h3 className="ui-heading text-base font-bold">Simulador Bóveda AES-256-GCM</h3>
-              </div>
-              <p className="opacity-75">
-                Prueba el cifrado autenticado (`IV:AuthTag:Ciphertext`) usado en <code>backend/security/cryptoVault.js</code> para credenciales SENIAT y cuentas bancarias:
-              </p>
-              <div>
-                <label className="block mb-1 opacity-75">Dato Sensible en Texto Plano</label>
-                <input
-                  type="text"
-                  value={vaultPlainInput}
-                  onChange={e => setVaultPlainInput(e.target.value)}
-                  className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
-                />
-              </div>
-              <div>
-                <label className="block mb-1 opacity-75">Llave Maestra (AES_MASTER_KEY)</label>
-                <input
-                  type="text"
-                  value={vaultKeyHint}
-                  onChange={e => setVaultKeyHint(e.target.value)}
-                  className="w-full p-2 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)]"
-                />
-              </div>
-              <div className="p-2.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-subtle)] break-all text-[10px]">
-                <span className="opacity-60 block mb-1">PAYLOAD CIFRADO (IV:TAG:DATA):</span>
-                <span className="text-[var(--accent-secondary)]">{encryptedPreview}</span>
-              </div>
-              <div className="p-2.5 rounded bg-emerald-500/10 border border-emerald-500/30 break-all text-[11px] text-emerald-300">
-                <span className="opacity-60 block mb-0.5">DESCIFRADO VERIFICADO:</span>
-                {decryptedPreview}
-              </div>
-            </div>
-
-            <div className="ui-card p-5 space-y-2.5 text-xs font-mono">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <h3 className="ui-heading text-base font-bold">Reglas de Producción Activas</h3>
-              </div>
-              <ul className="space-y-2 opacity-90">
-                <li>[OK] Aislamiento Multi-Tenant por RIF en Bóveda Cloud</li>
-                <li>[OK] Bloqueo físico de borrado — Resguardo COT 10 años</li>
-                <li>[OK] Bitácora Append-Only encadenada con SHA-256 + AES-256-GCM</li>
-                <li>[OK] Sincronización diaria Tasa Oficial BCV (09:05 AM y 01:15 PM VET)</li>
-                <li>[OK] Asistente Virtual Contable + Núcleo de Validación Documental</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+        <Suspense fallback={<div className="ui-card p-8 text-center text-xs font-mono opacity-75">Cargando Bóveda Criptográfica AES-256-GCM...</div>}>
+          <SecurityVaultView
+            auditLogs={auditLogs}
+            chainIntegrityVerified={chainIntegrityVerified}
+            setChainIntegrityVerified={setChainIntegrityVerified}
+            currentUser={currentUser}
+            setCurrentUser={setCurrentUser}
+            setupTotpSecret={setupTotpSecret}
+            setSetupTotpSecret={setSetupTotpSecret}
+            setupTotpCode={setupTotpCode}
+            setSetupTotpCode={setSetupTotpCode}
+            vaultPlainInput={vaultPlainInput}
+            setVaultPlainInput={setVaultPlainInput}
+            vaultKeyHint={vaultKeyHint}
+            setVaultKeyHint={setVaultKeyHint}
+            encryptedPreview={encryptedPreview}
+            decryptedPreview={decryptedPreview}
+            setConfirmDialog={setConfirmDialog}
+            showToast={(msg, ms = 4500) => {
+              setSubPayToast(msg);
+              setTimeout(() => setSubPayToast(null), ms);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* =====================================================================

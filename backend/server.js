@@ -36,8 +36,11 @@ const {
   approveSubscriptionPayment,
   checkTenantPlanQuota,
   incrementTenantInvoiceUsage,
-  suspendExpiredSubscriptions
+  suspendExpiredSubscriptions,
+  verifySaasWebhookSignature,
+  reconcileSaasPaymentWebhook
 } = require('./services/saasBillingEngine');
+const { emitDigitalInvoiceThroughPrinter } = require('./services/digitalPrinterConnector');
 const {
   validateVenezuelanRIF,
   buildRetentionVoucherNumber,
@@ -433,6 +436,13 @@ function requireSuperAdmin(req, res, next) {
   if (!user) return res.status(401).json({ error: 'Usuario no autenticado' });
   if (user.role === 'superadmin') return next();
   return res.status(403).json({ error: 'Acceso denegado: operación reservada para Super-Admin.' });
+}
+
+function requireNotExternalAuditor(req, res, next) {
+  if (req.user?.role !== 'superadmin' && req.user?.firmSubRole === 'AUDITOR_EXTERNO') {
+    return res.status(403).json({ error: 'Acceso denegado: el perfil AUDITOR_EXTERNO es estrictamente de solo lectura.' });
+  }
+  return next();
 }
 
 // Middleware de Control de Acceso y Prevención de IDOR (Insecure Direct Object References)
@@ -833,6 +843,64 @@ app.post('/api/invoices/client-upload', verifyFirebaseToken, requireTenantAccess
   }
 });
 
+app.post('/webhooks/saas-payments', webhookLimiter, async (req, res, next) => {
+  try {
+    const isProd = process.env.NODE_ENV === 'production';
+    const webhookSecret = process.env.SAAS_WEBHOOK_SECRET;
+    if (isProd && !webhookSecret) {
+      return res.status(503).json({ error: 'Webhook SaaS deshabilitado: falta SAAS_WEBHOOK_SECRET en producción.' });
+    }
+    if (webhookSecret) {
+      const sig = req.headers['x-vt-signature'] || req.headers['x-webhook-signature'] || '';
+      const rawBody = JSON.stringify(req.body || {});
+      if (!verifySaasWebhookSignature(rawBody, sig, webhookSecret)) {
+        return res.status(401).json({ error: 'Firma HMAC de webhook SaaS inválida.' });
+      }
+    }
+    const result = await reconcileSaasPaymentWebhook(db, req.body || {});
+    return res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Emisión de Factura Digital Homologada vía Conector de Imprenta Digital (SNAT/2026/00093)
+app.post('/api/digital-invoice/emit', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
+  try {
+    const { tenantId, buyerRif, buyerName, docType = '01', currency = 'VES', bcvRate, taxableBaseOriginal = 0, exemptOriginal = 0, vatRate = 16, igtfOriginal = 0, items = [] } = req.body || {};
+    if (!tenantId || !buyerRif) {
+      return res.status(400).json({ error: 'tenantId y buyerRif son obligatorios para emitir factura digital.' });
+    }
+    const quotaCheck = await checkTenantPlanQuota(db, tenantId);
+    if (!quotaCheck.allowed) {
+      return res.status(quotaCheck.status || 429).json({ error: quotaCheck.error });
+    }
+    const tenantSnap = await db.collection('tenants').doc(String(tenantId)).get();
+    const tenantData = tenantSnap && tenantSnap.exists ? tenantSnap.data() : {};
+    const emission = await emitDigitalInvoiceThroughPrinter(db, {
+      tenantId: String(tenantId),
+      issuerName: tenantData.name || 'Contribuyente VT',
+      issuerRif: tenantData.rif || req.body.issuerRif,
+      buyerName,
+      buyerRif,
+      docType,
+      currency,
+      bcvRate: Number(bcvRate || DEFAULT_CURRENT_BCV_USD),
+      taxableBaseOriginal,
+      exemptOriginal,
+      vatRate,
+      igtfOriginal,
+      items
+    });
+    await appendTenantInvoice(db, String(tenantId), emission.emittedInvoice, req.user?.email || 'digital_printer');
+    await incrementTenantInvoiceUsage(db, String(tenantId));
+    broadcastInvoiceEvent(String(tenantId), emission.emittedInvoice);
+    return res.status(201).json(emission);
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/saas/plans', (_req, res) => {
   res.json(Object.values(SAAS_PLANS));
 });
@@ -1218,7 +1286,7 @@ app.post('/api/auth/unlock-account', verifyFirebaseToken, requireSuperAdmin, asy
   }
 });
 
-app.post('/api/tenants', verifyFirebaseToken, async (req, res, next) => {
+app.post('/api/tenants', verifyFirebaseToken, requireNotExternalAuditor, async (req, res, next) => {
   try {
     if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
       return res.status(403).json({ error: 'Solo contadores o Super-Admin pueden registrar empresas.' });
@@ -1295,10 +1363,13 @@ app.post('/api/tenants', verifyFirebaseToken, async (req, res, next) => {
   }
 });
 
-app.delete('/api/tenants/:tenantId', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.delete('/api/tenants/:tenantId', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     if (req.user?.role !== 'superadmin' && req.user?.role !== 'admin') {
       return res.status(403).json({ error: 'Solo contadores o Super-Admin pueden eliminar empresas.' });
+    }
+    if (req.user?.role !== 'superadmin' && req.user?.firmSubRole === 'ASISTENTE_JUNIOR') {
+      return res.status(403).json({ error: 'Solo un Socio CPC o Super-Admin puede retirar empresas de la cartera.' });
     }
     const result = await deleteTenantWorkspace(db, req.params.tenantId, req.user?.email || req.user?.uid || 'admin');
     return res.json(result);

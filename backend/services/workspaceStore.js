@@ -223,13 +223,26 @@ async function readWorkspaceState(db, user, options = {}) {
  * 1. Inmutabilidad COT (10 años): las facturas APROBADAS jamás pueden borrarse ni alterar sus montos/RIF.
  * 2. Anti-Lost-Update: preserva facturas recibidas recientemente vía Bot de Telegram o Portal Móvil.
  */
-function mergeInvoicesWithCotProtection(incomingList = [], existingInvoices = []) {
+function mergeInvoicesWithCotProtection(incomingList = [], existingInvoices = [], { canApprove = true } = {}) {
   const incomingById = new Map();
   for (const inv of incomingList) {
     if (inv && inv.id) incomingById.set(inv.id, inv);
   }
 
-  const mergedInvoices = [...incomingList];
+  const existingById = new Map();
+  for (const prev of existingInvoices) {
+    if (prev && prev.id) existingById.set(prev.id, prev);
+  }
+
+  const mergedInvoices = incomingList.map(inv => {
+    if (!inv || canApprove) return inv;
+    const prev = existingById.get(inv.id);
+    // Un Asistente Junior no puede sellar facturas como APROBADA si antes no lo estaban
+    if (inv.status === 'APROBADA' && (!prev || prev.status !== 'APROBADA')) {
+      return { ...inv, status: 'BORRADOR_IA' };
+    }
+    return inv;
+  });
   const nowMs = Date.now();
 
   for (const prevInv of existingInvoices) {
@@ -313,6 +326,12 @@ async function writeWorkspaceState(
     err.status = 403;
     throw err;
   }
+  if (!isSuper && user?.firmSubRole === 'AUDITOR_EXTERNO') {
+    const err = new Error('Acceso denegado: el sub-rol AUDITOR_EXTERNO es estrictamente de solo lectura.');
+    err.status = 403;
+    throw err;
+  }
+  const canApprove = isSuper || user?.firmSubRole !== 'ASISTENTE_JUNIOR';
 
   const shardThreshold =
     typeof options.shardThreshold === 'number' ? options.shardThreshold : DEFAULT_INLINE_SHARD_THRESHOLD;
@@ -343,7 +362,7 @@ async function writeWorkspaceState(
       const existingInvoices = Array.isArray(hydratedExisting.invoices) ? hydratedExisting.invoices : [];
 
       const incomingList = invoicesByTenant.get(tid) || [];
-      const mergedInvoices = mergeInvoicesWithCotProtection(incomingList, existingInvoices);
+      const mergedInvoices = mergeInvoicesWithCotProtection(incomingList, existingInvoices, { canApprove });
       const tenantBankMoves = Array.isArray(bankMovements) ? (bankMovesByTenant.get(tid) || []) : undefined;
 
       const shouldShardByPeriod =
@@ -406,6 +425,12 @@ async function applyWorkspaceDelta(db, user, delta = {}, options = {}) {
     err.status = 403;
     throw err;
   }
+  if (!isSuper && user?.firmSubRole === 'AUDITOR_EXTERNO') {
+    const err = new Error('Acceso denegado: el sub-rol AUDITOR_EXTERNO es estrictamente de solo lectura.');
+    err.status = 403;
+    throw err;
+  }
+  const canApprove = isSuper || user?.firmSubRole !== 'ASISTENTE_JUNIOR';
 
   const tid = String(delta.tenantId || '').trim();
   if (!tid) {
@@ -452,7 +477,8 @@ async function applyWorkspaceDelta(db, user, delta = {}, options = {}) {
           status: LOCKED_FISCAL_STATUSES.has(incoming.status) ? incoming.status : existing.status
         });
       } else {
-        byId.set(incoming.id, { ...incoming, tenantId: tid });
+        const sanitizedStatus = !canApprove && incoming.status === 'APROBADA' ? 'BORRADOR_IA' : incoming.status;
+        byId.set(incoming.id, { ...incoming, status: sanitizedStatus, tenantId: tid });
       }
     }
     currentInvoices = Array.from(byId.values());

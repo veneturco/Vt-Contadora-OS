@@ -215,6 +215,82 @@ async function incrementTenantInvoiceUsage(db, tenantId) {
   }, { merge: true });
 }
 
+function verifySaasWebhookSignature(rawBodyString, signatureHeader, secret) {
+  if (!secret || !signatureHeader || !rawBodyString) return false;
+  const expected = crypto.createHmac('sha256', String(secret)).update(String(rawBodyString)).digest('hex');
+  const cleanSig = String(signatureHeader).replace(/^sha256=/i, '').trim();
+  const a = Buffer.from(cleanSig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Conciliación automática de pagos SaaS recibidos por Webhook (Binance Pay / C2P / Pago Móvil API)
+ */
+async function reconcileSaasPaymentWebhook(
+  db,
+  { provider = 'PAYMENT_GATEWAY', tenantId, paymentId, referenceNumber, amountUsd, status = 'PAID' }
+) {
+  const cleanRef = String(referenceNumber || '').trim();
+  if (!tenantId || (!paymentId && !cleanRef)) {
+    const err = new Error('tenantId y (paymentId o referenceNumber) son obligatorios en el webhook SaaS.');
+    err.status = 400;
+    throw err;
+  }
+
+  if (String(status).toUpperCase() !== 'PAID' && String(status).toUpperCase() !== 'VERIFIED') {
+    return { ok: true, reconciled: false, reason: `Estado ${status} ignorado.` };
+  }
+
+  let targetPaymentId = paymentId;
+  let paymentData = null;
+
+  if (targetPaymentId) {
+    const snap = await db.collection(`tenants/${tenantId}/subscriptions`).doc(targetPaymentId).get();
+    if (snap && snap.exists) paymentData = snap.data();
+  } else if (cleanRef) {
+    const qSnap = await db
+      .collection(`tenants/${tenantId}/subscriptions`)
+      .where('referenceNumber', '==', cleanRef)
+      .limit(1)
+      .get();
+    if (qSnap && !qSnap.empty && Array.isArray(qSnap.docs) && qSnap.docs.length > 0) {
+      targetPaymentId = qSnap.docs[0].id;
+      paymentData = qSnap.docs[0].data();
+    }
+  }
+
+  if (!paymentData || !targetPaymentId) {
+    const err = new Error(`Pago pendiente no localizado para tenant=${tenantId} ref=${cleanRef || paymentId}.`);
+    err.status = 404;
+    throw err;
+  }
+
+  if (paymentData.status === 'VERIFICADO') {
+    return { ok: true, reconciled: true, alreadyVerified: true, paymentId: targetPaymentId };
+  }
+
+  if (typeof amountUsd === 'number' && amountUsd + 0.05 < Number(paymentData.amountUsd || 0)) {
+    const err = new Error(`Monto recibido (${amountUsd} USD) inferior al monto del plan (${paymentData.amountUsd} USD).`);
+    err.status = 422;
+    throw err;
+  }
+
+  const approved = await approveSubscriptionPayment(db, {
+    tenantId,
+    paymentId: targetPaymentId,
+    actorUid: `webhook:${String(provider).toLowerCase()}`
+  });
+
+  return {
+    ok: true,
+    reconciled: true,
+    paymentId: targetPaymentId,
+    ...approved
+  };
+}
+
 module.exports = {
   SAAS_PLANS,
   generateTelegramLinkCode,
@@ -222,5 +298,7 @@ module.exports = {
   approveSubscriptionPayment,
   checkTenantPlanQuota,
   incrementTenantInvoiceUsage,
-  suspendExpiredSubscriptions
+  suspendExpiredSubscriptions,
+  verifySaasWebhookSignature,
+  reconcileSaasPaymentWebhook
 };

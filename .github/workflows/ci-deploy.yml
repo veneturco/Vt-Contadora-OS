@@ -24,11 +24,14 @@ jobs:
       - name: Instalar dependencias raíz y backend
         run: npm install --no-audit --no-fund && (cd backend && npm install --no-audit --no-fund)
 
-      - name: Ejecutar Suite de Pruebas Fiscales (SENIAT + LOTTT + Motor VNDE + Anti-IDOR)
+      - name: Ejecutar Suite de Pruebas Fiscales (SENIAT + LOTTT + Motor VNDE + Sharding + Anti-IDOR)
         run: npm test
 
+      - name: Auditoría de Seguridad de Dependencias (Producción)
+        run: (cd backend && npm audit --omit=dev --audit-level=critical) && (cd frontend && npm install --no-audit --no-fund && npm audit --omit=dev --audit-level=critical)
+
       - name: Compilar Frontend Producción (TypeScript + Vite)
-        run: npm run build && (cd frontend && npx tsc --noEmit)
+        run: (cd frontend && npx tsc --noEmit && npm run build)
 
       - name: Verificar Integridad del Servidor Express
         run: |

@@ -29,6 +29,8 @@ export interface FiscalInvoice {
   status: 'BORRADOR_IA' | 'APROBADA';
   sourceChannel: 'WEB_OCR' | 'TELEGRAM_BOT' | 'MANUAL';
   auditHash: string;
+  custodyPath?: string;
+  custodySha256?: string;
 }
 
 export function validateVenezuelanRIF(rif: string): { valid: boolean; formatted: string } {
@@ -1075,6 +1077,51 @@ function splitCsvLine(line: string, delim: string): string[] {
   return out;
 }
 
+function normalizeVenezuelanBankDate(rawDate: string): string {
+  const clean = String(rawDate || '').trim();
+  const iso = clean.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (iso) {
+    return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  }
+  const dmy4 = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (dmy4) {
+    return `${dmy4[3]}-${dmy4[2].padStart(2, '0')}-${dmy4[1].padStart(2, '0')}`;
+  }
+  const dmy2 = clean.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})$/);
+  if (dmy2) {
+    return `20${dmy2[3]}-${dmy2[2].padStart(2, '0')}-${dmy2[1].padStart(2, '0')}`;
+  }
+  return clean.slice(0, 10) || new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Convierte exportaciones HTML (.xls de Banesco/BDV/Mercantil) o SpreadsheetML XML en líneas CSV tabuladas.
+ */
+function extractTableLinesFromBankMarkup(rawText: string): string | null {
+  const trimmed = String(rawText || '').trim();
+  if (!/<table|<tr|<Row/i.test(trimmed)) return null;
+
+  const rows: string[] = [];
+  if (/<Row[\s>]/i.test(trimmed)) {
+    const rowMatches = trimmed.match(/<Row[\s\S]*?<\/Row>/gi) || [];
+    for (const r of rowMatches) {
+      const cells = [...r.matchAll(/<Data[^>]*>([\s\S]*?)<\/Data>/gi)].map(m =>
+        m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim()
+      );
+      if (cells.length >= 3) rows.push(cells.join('\t'));
+    }
+  } else {
+    const trMatches = trimmed.match(/<tr[\s\S]*?<\/tr>/gi) || [];
+    for (const tr of trMatches) {
+      const cells = [...tr.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m =>
+        m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
+      );
+      if (cells.length >= 3) rows.push(cells.join('\t'));
+    }
+  }
+  return rows.length >= 2 ? rows.join('\n') : null;
+}
+
 export function parseBankStatementCsv(
   csvText: string,
   defaultBank: BankMovement['bankName'] = 'BANESCO',
@@ -1082,28 +1129,48 @@ export function parseBankStatementCsv(
   bcvRate: number = 914.02
 ): BankMovement[] {
   if (!csvText || typeof csvText !== 'string') return [];
-  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const normalizedInput = extractTableLinesFromBankMarkup(csvText) || csvText;
+  const lines = normalizedInput.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (lines.length < 2) return [];
 
-  const headerLine = lines[0];
+  // Saltar líneas de preámbulo bancario (ej. "Cuenta: 0134...", "Titular...", "Saldo...") hasta localizar el encabezado real
+  let headerRowIdx = 0;
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const upper = lines[i].toUpperCase();
+    const hasDateCol = upper.includes('FECHA') || upper.includes('DATE') || upper.includes('POSTING');
+    const hasDetailCol =
+      upper.includes('DESCRIP') ||
+      upper.includes('CONCEPTO') ||
+      upper.includes('DETALLE') ||
+      upper.includes('REFERENCIA') ||
+      upper.includes('MONTO') ||
+      upper.includes('DEBITO') ||
+      upper.includes('CREDITO');
+    if (hasDateCol && hasDetailCol) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+
+  const headerLine = lines[headerRowIdx];
   let delim = ',';
   if (headerLine.includes('\t')) delim = '\t';
   else if (headerLine.includes(';')) delim = ';';
 
-  const headers = headerLine.split(delim).map(h => h.trim().toUpperCase().replace(/["']/g, ''));
+  const headers = splitCsvLine(headerLine, delim).map(h => h.trim().toUpperCase().replace(/["']/g, ''));
 
   let bank: BankMovement['bankName'] = defaultBank;
-  const fullText = csvText.toUpperCase();
+  const fullText = normalizedInput.toUpperCase();
   if (fullText.includes('BANESCO PANAMA') || fullText.includes('BANESCO_PA') || fullText.includes('PANAMÁ')) bank = 'BANESCO_PANAMA';
   else if (fullText.includes('FACEBANK')) bank = 'FACEBANK';
   else if (fullText.includes('MERCURY')) bank = 'MERCURY';
   else if (fullText.includes('ZELLE')) bank = 'ZELLE';
-  else if (fullText.includes('BANCO DE VENEZUELA') || fullText.includes('BDV')) bank = 'BDV';
-  else if (fullText.includes('MERCANTIL')) bank = 'MERCANTIL';
-  else if (fullText.includes('BANCAMIGA')) bank = 'BANCAMIGA';
-  else if (fullText.includes('PROVINCIAL') || fullText.includes('BBVA')) bank = 'PROVINCIAL';
-  else if (fullText.includes('BNC')) bank = 'BNC';
-  else if (fullText.includes('BANESCO')) bank = 'BANESCO';
+  else if (fullText.includes('BANCO DE VENEZUELA') || fullText.includes('BDV') || fullText.includes('0102-')) bank = 'BDV';
+  else if (fullText.includes('MERCANTIL') || fullText.includes('0105-')) bank = 'MERCANTIL';
+  else if (fullText.includes('BANCAMIGA') || fullText.includes('0172-')) bank = 'BANCAMIGA';
+  else if (fullText.includes('PROVINCIAL') || fullText.includes('BBVA') || fullText.includes('0108-')) bank = 'PROVINCIAL';
+  else if (fullText.includes('BNC') || fullText.includes('NACIONAL DE CREDITO') || fullText.includes('0191-')) bank = 'BNC';
+  else if (fullText.includes('BANESCO') || fullText.includes('0134-')) bank = 'BANESCO';
 
   const isInternationalUsd = ['BANESCO_PANAMA', 'ZELLE', 'FACEBANK', 'MERCURY'].includes(bank) ||
     headers.some(h => h.includes('USD') || h.includes('DOLLAR'));
@@ -1112,8 +1179,8 @@ export function parseBankStatementCsv(
   let refIdx = headers.findIndex(h => h.includes('REF') || h.includes('DOCUMENTO') || h.includes('TRANSAC') || h.includes('TRACE') || h.includes('ID'));
   let descIdx = headers.findIndex(h => h.includes('CONCEPTO') || h.includes('DESCRIP') || h.includes('DETALLE') || h.includes('MEMO') || h.includes('PAYEE') || h.includes('COUNTERPARTY'));
   let amountIdx = headers.findIndex(h => h.includes('MONTO') || h.includes('IMPORTE') || h.includes('VALOR') || h.includes('AMOUNT') || h.includes('USD'));
-  let debitIdx = headers.findIndex(h => h.includes('DEBITO') || h.includes('CARGO') || h.includes('EGRESO') || h.includes('DEBIT') || h.includes('WITHDRAWAL'));
-  let creditIdx = headers.findIndex(h => h.includes('CREDITO') || h.includes('ABONO') || h.includes('INGRESO') || h.includes('CREDIT') || h.includes('DEPOSIT'));
+  let debitIdx = headers.findIndex(h => h.includes('DEBITO') || h.includes('DÉBITO') || h.includes('CARGO') || h.includes('EGRESO') || h.includes('DEBIT') || h.includes('WITHDRAWAL'));
+  let creditIdx = headers.findIndex(h => h.includes('CREDITO') || h.includes('CRÉDITO') || h.includes('ABONO') || h.includes('INGRESO') || h.includes('CREDIT') || h.includes('DEPOSIT'));
 
   if (dateIdx === -1) dateIdx = 0;
   if (refIdx === -1) refIdx = 1;
@@ -1121,11 +1188,11 @@ export function parseBankStatementCsv(
 
   const results: BankMovement[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = headerRowIdx + 1; i < lines.length; i++) {
     const cols = splitCsvLine(lines[i], delim).map(c => c.replace(/^["']|["']$/g, ''));
     if (cols.length <= Math.max(dateIdx, descIdx)) continue;
 
-    const rawDate = cols[dateIdx] || new Date().toISOString().slice(0, 10);
+    const rawDate = normalizeVenezuelanBankDate(cols[dateIdx] || new Date().toISOString().slice(0, 10));
     const rawRef = cols[refIdx] || `REF${Date.now()}_${i}`;
     const rawDesc = cols[descIdx] || 'MOVIMIENTO BANCARIO';
 
@@ -1430,6 +1497,149 @@ export function downloadPdfBankReconciliationAudit(
   doc.text('Validez probatoria de medios de pago para sustentar deducciones y créditos fiscales de IVA ante el SENIAT.', 40, 177);
 
   doc.save(`Conciliacion_Bancaria_${tenantRif}_${period}.pdf`);
+}
+
+// ============================================================================
+// CIERRE QUINCENAL ASISTIDO 1-CLIC (FORMA 30 + RETENCIONES + IGTF + ISLR)
+// ============================================================================
+
+export interface QuincenalClosingSummary {
+  periodYYYYMM: string;
+  approvedCount: number;
+  pendingDraftsCount: number;
+  nonDeductibleTicketsCount: number;
+  salesDebitVatBs: number;
+  purchasesCreditVatBs: number;
+  salesWithheldByClientsBs: number;
+  netOwnIvaQuotaBs: number;
+  purchasesWithheldToSuppliersBs: number;
+  islrWithheldBs: number;
+  igtfBs: number;
+  totalPayableSeniatBs: number;
+  totalPayableSeniatUsd: number;
+}
+
+export function computeQuincenalClosingSummary(
+  invoices: FiscalInvoice[],
+  periodYYYYMM: string,
+  bcvRate: number
+): QuincenalClosingSummary {
+  let approvedCount = 0;
+  let pendingDraftsCount = 0;
+  let nonDeductibleTicketsCount = 0;
+  let salesDebitVatBs = 0;
+  let purchasesCreditVatBs = 0;
+  let salesWithheldByClientsBs = 0;
+  let purchasesWithheldToSuppliersBs = 0;
+  let islrWithheldBs = 0;
+  let igtfBs = 0;
+
+  for (const inv of invoices) {
+    if (inv.status === 'APROBADA') approvedCount += 1;
+    else pendingDraftsCount += 1;
+
+    const sign = inv.docType === '03' ? -1 : 1;
+    const baseBs = toVes(inv.taxableBaseOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const vatBs = toVes(inv.vatOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+    const igtfVal = toVes(inv.igtfOriginal, inv.currency, inv.bcvRateOnDate) * sign;
+
+    if (inv.bookType === 'VENTA') {
+      salesDebitVatBs += vatBs;
+      salesWithheldByClientsBs += vatBs * (inv.vatRetentionRate / 100);
+    } else {
+      if (isVatDeductible(inv)) {
+        purchasesCreditVatBs += vatBs;
+      } else {
+        nonDeductibleTicketsCount += 1;
+      }
+      purchasesWithheldToSuppliersBs += vatBs * (inv.vatRetentionRate / 100);
+      islrWithheldBs += baseBs * ((inv.islrRetentionRate || 0) / 100);
+    }
+    igtfBs += igtfVal;
+  }
+
+  const netOwnIvaQuotaBs = Math.max(0, salesDebitVatBs - purchasesCreditVatBs - salesWithheldByClientsBs);
+  const totalPayableSeniatBs =
+    netOwnIvaQuotaBs + Math.max(0, purchasesWithheldToSuppliersBs) + Math.max(0, islrWithheldBs) + Math.max(0, igtfBs);
+
+  return {
+    periodYYYYMM,
+    approvedCount,
+    pendingDraftsCount,
+    nonDeductibleTicketsCount,
+    salesDebitVatBs: Number(salesDebitVatBs.toFixed(2)),
+    purchasesCreditVatBs: Number(purchasesCreditVatBs.toFixed(2)),
+    salesWithheldByClientsBs: Number(salesWithheldByClientsBs.toFixed(2)),
+    netOwnIvaQuotaBs: Number(netOwnIvaQuotaBs.toFixed(2)),
+    purchasesWithheldToSuppliersBs: Number(purchasesWithheldToSuppliersBs.toFixed(2)),
+    islrWithheldBs: Number(islrWithheldBs.toFixed(2)),
+    igtfBs: Number(igtfBs.toFixed(2)),
+    totalPayableSeniatBs: Number(totalPayableSeniatBs.toFixed(2)),
+    totalPayableSeniatUsd: Number((totalPayableSeniatBs / Math.max(1, bcvRate)).toFixed(2))
+  };
+}
+
+export function downloadPdfQuincenalClosingSummary(
+  companyName: string,
+  companyRif: string,
+  bcvRate: number,
+  summary: QuincenalClosingSummary
+) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(10, 10, 190, 277);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(15, 23, 42);
+  doc.text('ACTA DE CIERRE QUINCENAL SENIAT (SNAT/2026/00093 & 00099)', 105, 20, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Contribuyente: ${companyName} · RIF: ${companyRif} · Período: ${summary.periodYYYYMM}`, 105, 26, { align: 'center' });
+  doc.text(`Tasa Oficial BCV de Referencia: Bs. ${bcvRate.toFixed(2)} / USD`, 105, 31, { align: 'center' });
+
+  const rows: [string, string][] = [
+    ['Documentos Aprobados (Sellados COT)', `${summary.approvedCount}`],
+    ['Borradores Pendientes por Auditar', `${summary.pendingDraftsCount}`],
+    ['Tickets Máquina Fiscal No Deducibles (Art. 10.4)', `${summary.nonDeductibleTicketsCount}`],
+    ['Débito Fiscal IVA (Ventas)', `Bs. ${summary.salesDebitVatBs.toFixed(2)}`],
+    ['Crédito Fiscal Deducible (Compras)', `Bs. ${summary.purchasesCreditVatBs.toFixed(2)}`],
+    ['Retenciones IVA Soportadas en Ventas', `Bs. ${summary.salesWithheldByClientsBs.toFixed(2)}`],
+    ['Cuota Propia IVA a Pagar (Forma 30)', `Bs. ${summary.netOwnIvaQuotaBs.toFixed(2)}`],
+    ['Retenciones IVA Practicadas a Proveedores (SPE)', `Bs. ${summary.purchasesWithheldToSuppliersBs.toFixed(2)}`],
+    ['Retenciones ISLR Decreto 1808 por Enterar', `Bs. ${summary.islrWithheldBs.toFixed(2)}`],
+    ['Percepción IGTF Divisas (3%)', `Bs. ${summary.igtfBs.toFixed(2)}`],
+    ['TOTAL GENERAL A ENTERAR AL SENIAT (BS.)', `Bs. ${summary.totalPayableSeniatBs.toFixed(2)}`],
+    ['EQUIVALENTE REFERENCIAL BIMONEDA (USD)', `USD ${summary.totalPayableSeniatUsd.toFixed(2)}`]
+  ];
+
+  let y = 46;
+  rows.forEach(([label, val], idx) => {
+    const isTotal = idx >= rows.length - 2;
+    if (isTotal) {
+      doc.setFillColor(241, 245, 249);
+      doc.rect(14, y - 4.5, 182, 7.5, 'F');
+      doc.setFont('helvetica', 'bold');
+    } else {
+      doc.setFont('helvetica', 'normal');
+    }
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(label, 18, y);
+    doc.setFont('courier', isTotal ? 'bold' : 'normal');
+    doc.text(val, 192, y, { align: 'right' });
+    y += 9;
+  });
+
+  drawVectorQr(doc, 18, 175, 26, `CIERRE_${companyRif}_${summary.periodYYYYMM}_${summary.totalPayableSeniatBs}`);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text('Paquete de Cierre Generado por VT Fiscal OS · Resguardo Inmutable COT 10 Años.', 48, 186);
+
+  doc.save(`Cierre_Quincenal_SENIAT_${companyRif}_${summary.periodYYYYMM}.pdf`);
 }
 
 

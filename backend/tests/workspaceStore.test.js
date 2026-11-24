@@ -206,3 +206,63 @@ test('WorkspaceStore COT: protege facturas APROBADAS contra borrado o alteració
   assert.equal(check1.state.invoices[0].id, 'inv_aprobada_1');
   assert.equal(check1.state.invoices[0].totalOriginal, 580);
 });
+
+test('WorkspaceStore Sharding YYYY-MM & Delta: supera techo de 1 MiB particionando por período y sincroniza cambios incrementales', async () => {
+  const {
+    PERIOD_SHARDS_COLLECTION,
+    applyWorkspaceDelta,
+    buildPeriodDocId
+  } = require('../services/workspaceStore');
+  const db = createMockDb();
+  const superAdmin = { role: 'superadmin', email: 'super@vt.com' };
+
+  const invoices = [
+    { id: 'inv_oct_1', tenantId: 't_spe_big', supplierRif: 'J-40918273-8', invoiceNumber: '001', emissionDate: '2026-10-15', totalOriginal: 100, status: 'BORRADOR_IA' },
+    { id: 'inv_nov_1', tenantId: 't_spe_big', supplierRif: 'J-40918273-8', invoiceNumber: '002', emissionDate: '2026-11-05', totalOriginal: 200, status: 'APROBADA' },
+    { id: 'inv_nov_2', tenantId: 't_spe_big', supplierRif: 'J-40918273-8', invoiceNumber: '003', emissionDate: '2026-11-18', totalOriginal: 300, status: 'BORRADOR_IA' }
+  ];
+
+  // Umbral bajo (2) para forzar sharding mensual YYYY-MM
+  const writeRes = await writeWorkspaceState(
+    db,
+    superAdmin,
+    { tenants: [{ id: 't_spe_big', name: 'SPE Alto Volumen' }], invoices, employees: [], payments: [] },
+    { shardThreshold: 2 }
+  );
+  assert.equal(writeRes.ok, true);
+  assert.equal(writeRes.shardedTenantsCount, 1);
+
+  // El documento maestro no debe inflarse con las facturas inline
+  const masterDoc = db.store.get(`${PARTITIONED_COLLECTION}/t_spe_big`);
+  assert.equal(masterDoc.shardedByPeriod, true);
+  assert.equal(masterDoc.invoices.length, 0);
+  assert.deepEqual(masterDoc.periodKeys, ['2026-11', '2026-10']);
+
+  // Deben existir ambos shards mensuales
+  const shardOct = db.store.get(`${PERIOD_SHARDS_COLLECTION}/${buildPeriodDocId('t_spe_big', '2026-10')}`);
+  const shardNov = db.store.get(`${PERIOD_SHARDS_COLLECTION}/${buildPeriodDocId('t_spe_big', '2026-11')}`);
+  assert.equal(shardOct.invoices.length, 1);
+  assert.equal(shardNov.invoices.length, 2);
+
+  // Lectura hidratada completa + filtrada por período
+  const fullRead = await readWorkspaceState(db, superAdmin);
+  assert.equal(fullRead.state.invoices.length, 3);
+  const novOnlyRead = await readWorkspaceState(db, superAdmin, { period: '2026-11' });
+  assert.equal(novOnlyRead.state.invoices.length, 2);
+
+  // Sincronización incremental delta: agrega 1 factura y solicita borrar 1 APROBADA (debe ignorar borrado COT) y 1 borrador
+  const deltaRes = await applyWorkspaceDelta(db, superAdmin, {
+    tenantId: 't_spe_big',
+    upsertInvoices: [
+      { id: 'inv_nov_3', tenantId: 't_spe_big', supplierRif: 'J-40918273-8', invoiceNumber: '004', emissionDate: '2026-11-24', totalOriginal: 400, status: 'BORRADOR_IA' }
+    ],
+    deleteDraftInvoiceIds: ['inv_nov_1', 'inv_nov_2']
+  });
+  assert.equal(deltaRes.ok, true);
+  assert.equal(deltaRes.totalInvoices, 3); // inv_oct_1 + inv_nov_1 (protegida COT) + inv_nov_3
+
+  const afterDelta = await readWorkspaceState(db, superAdmin);
+  assert.ok(afterDelta.state.invoices.some(i => i.id === 'inv_nov_1'));
+  assert.ok(!afterDelta.state.invoices.some(i => i.id === 'inv_nov_2'));
+  assert.ok(afterDelta.state.invoices.some(i => i.id === 'inv_nov_3'));
+});

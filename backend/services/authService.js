@@ -168,6 +168,7 @@ function signSessionToken(payload, options = {}) {
     uid: payload.uid,
     email: payload.email,
     role: payload.role,
+    firmSubRole: payload.firmSubRole || (payload.role === 'admin' ? 'SOCIO_CPC' : null),
     name: payload.name,
     cpcNumber: payload.cpcNumber || null,
     accountantId: payload.accountantId || null,
@@ -211,6 +212,7 @@ function toPublicUser(userDoc) {
     email: userDoc.email,
     name: userDoc.name,
     role: userDoc.role,
+    firmSubRole: userDoc.firmSubRole || (userDoc.role === 'admin' ? 'SOCIO_CPC' : null),
     cpcNumber: userDoc.cpcNumber || null,
     accountantId: userDoc.accountantId || null,
     tenantIds: Array.isArray(userDoc.tenantIds) ? userDoc.tenantIds : [],
@@ -573,6 +575,11 @@ async function upsertAccountantAccount(db, adminSdk, payload) {
   const existingAccSnap = await accRef.get();
   const existingAcc = existingAccSnap.exists ? existingAccSnap.data() : null;
 
+  const validFirmSubRoles = new Set(['SOCIO_CPC', 'ASISTENTE_JUNIOR', 'AUDITOR_EXTERNO']);
+  const firmSubRole = validFirmSubRoles.has(payload.firmSubRole)
+    ? payload.firmSubRole
+    : (existingAcc?.firmSubRole || 'SOCIO_CPC');
+
   const accountantRecord = {
     id: accountantId,
     name: String(payload.name).trim(),
@@ -582,6 +589,7 @@ async function upsertAccountantAccount(db, adminSdk, payload) {
     phone: String(payload.phone || '').trim(),
     city: String(payload.city || 'Caracas, Distrito Capital').trim(),
     planId: payload.planId || 'FIRMA_PRO',
+    firmSubRole,
     monthlyFeeUsd: Number(payload.monthlyFeeUsd ?? 59.99),
     maxCompaniesLimit: Number(payload.maxCompaniesLimit ?? 15),
     assignedTenantIds: Array.isArray(payload.assignedTenantIds)
@@ -623,6 +631,7 @@ async function upsertAccountantAccount(db, adminSdk, payload) {
     email: cleanEmail,
     name: `${accountantRecord.name} (${accountantRecord.cpcNumber})`,
     role: 'admin',
+    firmSubRole: accountantRecord.firmSubRole,
     cpcNumber: accountantRecord.cpcNumber,
     accountantId,
     tenantIds: accountantRecord.assignedTenantIds,
