@@ -52,7 +52,7 @@ async function isUserActiveInDb(db, email, tokenIatSec = null) {
       entry = { active, passwordChangedAtMs, expiresAt: Date.now() + STATUS_CACHE_TTL_MS };
       userStatusCache.set(cleanEmail, entry);
     } catch {
-      return true;
+      return process.env.NODE_ENV !== 'production';
     }
   }
   if (!entry.active) return false;

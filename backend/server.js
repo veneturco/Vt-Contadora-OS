@@ -321,11 +321,17 @@ app.use(helmet({
 }));
 
 const allowedOrigins = process.env.ALLOWED_ORIGIN
-  ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim())
+  ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()).filter(Boolean)
   : null;
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || !allowedOrigins) return callback(null, true);
+    if (!origin) return callback(null, true);
+    if (!allowedOrigins) {
+      if (process.env.NODE_ENV === 'production') {
+        return callback(new Error('Origen no autorizado: ALLOWED_ORIGIN no configurado en producción.'));
+      }
+      return callback(null, true);
+    }
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
@@ -401,9 +407,6 @@ function resolveOptionalSessionUser(req) {
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
-    const queryToken = req.path === '/api/events/invoices' && typeof req.query?.token === 'string'
-      ? req.query.token.trim()
-      : '';
     const isProduction = process.env.NODE_ENV === 'production';
     if (!isProduction && authHeader === 'Bearer DEV_LOCAL_BYPASS') {
       req.user = { uid: 'contador_auditor_local', role: 'superadmin', email: 'moucharrafiepc@gmail.com' };
@@ -411,7 +414,7 @@ async function verifyFirebaseToken(req, res, next) {
     }
     const token = authHeader.startsWith('Bearer ')
       ? authHeader.split('Bearer ')[1].trim()
-      : queryToken;
+      : '';
     if (!token) {
       return res.status(401).json({ error: 'Token Bearer requerido' });
     }
@@ -424,7 +427,18 @@ async function verifyFirebaseToken(req, res, next) {
       req.user = sessionUser;
       return next();
     }
-    req.user = await admin.auth().verifyIdToken(token);
+    const decoded = await admin.auth().verifyIdToken(token);
+    if (decoded?.email) {
+      const active = await isUserActiveInDb(db, decoded.email, decoded.iat);
+      if (!active) {
+        return res.status(403).json({ error: 'Sesión revocada, clave actualizada o cuenta suspendida. Inicie sesión nuevamente.' });
+      }
+    }
+    req.user = {
+      ...decoded,
+      role: decoded.vtRole || decoded.role || 'client',
+      tenantIds: Array.isArray(decoded.tenantIds) ? decoded.tenantIds : []
+    };
     next();
   } catch (_err) {
     return res.status(403).json({ error: 'Token invalido o expirado' });
@@ -474,7 +488,7 @@ async function requireTenantAccess(req, res, next) {
       }
     }
 
-    // Para contadores (admin): permitir empresas de demostración o empresas aún no reclamadas por otro contador
+    // Para contadores (admin): permitir únicamente empresas de demostración o empresas explícitamente creadas/asignadas al contador
     if (user.role === 'admin') {
       if (DEMO_TENANT_IDS.has(tenantId)) {
         return next();
@@ -482,10 +496,7 @@ async function requireTenantAccess(req, res, next) {
       const wsSnap = await db.collection('vt_workspace_tenants').doc(tenantId).get();
       const wsData = wsSnap && wsSnap.exists ? wsSnap.data() : null;
       const ownerEmail = String(wsData?.updatedBy || '').trim().toLowerCase();
-      if (!wsData || !ownerEmail || ownerEmail === userEmail || ownerEmail === 'system') {
-        if (userEmail) {
-          addTenantToAccountant(db, admin, userEmail, tenantId).catch(() => {});
-        }
+      if (wsData && userEmail && ownerEmail === userEmail) {
         return next();
       }
     }
@@ -671,7 +682,12 @@ async function handleBcvSyncNow(_req, res, next) {
     next(err);
   }
 }
-app.get('/api/bcv/sync-now', bcvSyncLimiter, verifyCronSecretIfConfigured, handleBcvSyncNow);
+app.get('/api/bcv/sync-now', bcvSyncLimiter, verifyCronSecretIfConfigured, (req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && !process.env.CRON_SECRET) {
+    return res.status(503).json({ error: 'CRON_SECRET requerido en producción para ejecutar este cron.' });
+  }
+  return handleBcvSyncNow(req, res, next);
+});
 app.post('/api/bcv/sync-now', verifyFirebaseToken, bcvSyncLimiter, handleBcvSyncNow);
 
 // Barrido diario de suscripciones vencidas (Vercel Cron GET o disparo manual Super-Admin POST)
@@ -747,7 +763,7 @@ app.post('/api/ocr/test-lab', verifyFirebaseToken, requireSuperAdmin, async (req
   }
 });
 
-app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async (req, res, next) => {
+app.post('/api/ocr', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, ocrLimiter, async (req, res, next) => {
   const { tenantId, base64Data, mimeType = 'image/jpeg', fileName = 'factura.jpg', rawText, qrPayload, localTemplateHint } = req.body;
   try {
     if (!base64Data && !rawText && !qrPayload) {
@@ -808,7 +824,7 @@ app.post('/api/ocr', verifyFirebaseToken, requireTenantAccess, ocrLimiter, async
 });
 
 // Registro directo de facturas enviadas desde el Portal Móvil de Usuarios/Clientes
-app.post('/api/invoices/client-upload', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.post('/api/invoices/client-upload', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     const { tenantId, invoice } = req.body || {};
     if (!tenantId || !invoice || typeof invoice !== 'object') {
@@ -905,7 +921,7 @@ app.get('/api/saas/plans', (_req, res) => {
   res.json(Object.values(SAAS_PLANS));
 });
 
-app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     let { tenantId, companyName, rif } = req.body || {};
     if (!tenantId) {
@@ -945,7 +961,7 @@ app.post('/api/saas/generate-telegram-code', verifyFirebaseToken, requireTenantA
   }
 });
 
-app.post('/api/saas/register-payment', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.post('/api/saas/register-payment', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     const { tenantId, planId, paymentMethod, referenceNumber, bcvRate } = req.body;
     if (!tenantId || !planId || !referenceNumber) {
@@ -1183,7 +1199,7 @@ app.post('/api/auth/verify-attempt', authLimiter, async (req, res) => {
   return res.json({ recorded: true, timestamp: new Date().toISOString() });
 });
 
-app.post('/api/auth/subaccount-invite', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.post('/api/auth/subaccount-invite', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
       return res.status(403).json({ error: 'Solo administradores o contadores pueden activar sub-cuentas.' });
@@ -1299,50 +1315,87 @@ app.post('/api/tenants', verifyFirebaseToken, requireNotExternalAuditor, async (
     if (!rifCheck.valid) {
       return res.status(400).json({ error: `RIF inválido (Módulo 11): ${tenant.rif}` });
     }
-    const tid = String(tenant.id);
+    const tid = String(tenant.id).trim();
+    const isSuper = req.user?.role === 'superadmin';
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+
+    const [existingTenantSnap, existingWsSnap] = await Promise.all([
+      db.collection('tenants').doc(tid).get(),
+      db.collection('vt_workspace_tenants').doc(tid).get()
+    ]);
+    const existingTenant = existingTenantSnap && existingTenantSnap.exists ? existingTenantSnap.data() : null;
+    const existingWs = existingWsSnap && existingWsSnap.exists ? existingWsSnap.data() : null;
+
+    if ((existingTenant || existingWs) && !isSuper) {
+      const allowedIds = Array.isArray(req.user?.tenantIds) ? req.user.tenantIds : [];
+      const existingOwner = String(existingTenant?.ownerAccountantEmail || existingWs?.updatedBy || '').trim().toLowerCase();
+      if (!allowedIds.includes(tid) && (!existingOwner || existingOwner !== userEmail)) {
+        return res.status(409).json({ error: 'Ya existe una empresa registrada con este identificador.' });
+      }
+    }
+
     const nowIso = new Date().toISOString();
     const initialTelegramCode =
       tenant.telegramCode && String(tenant.telegramCode).trim().length >= 6
         ? String(tenant.telegramCode).trim().toUpperCase()
         : generateTelegramLinkCode(tid);
+
+    const allowedRegimes = new Set(['SPE', 'ORDINARIO', 'FORMAL']);
+    const allowedPlans = new Set(['COMERCIO_PRO', 'EMPRESA_MAX', 'FIRMA_CONTABLE']);
+    const allowedStatuses = new Set(['ACTIVA', 'SUSPENDIDA', 'EN_PRUEBA', 'PENDIENTE']);
+
     const cleanTenant = {
-      ...tenant,
       id: tid,
+      name: String(tenant.name).trim().slice(0, 200),
       rif: rifCheck.formatted,
-      telegramCode: initialTelegramCode,
-      ownerAccountantEmail: req.user.email || null
+      regime: allowedRegimes.has(tenant.regime) ? tenant.regime : (existingTenant?.regime || 'ORDINARIO'),
+      telegramCode: existingTenant?.telegramCode || initialTelegramCode,
+      ownerAccountantEmail: existingTenant?.ownerAccountantEmail || req.user.email || null
     };
+    if (typeof tenant.address === 'string') cleanTenant.address = tenant.address.trim().slice(0, 300);
+    if (typeof tenant.phone === 'string') cleanTenant.phone = tenant.phone.trim().slice(0, 40);
+    if (typeof tenant.email === 'string') cleanTenant.email = tenant.email.trim().slice(0, 150);
+    if (typeof tenant.contactName === 'string') cleanTenant.contactName = tenant.contactName.trim().slice(0, 150);
+    if (isSuper) {
+      if (allowedPlans.has(tenant.planId)) cleanTenant.planId = tenant.planId;
+      if (allowedStatuses.has(tenant.subscriptionStatus)) cleanTenant.subscriptionStatus = tenant.subscriptionStatus;
+    } else if (!existingTenant) {
+      cleanTenant.planId = allowedPlans.has(tenant.planId) ? tenant.planId : 'COMERCIO_PRO';
+      cleanTenant.subscriptionStatus = 'EN_PRUEBA';
+    }
 
     await db.collection('tenants').doc(tid).set(
       {
         ...cleanTenant,
-        createdAt: nowIso,
+        createdAt: existingTenant?.createdAt || nowIso,
         updatedAt: nowIso
       },
       { merge: true }
     );
-    await db.collection('telegram_links').doc(initialTelegramCode).set({
-      tenantId: tid,
-      companyName: String(cleanTenant.name || 'Empresa Vinculada').slice(0, 120),
-      rif: rifCheck.formatted,
-      used: false,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      createdAt: nowIso
-    });
-    await db.collection('vt_workspace_tenants').doc(tid).set(
-      {
+    if (!existingTenant) {
+      await db.collection('telegram_links').doc(initialTelegramCode).set({
         tenantId: tid,
-        tenant: cleanTenant,
-        invoices: [],
-        employees: [],
-        payments: [],
-        bankMovements: [],
-        auditLogs: [],
-        updatedAt: nowIso,
-        updatedBy: req.user.email || req.user.uid || 'system'
-      },
-      { merge: true }
-    );
+        companyName: String(cleanTenant.name || 'Empresa Vinculada').slice(0, 120),
+        rif: rifCheck.formatted,
+        used: false,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: nowIso
+      });
+    }
+    const wsPayload = {
+      tenantId: tid,
+      tenant: cleanTenant,
+      updatedAt: nowIso,
+      updatedBy: existingWs?.updatedBy || req.user.email || req.user.uid || 'system'
+    };
+    if (!existingWs) {
+      wsPayload.invoices = [];
+      wsPayload.employees = [];
+      wsPayload.payments = [];
+      wsPayload.bankMovements = [];
+      wsPayload.auditLogs = [];
+    }
+    await db.collection('vt_workspace_tenants').doc(tid).set(wsPayload, { merge: true });
 
     let authRefresh = null;
     if (req.user.role === 'admin' && req.user.email) {
@@ -1460,8 +1513,8 @@ app.post('/api/guardian/telemetry', telemetryLimiter, async (req, res, next) => 
       route: route ? String(route).slice(0, 140) : undefined,
       method: method ? String(method).slice(0, 12) : undefined,
       statusCode: statusCode ? Number(statusCode) : undefined,
-      userEmail: optionalUser?.email || (clientEmailHint ? String(clientEmailHint).slice(0, 120) : null),
-      tenantId: tenantId ? String(tenantId).slice(0, 80) : null,
+      userEmail: optionalUser?.email || null,
+      tenantId: optionalUser && tenantId ? String(tenantId).slice(0, 80) : null,
       userAgent: req.headers['user-agent'] || null
     });
     return res.status(201).json({ ok: true, alert });
@@ -1470,7 +1523,7 @@ app.post('/api/guardian/telemetry', telemetryLimiter, async (req, res, next) => 
   }
 });
 
-app.patch('/api/workspace/delta', verifyFirebaseToken, requireTenantAccess, async (req, res, next) => {
+app.patch('/api/workspace/delta', verifyFirebaseToken, requireNotExternalAuditor, requireTenantAccess, async (req, res, next) => {
   try {
     const result = await applyWorkspaceDelta(db, req.user, req.body || {});
     return res.json(result);
@@ -1479,7 +1532,7 @@ app.patch('/api/workspace/delta', verifyFirebaseToken, requireTenantAccess, asyn
   }
 });
 
-app.put('/api/workspace/state', verifyFirebaseToken, async (req, res, next) => {
+app.put('/api/workspace/state', verifyFirebaseToken, requireNotExternalAuditor, async (req, res, next) => {
   try {
     const { tenants, invoices, employees, payments, bankMovements, auditLogs } = req.body || {};
     const result = await writeWorkspaceState(db, req.user, {
